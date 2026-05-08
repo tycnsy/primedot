@@ -9,6 +9,7 @@ import { formatHMS, parseHMS } from '../lib/time';
 import type { Project, Task } from '../lib/types';
 
 type SessionMode = 'idle' | 'project' | 'bulk';
+const GOAL_DELTA_STORAGE_KEY = 'prime.timer.show_goal_delta';
 
 export default function Timer() {
   const { id: routeProjectId } = useParams();
@@ -21,7 +22,14 @@ export default function Timer() {
 
   const [mode, setMode] = useState<SessionMode>('idle');
   const [activeProjectId, setActiveProjectId] = useState<string | null>(null);
-  const [showGoalDelta, setShowGoalDelta] = useState(false);
+  const [showGoalDelta, setShowGoalDelta] = useState<boolean>(() => {
+    if (typeof window === 'undefined') return false;
+    try {
+      return window.localStorage.getItem(GOAL_DELTA_STORAGE_KEY) === 'true';
+    } catch {
+      return false;
+    }
+  });
   const [goalByTaskId, setGoalByTaskId] = useState<Record<string, number>>({});
   const lastGoalSnapshotStartedAt = useRef<number | null>(null);
 
@@ -34,6 +42,17 @@ export default function Timer() {
   const projectMap = useMemo(() => {
     return new Map(projects.map((project) => [project.id, project]));
   }, [projects]);
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(
+        GOAL_DELTA_STORAGE_KEY,
+        String(showGoalDelta),
+      );
+    } catch {
+      // localStorage may be unavailable; ignore persistence.
+    }
+  }, [showGoalDelta]);
 
   useEffect(() => {
     if (!timer.startedAt) {

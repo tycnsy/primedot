@@ -36,7 +36,7 @@ export default function PaceSettingsForm({ project, tasks, pace }: Props) {
   const upsert = useUpsertPaceSettings(project.id);
 
   // "Set pace" — number + unit toggle
-  const [paceAmount, setPaceAmount] = useState('30');
+  const [paceAmount, setPaceAmount] = useState('2');
   const [paceUnit, setPaceUnit] = useState<'minutes' | 'hours'>('minutes');
 
   // "Set target time" — datetime input
@@ -149,14 +149,16 @@ export default function PaceSettingsForm({ project, tasks, pace }: Props) {
             value={paceAmount}
             onChange={(e) => setPaceAmount(e.target.value)}
           />
-          <select
-            value={paceUnit}
-            onChange={(e) => setPaceUnit(e.target.value as 'minutes' | 'hours')}
-            className="input w-32"
+          <button
+            type="button"
+            onClick={() =>
+              setPaceUnit((prev) => (prev === 'minutes' ? 'hours' : 'minutes'))
+            }
+            className="btn-secondary w-32"
+            aria-label={`Toggle pace unit (currently ${paceUnit})`}
           >
-            <option value="minutes">minutes</option>
-            <option value="hours">hours</option>
-          </select>
+            {paceUnit}
+          </button>
           <button onClick={handleSetPace} className="btn-primary whitespace-nowrap">
             Set pace
           </button>

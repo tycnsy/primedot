@@ -22,10 +22,28 @@ import type {
 type DetailTab = 'overview' | 'log' | 'related' | 'settings';
 
 const numberFormatter = new Intl.NumberFormat();
+const dateOnlyLongFormatter = new Intl.DateTimeFormat('en-US', {
+  month: 'long',
+  day: 'numeric',
+  timeZone: 'UTC',
+});
+const dateOnlyShortFormatter = new Intl.DateTimeFormat('en-US', {
+  month: 'short',
+  day: 'numeric',
+  timeZone: 'UTC',
+});
 
 function formatValue(value: number, unit: string): string {
   if (unit === '$') return `$${numberFormatter.format(value)}`;
   return `${numberFormatter.format(value)}${unit}`;
+}
+
+function parseDateOnly(isoDate: string): Date {
+  return new Date(`${isoDate}T00:00:00.000Z`);
+}
+
+function formatDateOnlyLong(isoDate: string): string {
+  return dateOnlyLongFormatter.format(parseDateOnly(isoDate));
 }
 
 export default function GoalDetailLong() {
@@ -240,9 +258,7 @@ function HeroCard({ goal }: { goal: LongGoal }) {
           <p className="text-xs text-muted">
             start {formatValue(goal.startValue, goal.unit)} {'->'} target{' '}
             {formatValue(goal.targetValue, goal.unit)} by{' '}
-            {new Intl.DateTimeFormat('en-US', { month: 'long', day: 'numeric' }).format(
-              new Date(goal.targetDate),
-            )}
+            {formatDateOnlyLong(goal.targetDate)}
           </p>
         </div>
         <PacePill
@@ -263,9 +279,7 @@ function HeroCard({ goal }: { goal: LongGoal }) {
           </div>
           <p className="text-xs text-muted">
             of {formatValue(goal.targetTotal, goal.unit)} by{' '}
-            {new Intl.DateTimeFormat('en-US', { month: 'long', day: 'numeric' }).format(
-              new Date(goal.targetDate),
-            )}
+            {formatDateOnlyLong(goal.targetDate)}
           </p>
         </div>
         <div className="text-right">
@@ -285,10 +299,7 @@ function HeroCard({ goal }: { goal: LongGoal }) {
           <span className="text-lg font-medium text-muted">/{stats.total} milestones</span>
         </div>
         <p className="text-xs text-muted">
-          target{' '}
-          {new Intl.DateTimeFormat('en-US', { month: 'long', day: 'numeric' }).format(
-            new Date(goal.targetDate),
-          )}
+          target {formatDateOnlyLong(goal.targetDate)}
         </p>
       </div>
       <div className="text-right">
@@ -441,10 +452,7 @@ function MilestoneList({
             </p>
             <p className="text-xs text-muted">
               {milestone.dueDate
-                ? `Due ${new Intl.DateTimeFormat('en-US', {
-                    month: 'long',
-                    day: 'numeric',
-                  }).format(new Date(milestone.dueDate))}`
+                ? `Due ${formatDateOnlyLong(milestone.dueDate)}`
                 : 'No due date'}
               {milestone.doneAt ? ` · completed ${relativeDate(milestone.doneAt)}` : ''}
             </p>
@@ -618,8 +626,8 @@ function TrendChart({
   const innerH = height - padT - padB;
 
   const sorted = [...goal.logs].sort((a, b) => new Date(a.at).getTime() - new Date(b.at).getTime());
-  const t0 = new Date(goal.startDate).getTime();
-  const t1 = new Date(goal.targetDate).getTime();
+  const t0 = parseDateOnly(goal.startDate).getTime();
+  const t1 = parseDateOnly(goal.targetDate).getTime();
   const values = [goal.startValue, goal.targetValue, ...sorted.map((item) => item.value ?? goal.startValue)];
   const min = Math.min(...values);
   const max = Math.max(...values);
@@ -677,7 +685,7 @@ function TrendChart({
             textAnchor="middle"
             className="fill-muted text-[11px]"
           >
-            {new Intl.DateTimeFormat('en-US', { month: 'short', day: 'numeric' }).format(new Date(tick))}
+            {dateOnlyShortFormatter.format(new Date(tick))}
           </text>
         ))}
         {showPaceLine ? (
