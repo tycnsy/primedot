@@ -5,9 +5,73 @@ import Capacitor
 class AppDelegate: UIResponder, UIApplicationDelegate {
 
     var window: UIWindow?
+    private var didRegisterCustomPlugins = false
+    private var registrationAttempt = 0
+
+    private func findBridgeViewController(from root: UIViewController?) -> CAPBridgeViewController? {
+        if let bridge = root as? CAPBridgeViewController {
+            return bridge
+        }
+        if let nav = root as? UINavigationController {
+            for controller in nav.viewControllers {
+                if let bridge = findBridgeViewController(from: controller) {
+                    return bridge
+                }
+            }
+        }
+        if let tab = root as? UITabBarController {
+            for controller in tab.viewControllers ?? [] {
+                if let bridge = findBridgeViewController(from: controller) {
+                    return bridge
+                }
+            }
+        }
+        if let presented = root?.presentedViewController {
+            return findBridgeViewController(from: presented)
+        }
+        return nil
+    }
+
+    private func activeRootViewController() -> UIViewController? {
+        if let root = window?.rootViewController {
+            return root
+        }
+        let scenes = UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }
+        for scene in scenes {
+            if let keyRoot = scene.windows.first(where: { $0.isKeyWindow })?.rootViewController {
+                return keyRoot
+            }
+            if let anyRoot = scene.windows.first?.rootViewController {
+                return anyRoot
+            }
+        }
+        return UIApplication.shared.windows.first(where: { $0.isKeyWindow })?.rootViewController
+    }
+
+    private func registerCustomPluginsIfNeeded() {
+        if didRegisterCustomPlugins { return }
+        guard let bridgeViewController = findBridgeViewController(from: activeRootViewController()),
+              let bridge = bridgeViewController.bridge else {
+            return
+        }
+        bridge.registerPluginType(PaceWidgetBridgePlugin.self)
+        didRegisterCustomPlugins = true
+    }
+
+    private func scheduleRegistrationRetry() {
+        if didRegisterCustomPlugins { return }
+        if registrationAttempt >= 12 { return }
+        registrationAttempt += 1
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) { [weak self] in
+            guard let self = self else { return }
+            self.registerCustomPluginsIfNeeded()
+            self.scheduleRegistrationRetry()
+        }
+    }
 
     func application(_ application: UIApplication, didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?) -> Bool {
-        // Override point for customization after application launch.
+        registerCustomPluginsIfNeeded()
+        scheduleRegistrationRetry()
         return true
     }
 
@@ -22,11 +86,13 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
     }
 
     func applicationWillEnterForeground(_ application: UIApplication) {
-        // Called as part of the transition from the background to the active state; here you can undo many of the changes made on entering the background.
+        registerCustomPluginsIfNeeded()
+        scheduleRegistrationRetry()
     }
 
     func applicationDidBecomeActive(_ application: UIApplication) {
-        // Restart any tasks that were paused (or not yet started) while the application was inactive. If the application was previously in the background, optionally refresh the user interface.
+        registerCustomPluginsIfNeeded()
+        scheduleRegistrationRetry()
     }
 
     func applicationWillTerminate(_ application: UIApplication) {

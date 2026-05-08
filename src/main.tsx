@@ -6,6 +6,7 @@ import App from './App';
 import { AuthProvider } from './contexts/AuthContext';
 import { ThemeProvider } from './contexts/ThemeContext';
 import './index.css';
+import './whiteboard/whiteboard.css';
 
 const queryClient = new QueryClient({
   defaultOptions: {

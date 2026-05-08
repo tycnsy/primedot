@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Link, NavLink, Outlet, useLocation } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
+import PaceWidgetSync from './PaceWidgetSync';
 import ThemeToggle from './ThemeToggle';
 import RightPaceSidebar from './RightPaceSidebar';
 
@@ -64,11 +65,27 @@ export default function Layout() {
   const rightWidthClass = rightCollapsed ? 'w-12' : 'w-64';
   const mainLeftPadClass = collapsed ? 'md:pl-16' : 'md:pl-60';
   const mainRightPadClass = rightCollapsed ? 'md:pr-12' : 'md:pr-64';
+  // The whiteboard route fills the viewport — drop Layout's centered max-width
+  // and vertical padding so the canvas can bleed edge-to-edge.
+  const isFullBleed = /^\/whiteboards\/[^/]+$/.test(location.pathname);
+  const contentClass = isFullBleed
+    ? 'h-full w-full'
+    : 'mx-auto max-w-5xl px-4 py-8 sm:px-6';
 
   return (
     <div className="relative min-h-screen">
+      <PaceWidgetSync />
+
       {/* Mobile top bar (hidden on md+) */}
-      <header className="sticky top-0 z-30 flex items-center gap-2 border-b border-border/70 bg-bg/70 px-4 py-3 backdrop-blur-xl supports-[backdrop-filter]:bg-bg/55 md:hidden">
+      <header
+        className="sticky top-0 z-30 flex items-center gap-2 border-b border-border/70 bg-bg/70 backdrop-blur-xl supports-[backdrop-filter]:bg-bg/55 md:hidden"
+        style={{
+          paddingTop: 'calc(env(safe-area-inset-top, 0px) + 0.75rem)',
+          paddingRight: 'calc(env(safe-area-inset-right, 0px) + 1rem)',
+          paddingBottom: '0.75rem',
+          paddingLeft: 'calc(env(safe-area-inset-left, 0px) + 1rem)',
+        }}
+      >
         <button
           type="button"
           onClick={() => setMobileOpen(true)}
@@ -86,6 +103,12 @@ export default function Layout() {
             className="inline-block h-1.5 w-1.5 rounded-full bg-accent transition-transform duration-200 group-hover:scale-125"
             aria-hidden
           />
+        </Link>
+        <Link
+          to="/projects/pace"
+          className="btn-ghost ml-auto !px-2.5 !py-1.5 text-xs font-semibold uppercase tracking-wide"
+        >
+          Pace Grid
         </Link>
       </header>
 
@@ -106,6 +129,9 @@ export default function Layout() {
         className={`fixed inset-y-0 left-0 z-50 flex flex-col border-r border-border/70 bg-bg/85 backdrop-blur-xl supports-[backdrop-filter]:bg-bg/65 transition-[width,transform] duration-200 ease-out ${widthClass} ${
           mobileOpen ? 'translate-x-0' : '-translate-x-full'
         } md:translate-x-0`}
+        style={{
+          paddingTop: 'env(safe-area-inset-top, 0px)',
+        }}
       >
         <div
           className={`flex items-center gap-2 px-3 py-3 ${
@@ -175,6 +201,18 @@ export default function Layout() {
             collapsed={collapsed}
             icon={<HabitsIcon />}
           />
+          <SidebarLink
+            to="/goals"
+            label="Goals"
+            collapsed={collapsed}
+            icon={<GoalsIcon />}
+          />
+          <SidebarLink
+            to="/whiteboards"
+            label="Whiteboard"
+            collapsed={collapsed}
+            icon={<WhiteboardIcon />}
+          />
         </nav>
 
         <div className="mt-auto flex flex-col gap-3 border-t border-border/60 px-3 py-3">
@@ -213,7 +251,7 @@ export default function Layout() {
       <main
         className={`min-h-screen transition-[padding] duration-200 ${mainLeftPadClass} ${mainRightPadClass}`}
       >
-        <div className="mx-auto max-w-5xl px-4 py-8 sm:px-6">
+        <div className={contentClass}>
           <Outlet />
         </div>
       </main>
@@ -428,6 +466,47 @@ function HabitsIcon() {
       <circle cx="5" cy="8" r="0.8" fill="currentColor" />
       <circle cx="7.5" cy="10.5" r="0.8" fill="currentColor" />
       <circle cx="12" cy="5" r="0.8" fill="currentColor" />
+    </svg>
+  );
+}
+
+function GoalsIcon() {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      width="16"
+      height="16"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.6"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden
+    >
+      <circle cx="12" cy="12" r="8" />
+      <circle cx="12" cy="12" r="3" />
+      <path d="M20 4l-5.5 5.5" />
+    </svg>
+  );
+}
+
+function WhiteboardIcon() {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      width="16"
+      height="16"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.6"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden
+    >
+      <rect x="3" y="4" width="18" height="13" rx="1.5" />
+      <path d="M8 21h8" />
+      <path d="M12 17v4" />
+      <path d="M8 10l2 2 4-4" />
     </svg>
   );
 }

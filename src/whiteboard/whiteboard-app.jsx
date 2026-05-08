@@ -1,0 +1,335 @@
+import React, { useState, useEffect, useRef, useCallback } from 'react';
+import { WBCanvas, newSeed, newId } from './whiteboard-canvas';
+import {
+  Toolbar as WBToolbar,
+  PropsPanel as WBPropsPanel,
+  Library as WBLibrary,
+  HistoryControls as WBHistoryControls,
+  BrandChip as WBBrandChip,
+  Hint as WBHint,
+} from './whiteboard-toolbar';
+import {
+  TweaksPanel,
+  useTweaks,
+  TweakSection,
+  TweakRadio,
+  TweakColor,
+  TweakToggle,
+  TweakSlider,
+} from './tweaks-panel';
+import { useBoardElements, useBoardPalettes } from './useBoardPersistence';
+
+// ============= Tweaks =============
+const TWEAK_DEFAULTS = /*EDITMODE-BEGIN*/{
+  "theme": "light",
+  "accent": "#5B7CFA",
+  "sketchiness": 1,
+  "showGrid": true,
+  "showLibrary": true
+}/*EDITMODE-END*/;
+
+function applyTweaks(t) {
+  const root = document.documentElement;
+  root.dataset.theme = t.theme;
+  const hex = t.accent || '#5B7CFA';
+  const m = hex.match(/^#([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/i);
+  if (m) {
+    const r = parseInt(m[1],16), g = parseInt(m[2],16), b = parseInt(m[3],16);
+    root.style.setProperty('--accent', `${r} ${g} ${b}`);
+  }
+}
+
+// ============= Sample / starter elements =============
+function makeStarterElements() {
+  const seed = () => Math.floor(Math.random() * 2 ** 31);
+  return [
+    { id: 'st1', type: 'rectangle', x: 280, y: 120, w: 240, h: 130,
+      stroke: '#1e1e1e', fill: '#ffe5b8', fillStyle: 'hachure', strokeWidth: 2, roughness: 1, edge: 'round', seed: seed() },
+    { id: 'st2', type: 'text', x: 308, y: 150, w: 200, h: 60,
+      text: 'Living room\nlayout sketch', fontSize: 24, stroke: '#1e1e1e', seed: seed() },
+    { id: 'st3', type: 'ellipse', x: 580, y: 130, w: 130, h: 130,
+      stroke: '#1971c2', fill: '#d0e7ff', fillStyle: 'hachure', strokeWidth: 2, roughness: 1, edge: 'sharp', seed: seed() },
+    { id: 'st4', type: 'text', x: 605, y: 170, w: 100, h: 50,
+      text: 'sofa', fontSize: 26, stroke: '#1971c2', seed: seed() },
+    { id: 'st5', type: 'arrow', x: 525, y: 195, w: 50, h: 0,
+      stroke: '#1e1e1e', strokeWidth: 1.6, roughness: 1, fill: 'transparent', seed: seed() },
+    { id: 'st6', type: 'diamond', x: 280, y: 320, w: 180, h: 110,
+      stroke: '#2f9e44', fill: '#d3f0d9', fillStyle: 'cross-hatch', strokeWidth: 2, roughness: 1.5, edge: 'sharp', seed: seed() },
+    { id: 'st7', type: 'text', x: 318, y: 348, w: 140, h: 40,
+      text: 'rug area', fontSize: 22, stroke: '#2f9e44', seed: seed() },
+    { id: 'st8', type: 'rectangle', x: 540, y: 320, w: 180, h: 110,
+      stroke: '#e03131', fill: 'transparent', strokeWidth: 2, roughness: 2, edge: 'sharp', seed: seed() },
+    { id: 'st9', type: 'text', x: 568, y: 348, w: 140, h: 40,
+      text: 'bookshelf?', fontSize: 22, stroke: '#e03131', seed: seed() },
+    { id: 'st10', type: 'arrow', x: 460, y: 375, w: 80, h: 0,
+      stroke: '#1e1e1e', strokeWidth: 1.6, roughness: 1, fill: 'transparent', seed: seed() },
+    { id: 'st11', type: 'freedraw', x: 760, y: 140, w: 0, h: 0,
+      points: [[0,0],[10,-15],[24,-22],[40,-18],[55,-5],[60,15],[55,38],[40,52],[20,55],[5,46],[-3,28],[0,8]],
+      stroke: '#9c36b5', fill: 'transparent', strokeWidth: 2, roughness: 0, seed: seed() },
+    { id: 'st12', type: 'text', x: 770, y: 230, w: 80, h: 30,
+      text: 'tv?', fontSize: 22, stroke: '#9c36b5', seed: seed() },
+    { id: 'st13', type: 'text', x: 200, y: 60, w: 200, h: 40,
+      text: '✦ House plan', fontSize: 32, stroke: '#1e1e1e', seed: seed() },
+    { id: 'st14', type: 'line', x: 200, y: 105, w: 580, h: 0,
+      stroke: '#1e1e1e', strokeWidth: 1, roughness: 0.5, fill: 'transparent', seed: seed() },
+  ];
+}
+
+// ============= Background picker (one-time, on new board) =============
+function BgPickerModal({ onConfirm }) {
+  const presets = ['#ffffff', '#fafaf7', '#fff7e6', '#eef5ff', '#eef7ee', '#f7eef5', '#1e1e1e'];
+  const [chosen, setChosen] = React.useState('#ffffff');
+  const [custom, setCustom] = React.useState('#ffffff');
+  return (
+    <div className="wb-bgpicker-overlay">
+      <div className="wb-bgpicker-card">
+        <div className="wb-bgpicker-title">Choose a background</div>
+        <div className="wb-bgpicker-sub">Set the canvas color for this whiteboard. This is locked once chosen.</div>
+        <div className="wb-bgpicker-preview" style={{ background: chosen }}/>
+        <div className="wb-bgpicker-presets">
+          {presets.map(p => (
+            <button key={p} className="wb-bgpicker-preset"
+              data-active={chosen === p}
+              style={{ background: p }}
+              onClick={() => setChosen(p)}/>
+          ))}
+        </div>
+        <div className="wb-bgpicker-row">
+          <label className="wb-bgpicker-customlabel">
+            <input type="color" value={custom} onChange={(e) => { setCustom(e.target.value); setChosen(e.target.value); }}/>
+            <span>Custom</span>
+          </label>
+          <button className="wb-bgpicker-confirm" onClick={() => onConfirm(chosen)}>Create board</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ============= App =============
+export function Whiteboard({ boardId }) {
+  const [tweaks, setTweak] = useTweaks(TWEAK_DEFAULTS);
+  useEffect(() => { applyTweaks(tweaks); }, [tweaks]);
+
+  const [tool, setTool] = useState('select');
+  const [docName, setDocName] = useState('House plan');
+  const { elements, setElements, ready: elementsReady } = useBoardElements(boardId, makeStarterElements);
+  const [selectedIds, setSelectedIds] = useState([]);
+  const [view, setView] = useState({ x: 220, y: 80, scale: 1 });
+  const canvasRef = useRef(null);
+
+  const [style, setStyle] = useState({
+    stroke: '#1e1e1e',
+    fill: 'transparent',
+    fillStyle: 'hachure',
+    strokeWidth: 2,
+    roughness: 1,
+    textAlign: 'center',
+    edge: 'sharp',
+  });
+
+  const {
+    strokePalette,
+    setStrokePalette,
+    fillPalette,
+    setFillPalette,
+    bgColor,
+    commitBgColor: commitBgColorRaw,
+    clearBgColor,
+  } = useBoardPalettes(boardId);
+  const addStrokeColor = (c) => setStrokePalette(p => p.includes(c) ? p : [...p, c]);
+  const addFillColor = (c) => setFillPalette(p => p.includes(c) ? p : [...p, c]);
+  const removeStrokeColor = (c) => setStrokePalette(p => p.filter(x => x !== c));
+  const removeFillColor = (c) => setFillPalette(p => p.filter(x => x !== c));
+
+  const showBgPicker = bgColor == null;
+  const commitBgColor = (c) => commitBgColorRaw(c);
+  const newBoard = () => {
+    clearBgColor();
+    setElements([]);
+    setSelectedIds([]);
+  };
+  useEffect(() => {
+    if (bgColor) {
+      // convert hex -> r g b for the css variable
+      const m = bgColor.match(/^#([0-9a-f]{6})$/i);
+      if (m) {
+        const r = parseInt(m[1].slice(0,2),16), g = parseInt(m[1].slice(2,4),16), b = parseInt(m[1].slice(4,6),16);
+        document.documentElement.style.setProperty('--wb-canvas', `${r} ${g} ${b}`);
+      }
+    }
+  }, [bgColor]);
+
+  // Sync sketchiness tweak -> style default
+  useEffect(() => {
+    setStyle(s => ({ ...s, roughness: tweaks.sketchiness }));
+  }, [tweaks.sketchiness]);
+
+  // Show grid
+  useEffect(() => {
+    const stage = document.querySelector('.wb-stage');
+    if (stage) stage.style.setProperty('--wb-grid-display', tweaks.showGrid ? 'block' : 'none');
+  }, [tweaks.showGrid]);
+
+  // History — seeded once the persisted elements have loaded so undo doesn't
+  // revert past the initial state.
+  const historyRef = useRef({ stack: [], index: -1 });
+  const historySeededRef = useRef(false);
+  const [historyTick, setHistoryTick] = useState(0);
+  const pushHistory = useCallback(() => {
+    setTimeout(() => {
+      const h = historyRef.current;
+      const snap = JSON.stringify(elementsRef.current);
+      if (h.stack[h.index] === snap) return;
+      h.stack = h.stack.slice(0, h.index + 1);
+      h.stack.push(snap);
+      if (h.stack.length > 100) h.stack.shift();
+      h.index = h.stack.length - 1;
+      setHistoryTick(t => t + 1);
+    }, 0);
+  }, []);
+  const elementsRef = useRef(elements);
+  useEffect(() => { elementsRef.current = elements; }, [elements]);
+  useEffect(() => {
+    if (!elementsReady || historySeededRef.current) return;
+    historyRef.current = { stack: [JSON.stringify(elements)], index: 0 };
+    historySeededRef.current = true;
+    setHistoryTick(t => t + 1);
+  }, [elementsReady, elements]);
+
+  const undo = () => {
+    const h = historyRef.current;
+    if (h.index <= 0) return;
+    h.index -= 1;
+    setElements(JSON.parse(h.stack[h.index]));
+    setSelectedIds([]);
+    setHistoryTick(t => t + 1);
+  };
+  const redo = () => {
+    const h = historyRef.current;
+    if (h.index >= h.stack.length - 1) return;
+    h.index += 1;
+    setElements(JSON.parse(h.stack[h.index]));
+    setSelectedIds([]);
+    setHistoryTick(t => t + 1);
+  };
+
+  // Library insert
+  const insertLibraryItem = (kind) => {
+    const cx = (window.innerWidth / 2 - view.x) / view.scale;
+    const cy = (window.innerHeight / 2 - view.y) / view.scale;
+    const newEls = [];
+    const seed = () => newSeed();
+    if (kind === 'sticky') {
+      newEls.push({ id: newId(), type: 'rectangle', x: cx - 60, y: cy - 60, w: 120, h: 120,
+        stroke: '#1e1e1e', fill: '#ffe5b8', fillStyle: 'solid', strokeWidth: 1.6, roughness: 1, edge: 'sharp', seed: seed() });
+      newEls.push({ id: newId(), type: 'text', x: cx - 50, y: cy - 40, w: 100, h: 40,
+        text: 'note', fontSize: 22, stroke: '#1e1e1e', seed: seed() });
+    } else if (kind === 'flow') {
+      newEls.push({ id: newId(), type: 'rectangle', x: cx - 130, y: cy - 30, w: 100, h: 60,
+        stroke: '#1e1e1e', fill: '#d0e7ff', fillStyle: 'hachure', strokeWidth: 1.6, roughness: 1, edge: 'round', seed: seed() });
+      newEls.push({ id: newId(), type: 'rectangle', x: cx + 30, y: cy - 30, w: 100, h: 60,
+        stroke: '#1e1e1e', fill: '#d0e7ff', fillStyle: 'hachure', strokeWidth: 1.6, roughness: 1, edge: 'round', seed: seed() });
+      newEls.push({ id: newId(), type: 'arrow', x: cx - 30, y: cy, w: 60, h: 0,
+        stroke: '#1e1e1e', strokeWidth: 1.6, roughness: 1, fill: 'transparent', seed: seed() });
+    } else if (kind === 'vote') {
+      for (let i = 0; i < 3; i++) {
+        newEls.push({ id: newId(), type: 'ellipse', x: cx - 50 + i * 35, y: cy - 10, w: 20, h: 20,
+          stroke: '#e03131', fill: '#e03131', fillStyle: 'solid', strokeWidth: 1.6, roughness: 1, seed: seed() });
+      }
+    } else if (kind === 'frame') {
+      newEls.push({ id: newId(), type: 'rectangle', x: cx - 200, y: cy - 130, w: 400, h: 260,
+        stroke: '#1e1e1e', fill: 'transparent', strokeWidth: 2, roughness: 0.5, edge: 'sharp', seed: seed() });
+    } else if (kind === 'arrow-grid') {
+      newEls.push({ id: newId(), type: 'line', x: cx - 100, y: cy, w: 200, h: 0, stroke: '#1e1e1e', strokeWidth: 1.6, roughness: 0.5, fill: 'transparent', seed: seed() });
+      newEls.push({ id: newId(), type: 'line', x: cx, y: cy - 100, w: 0, h: 200, stroke: '#1e1e1e', strokeWidth: 1.6, roughness: 0.5, fill: 'transparent', seed: seed() });
+    } else if (kind === 'cluster') {
+      const colors = ['#ffd9d9','#d0e7ff','#d3f0d9'];
+      for (let i = 0; i < 3; i++) {
+        newEls.push({ id: newId(), type: 'ellipse', x: cx - 80 + i * 50, y: cy - 40 + (i % 2) * 30, w: 80, h: 80,
+          stroke: '#1e1e1e', fill: colors[i], fillStyle: 'hachure', strokeWidth: 1.6, roughness: 1.5, seed: seed() });
+      }
+    }
+    setElements(prev => [...prev, ...newEls]);
+    pushHistory();
+  };
+
+  // Keyboard shortcuts
+  useEffect(() => {
+    const onKey = (e) => {
+      const tag = e.target.tagName;
+      if (tag === 'INPUT' || tag === 'TEXTAREA') return;
+      const k = e.key.toLowerCase();
+      if ((e.metaKey || e.ctrlKey) && k === 'z' && !e.shiftKey) { undo(); e.preventDefault(); return; }
+      if ((e.metaKey || e.ctrlKey) && (k === 'z' && e.shiftKey || k === 'y')) { redo(); e.preventDefault(); return; }
+      const map = {
+        v: 'select', h: 'hand', r: 'rectangle', d: 'diamond', o: 'ellipse',
+        a: 'arrow', l: 'line', b: 'freedraw', t: 'text', e: 'eraser',
+      };
+      if (map[k] && !e.metaKey && !e.ctrlKey) { setTool(map[k]); }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, []);
+
+  const canUndo = historyRef.current.index > 0;
+  const canRedo = historyRef.current.index < historyRef.current.stack.length - 1;
+  void historyTick;
+
+  return (
+    <div className="wb-shell">
+      <div className="wb-stage">
+        <WBCanvas
+          ref={canvasRef}
+          tool={tool} setTool={setTool}
+          style={style}
+          elements={elements} setElements={setElements}
+          selectedIds={selectedIds} setSelectedIds={setSelectedIds}
+          view={view} setView={setView}
+          pushHistory={pushHistory}
+        />
+
+        <WBBrandChip docName={docName} setDocName={setDocName}/>
+        <WBToolbar tool={tool} setTool={setTool}/>
+        <WBPropsPanel
+          style={style} setStyle={setStyle}
+          hasSelection={selectedIds.length > 0}
+          strokePalette={strokePalette}
+          fillPalette={fillPalette}
+          onAddStrokeColor={addStrokeColor}
+          onAddFillColor={addFillColor}
+          onRemoveStrokeColor={removeStrokeColor}
+          onRemoveFillColor={removeFillColor}
+        />
+        <WBHistoryControls canUndo={canUndo} canRedo={canRedo} onUndo={undo} onRedo={redo}/>
+        {tweaks.showLibrary ? <WBLibrary onInsert={insertLibraryItem}/> : null}
+        <WBHint/>
+        {showBgPicker ? <BgPickerModal onConfirm={commitBgColor}/> : null}
+        <button className="wb-new-board-btn" title="New whiteboard" onClick={newBoard}>+ New board</button>
+      </div>
+
+      <TweaksPanel title="Tweaks">
+        <TweakSection title="Appearance">
+          <TweakRadio label="Theme" value={tweaks.theme}
+            onChange={(v) => setTweak('theme', v)}
+            options={[{ value:'light', label:'Light' }, { value:'dark', label:'Dark' }]}/>
+          <TweakColor label="Accent" value={tweaks.accent}
+            onChange={(v) => setTweak('accent', v)}
+            options={['#5B7CFA','#0A5BFF','#7B5EE6','#21A06A','#E45D2E','#1F1F1F']}/>
+        </TweakSection>
+        <TweakSection title="Drawing">
+          <TweakSlider label="Sketchiness" value={tweaks.sketchiness}
+            min={0} max={2} step={1}
+            onChange={(v) => setTweak('sketchiness', v)}/>
+        </TweakSection>
+        <TweakSection title="Canvas">
+          <TweakToggle label="Dot grid" value={tweaks.showGrid}
+            onChange={(v) => setTweak('showGrid', v)}/>
+          <TweakToggle label="Library shelf" value={tweaks.showLibrary}
+            onChange={(v) => setTweak('showLibrary', v)}/>
+        </TweakSection>
+      </TweaksPanel>
+    </div>
+  );
+}
+

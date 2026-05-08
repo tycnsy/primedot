@@ -18,6 +18,9 @@
     --success: 5 150 105;
     --warn: 217 119 6;
     --danger: 225 29 72;
+    --pad-card: 16px;
+    --row-h: 44px;
+    --gap-row: 6px;
   }
 
   html.theme-warm {
@@ -52,6 +55,24 @@
     --success: 52 211 153;
     --warn: 251 191 36;
     --danger: 251 113 133;
+  }
+
+  html[data-density='cozy'] {
+    --pad-card: 20px;
+    --row-h: 50px;
+    --gap-row: 10px;
+  }
+
+  html[data-density='comfortable'] {
+    --pad-card: 16px;
+    --row-h: 44px;
+    --gap-row: 6px;
+  }
+
+  html[data-density='compact'] {
+    --pad-card: 12px;
+    --row-h: 36px;
+    --gap-row: 2px;
   }
 
   html {
@@ -143,6 +164,7 @@
 
   .card {
     @apply rounded-xl2 border border-border bg-surface p-4 shadow-elev1;
+    padding: var(--pad-card, 16px);
   }
 
   .card-interactive {

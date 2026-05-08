@@ -62,6 +62,7 @@ npm run ios:sync
 | ------------------------ | ----------------------------------------------------------------------------------------- |
 | `VITE_SUPABASE_URL`      | Your Supabase project URL                                                                 |
 | `VITE_SUPABASE_ANON_KEY` | The Supabase **publishable / anon** key (safe to ship in the client; RLS enforces access) |
+| `VITE_MOBILE_AUTH_REDIRECT_URL` | Native app OAuth callback URL (defaults to `com.prime.app://auth/callback`) |
 
 
 Local dev reads them from `.env.local`. Vercel reads them from the project's Environment Variables settings.
@@ -89,6 +90,7 @@ This creates `projects`, `tasks`, `pace_settings`, `project_templates`, `templat
 5. In Supabase → **Authentication → URL Configuration**, add your site URLs to the allow list:
   - `http://localhost:5173`
   - `https://<your-vercel-domain>`
+  - `com.prime.app://auth/callback` (for iOS/Capacitor OAuth return)
 6. In Supabase → **Authentication → URL Configuration**, set the email confirmation redirect URL(s) to the same app origins above so magic links return to your app.
 
 After this, the `/login` page supports **Sign in with Google**, **Email sign in**, and **Email sign up** with required confirmation.

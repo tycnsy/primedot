@@ -6,6 +6,7 @@ const tasksKey = (projectId: string | undefined) =>
   ['tasks', projectId] as const;
 const tasksManyKey = (projectIds: string[]) =>
   ['tasks', 'many', ...projectIds] as const;
+const PROJECT_IDS_CHUNK_SIZE = 50;
 
 function isMissingTaskSortOrderColumn(error: unknown): boolean {
   if (!error || typeof error !== 'object') return false;
@@ -59,31 +60,42 @@ export function useTasksForProjects(projectIds: string[]) {
     queryKey: tasksManyKey(projectIds),
     enabled: projectIds.length > 0,
     queryFn: async (): Promise<Task[]> => {
-      const { data, error } = await supabase
-        .from('tasks')
-        .select('*')
-        .in('project_id', projectIds)
-        .order('project_id', { ascending: true })
-        .order('sort_order', { ascending: true })
-        .order('created_at', { ascending: true });
-      if (!error) return (data ?? []) as Task[];
+      const rows: Task[] = [];
 
-      if (!isMissingTaskSortOrderColumn(error)) throw error;
+      for (let i = 0; i < projectIds.length; i += PROJECT_IDS_CHUNK_SIZE) {
+        const projectIdsChunk = projectIds.slice(i, i + PROJECT_IDS_CHUNK_SIZE);
+        const { data, error } = await supabase
+          .from('tasks')
+          .select('*')
+          .in('project_id', projectIdsChunk)
+          .order('project_id', { ascending: true })
+          .order('sort_order', { ascending: true })
+          .order('created_at', { ascending: true });
 
-      const fallback = await supabase
-        .from('tasks')
-        .select('*')
-        .in('project_id', projectIds)
-        .order('project_id', { ascending: true })
-        .order('created_at', { ascending: true });
-      if (fallback.error) throw fallback.error;
+        if (!error) {
+          rows.push(...((data ?? []) as Task[]));
+          continue;
+        }
+        if (!isMissingTaskSortOrderColumn(error)) throw error;
 
-      const counters = new Map<string, number>();
-      return ((fallback.data ?? []) as Task[]).map((task) => {
-        const next = counters.get(task.project_id) ?? 0;
-        counters.set(task.project_id, next + 1);
-        return { ...task, sort_order: next };
-      });
+        const fallback = await supabase
+          .from('tasks')
+          .select('*')
+          .in('project_id', projectIdsChunk)
+          .order('project_id', { ascending: true })
+          .order('created_at', { ascending: true });
+        if (fallback.error) throw fallback.error;
+
+        const counters = new Map<string, number>();
+        const normalized = ((fallback.data ?? []) as Task[]).map((task) => {
+          const next = counters.get(task.project_id) ?? 0;
+          counters.set(task.project_id, next + 1);
+          return { ...task, sort_order: next };
+        });
+        rows.push(...normalized);
+      }
+
+      return rows;
     },
   });
 }

@@ -6,6 +6,7 @@ const paceKey = (projectId: string | undefined) =>
   ['pace_settings', projectId] as const;
 const paceManyKey = (projectIds: string[]) =>
   ['pace_settings', 'many', ...projectIds] as const;
+const PROJECT_IDS_CHUNK_SIZE = 50;
 
 export function usePaceSettings(projectId: string | undefined) {
   return useQuery({
@@ -28,19 +29,21 @@ export function usePaceSettingsForProjects(projectIds: string[]) {
     queryKey: paceManyKey(projectIds),
     enabled: projectIds.length > 0,
     queryFn: async (): Promise<Record<string, PaceSettings>> => {
-      const { data, error } = await supabase
-        .from('pace_settings')
-        .select('*')
-        .in('project_id', projectIds);
-      if (error) throw error;
+      const rows: PaceSettings[] = [];
+      for (let i = 0; i < projectIds.length; i += PROJECT_IDS_CHUNK_SIZE) {
+        const projectIdsChunk = projectIds.slice(i, i + PROJECT_IDS_CHUNK_SIZE);
+        const { data, error } = await supabase
+          .from('pace_settings')
+          .select('*')
+          .in('project_id', projectIdsChunk);
+        if (error) throw error;
+        rows.push(...((data ?? []) as PaceSettings[]));
+      }
 
-      return ((data ?? []) as PaceSettings[]).reduce<Record<string, PaceSettings>>(
-        (acc, pace) => {
-          acc[pace.project_id] = pace;
-          return acc;
-        },
-        {},
-      );
+      return rows.reduce<Record<string, PaceSettings>>((acc, pace) => {
+        acc[pace.project_id] = pace;
+        return acc;
+      }, {});
     },
   });
 }
