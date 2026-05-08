@@ -417,15 +417,6 @@ function TaskProgressRow({
           <p className="mt-0.5 text-xs font-sans tabular-nums text-subtle">
             {progressLabel}
           </p>
-          <button
-            type="button"
-            disabled={!editable}
-            onClick={handlePaste}
-            className="btn-ghost mt-1 h-6 px-2 text-[11px]"
-            title="Paste timecode from clipboard (drops :ff frames)"
-          >
-            Paste
-          </button>
         </div>
         <input
           disabled={!editable}
@@ -438,7 +429,16 @@ function TaskProgressRow({
           }}
         />
       </div>
-      <div className="mt-2 flex justify-end">
+      <div className="mt-2 flex items-center justify-between gap-2">
+        <button
+          type="button"
+          disabled={!editable}
+          onClick={handlePaste}
+          className="btn-ghost h-6 px-2 text-[11px]"
+          title="Paste timecode from clipboard (drops :ff frames)"
+        >
+          Paste
+        </button>
         <span className="w-24 text-right text-[11px] text-muted">{predictionLabel}</span>
       </div>
       {error ? <p className="mt-1 text-xs text-danger">{error}</p> : null}
