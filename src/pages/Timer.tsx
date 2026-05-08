@@ -13,6 +13,10 @@ import type { PaceSettings, Project, Task } from '../lib/types';
 
 type SessionMode = 'idle' | 'project' | 'bulk';
 const GOAL_DELTA_STORAGE_KEY = 'prime.timer.show_goal_delta';
+type GoalSnapshot = {
+  projectedGoal: number;
+  startProgress: number;
+};
 
 export default function Timer() {
   const { id: routeProjectId } = useParams();
@@ -34,7 +38,9 @@ export default function Timer() {
       return false;
     }
   });
-  const [goalByTaskId, setGoalByTaskId] = useState<Record<string, number>>({});
+  const [goalSnapshotByTaskId, setGoalSnapshotByTaskId] = useState<
+    Record<string, GoalSnapshot>
+  >({});
   const lastGoalSnapshotStartedAt = useRef<number | null>(null);
 
   useEffect(() => {
@@ -60,7 +66,7 @@ export default function Timer() {
 
   useEffect(() => {
     if (!timer.startedAt) {
-      setGoalByTaskId({});
+      setGoalSnapshotByTaskId({});
       lastGoalSnapshotStartedAt.current = null;
       return;
     }
@@ -68,20 +74,23 @@ export default function Timer() {
     const startedAtMs = timer.startedAt.getTime();
     if (lastGoalSnapshotStartedAt.current === startedAtMs) return;
 
-    const nextGoalByTaskId: Record<string, number> = {};
+    const nextGoalSnapshotByTaskId: Record<string, GoalSnapshot> = {};
     for (const task of tasksQ.data) {
       if (task.status === 'complete') continue;
       const project = projectMap.get(task.project_id);
       if (!project) continue;
-      nextGoalByTaskId[task.id] = goalProgress(
-        task,
-        project,
-        task.current_progress,
-        timer.durationSeconds,
-      );
+      nextGoalSnapshotByTaskId[task.id] = {
+        projectedGoal: goalProgress(
+          task,
+          project,
+          task.current_progress,
+          timer.durationSeconds,
+        ),
+        startProgress: task.current_progress,
+      };
     }
 
-    setGoalByTaskId(nextGoalByTaskId);
+    setGoalSnapshotByTaskId(nextGoalSnapshotByTaskId);
     lastGoalSnapshotStartedAt.current = startedAtMs;
   }, [projectMap, tasksQ.data, timer.durationSeconds, timer.startedAt]);
 
@@ -198,7 +207,7 @@ export default function Timer() {
             key={project.id}
             project={project}
             tasks={remainingByProject[project.id] ?? []}
-            goalByTaskId={goalByTaskId}
+            goalSnapshotByTaskId={goalSnapshotByTaskId}
             timerDurationSeconds={timer.durationSeconds}
             showGoalDelta={showGoalDelta}
             active={mode === 'project' && activeProjectId === project.id}
@@ -219,7 +228,7 @@ export default function Timer() {
 interface ProjectTimerColumnProps {
   project: Project;
   tasks: Task[];
-  goalByTaskId: Record<string, number>;
+  goalSnapshotByTaskId: Record<string, GoalSnapshot>;
   timerDurationSeconds: number;
   showGoalDelta: boolean;
   active: boolean;
@@ -233,7 +242,7 @@ interface ProjectTimerColumnProps {
 function ProjectTimerColumn({
   project,
   tasks,
-  goalByTaskId,
+  goalSnapshotByTaskId,
   timerDurationSeconds,
   showGoalDelta,
   active,
@@ -302,7 +311,8 @@ function ProjectTimerColumn({
               key={task.id}
               task={task}
               project={project}
-              predictedGoal={goalByTaskId[task.id]}
+              predictedGoal={goalSnapshotByTaskId[task.id]?.projectedGoal}
+              predictedStartProgress={goalSnapshotByTaskId[task.id]?.startProgress}
               timerDurationSeconds={timerDurationSeconds}
               showGoalDelta={showGoalDelta}
               editable={editable}
@@ -319,6 +329,7 @@ function TaskProgressRow({
   task,
   project,
   predictedGoal,
+  predictedStartProgress,
   timerDurationSeconds,
   showGoalDelta,
   editable,
@@ -327,6 +338,7 @@ function TaskProgressRow({
   task: Task;
   project: Project;
   predictedGoal?: number;
+  predictedStartProgress?: number;
   timerDurationSeconds: number;
   showGoalDelta: boolean;
   editable: boolean;
@@ -418,7 +430,11 @@ function TaskProgressRow({
   const normalizedGoal = isCustom
     ? Math.floor(displayedGoal)
     : Math.max(0, Math.round(displayedGoal));
-  const goalDelta = normalizedGoal - task.current_progress;
+  const baselineProgress =
+    typeof predictedStartProgress === 'number'
+      ? predictedStartProgress
+      : task.current_progress;
+  const goalDelta = normalizedGoal - baselineProgress;
   const deltaLabel = isCustom
     ? `${goalDelta >= 0 ? '+' : '-'}${Math.abs(goalDelta)}`
     : `${goalDelta >= 0 ? '+' : '-'}${formatHMS(Math.abs(goalDelta))}`;

@@ -146,6 +146,27 @@ describe('progressDelta + goalProgress (SPEC worked example)', () => {
   });
 });
 
+describe('session delta baseline semantics', () => {
+  it('delta is anchored to session start progress, not live edits', () => {
+    const task = baseTask({
+      type: 'scaling',
+      scaling_modifier: 3,
+      current_progress: 300,
+    });
+    const projectedGoal = goalProgress(task, baseProject, 300, 540);
+    const normalizedGoal = Math.max(0, Math.round(projectedGoal));
+    const frozenDelta = normalizedGoal - 300;
+
+    // Simulate a mid-session progress update after projection snapshot.
+    const liveProgressAfterEdit = 330;
+    const legacyLiveDelta = normalizedGoal - liveProgressAfterEdit;
+
+    expect(frozenDelta).toBe(60);
+    expect(legacyLiveDelta).toBe(30);
+    expect(frozenDelta).not.toBe(legacyLiveDelta);
+  });
+});
+
 describe('project totals', () => {
   it('sums task length and progress', () => {
     const tasks: Task[] = [
