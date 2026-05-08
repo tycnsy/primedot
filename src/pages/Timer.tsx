@@ -5,7 +5,8 @@ import { useTasksForProjects, useUpdateAnyTask } from '../hooks/useTasks';
 import { useTimer } from '../hooks/useTimer';
 import TimerDisplay from '../components/TimerDisplay';
 import { goalProgress, progressTarget } from '../lib/calc';
-import { formatHMS, parseHMS } from '../lib/time';
+import { formatHMS, parseHMS, parseHMSWithOptionalFrames } from '../lib/time';
+import { playPasteChime } from '../lib/chime';
 import type { Project, Task } from '../lib/types';
 
 type SessionMode = 'idle' | 'project' | 'bulk';
@@ -341,6 +342,43 @@ function TaskProgressRow({
     await updateTask(task.id, { current_progress: next });
   };
 
+  const handlePaste = async () => {
+    if (!editable) return;
+    setError(null);
+    let text: string;
+    try {
+      text = await navigator.clipboard.readText();
+    } catch {
+      setError('Clipboard unavailable.');
+      return;
+    }
+    let next: number;
+    if (isCustom) {
+      const value = Number.parseInt(text.trim(), 10);
+      if (!Number.isFinite(value) || value < 0) {
+        setError('Clipboard not a number.');
+        return;
+      }
+      next = value;
+    } else {
+      const value = parseHMSWithOptionalFrames(text);
+      if (value == null) {
+        setError('Clipboard not hh:mm:ss[:ff].');
+        return;
+      }
+      next = value;
+    }
+    try {
+      if (next !== task.current_progress) {
+        await updateTask(task.id, { current_progress: next });
+      }
+      setDraft(isCustom ? String(next) : formatHMS(next));
+      playPasteChime();
+    } catch {
+      setError('Could not save progress.');
+    }
+  };
+
   const total = progressTarget(task, project);
   const progressLabel = isCustom
     ? `${task.current_progress} / ${total > 0 ? total : '?'}`
@@ -379,6 +417,15 @@ function TaskProgressRow({
           <p className="mt-0.5 text-xs font-sans tabular-nums text-subtle">
             {progressLabel}
           </p>
+          <button
+            type="button"
+            disabled={!editable}
+            onClick={handlePaste}
+            className="btn-ghost mt-1 h-6 px-2 text-[11px]"
+            title="Paste timecode from clipboard (drops :ff frames)"
+          >
+            Paste
+          </button>
         </div>
         <input
           disabled={!editable}
