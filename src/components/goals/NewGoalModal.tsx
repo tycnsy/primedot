@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import type { NewLongGoalInput, Tag } from '../../features/goals';
+import type { LongGoal, NewLongGoalInput, Tag } from '../../features/goals';
 import ModalShell from './ModalShell';
 
 type GoalDraftType = 'trend' | 'accumulation' | 'milestone';
@@ -13,8 +13,11 @@ interface MilestoneDraft {
 interface NewGoalModalProps {
   open: boolean;
   tags: Tag[];
+  mode?: 'create' | 'edit';
+  initialGoal?: LongGoal | null;
   onClose: () => void;
-  onCreate: (goal: NewLongGoalInput) => void;
+  onCreate?: (goal: NewLongGoalInput) => void | Promise<void>;
+  onSave?: (goal: NewLongGoalInput) => void | Promise<void>;
 }
 
 function todayIsoDate(): string {
@@ -25,7 +28,15 @@ function uid(): string {
   return `${Date.now()}_${Math.round(Math.random() * 1_000_000)}`;
 }
 
-export default function NewGoalModal({ open, tags, onClose, onCreate }: NewGoalModalProps) {
+export default function NewGoalModal({
+  open,
+  tags,
+  mode = 'create',
+  initialGoal = null,
+  onClose,
+  onCreate,
+  onSave,
+}: NewGoalModalProps) {
   const [step, setStep] = useState<1 | 2>(1);
   const [goalType, setGoalType] = useState<GoalDraftType>('trend');
   const [name, setName] = useState('');
@@ -46,8 +57,48 @@ export default function NewGoalModal({ open, tags, onClose, onCreate }: NewGoalM
 
   useEffect(() => {
     if (!open) return;
+    if (mode === 'edit' && initialGoal) {
+      setStep(2);
+      setGoalType(initialGoal.type);
+      setName(initialGoal.name);
+      setDescription(initialGoal.description ?? '');
+      setTargetDate(initialGoal.targetDate);
+      setSelectedTagIds(initialGoal.tags ?? []);
+      if (initialGoal.type === 'trend') {
+        setTrendStartValue(String(initialGoal.startValue));
+        setTrendTargetValue(String(initialGoal.targetValue));
+        setTrendUnit(initialGoal.unit);
+      }
+      if (initialGoal.type === 'accumulation') {
+        setAccumTargetTotal(String(initialGoal.targetTotal));
+        setAccumUnit(initialGoal.unit);
+      }
+      if (initialGoal.type === 'milestone') {
+        setMilestones(
+          initialGoal.milestones.length > 0
+            ? initialGoal.milestones.map((item) => ({
+                id: item.id,
+                name: item.name,
+                dueDate: item.dueDate ?? '',
+              }))
+            : [{ id: uid(), name: '', dueDate: '' }],
+        );
+      }
+      return;
+    }
     setStep(1);
-  }, [open]);
+    setGoalType('trend');
+    setName('');
+    setDescription('');
+    setTargetDate(todayIsoDate());
+    setSelectedTagIds([]);
+    setTrendStartValue('0');
+    setTrendTargetValue('10');
+    setTrendUnit('kg');
+    setAccumTargetTotal('100');
+    setAccumUnit('$');
+    setMilestones([{ id: uid(), name: '', dueDate: '' }]);
+  }, [initialGoal, mode, open]);
 
   const canCreate = useMemo(() => {
     if (!name.trim() || !targetDate) return false;
@@ -73,14 +124,15 @@ export default function NewGoalModal({ open, tags, onClose, onCreate }: NewGoalM
     trendUnit,
   ]);
 
-  const createGoal = () => {
+  const createGoal = async () => {
     if (!canCreate) return;
-    const startDate = todayIsoDate();
+    const startDate = mode === 'edit' && initialGoal ? initialGoal.startDate : todayIsoDate();
+    let payload: NewLongGoalInput;
     if (goalType === 'trend') {
       const startValue = Number(trendStartValue);
       const targetValue = Number(trendTargetValue);
       const direction: 'up' | 'down' = targetValue >= startValue ? 'up' : 'down';
-      onCreate({
+      payload = {
         type: 'trend',
         name: name.trim(),
         description: description.trim() || undefined,
@@ -93,9 +145,9 @@ export default function NewGoalModal({ open, tags, onClose, onCreate }: NewGoalM
         direction,
         unit: trendUnit.trim(),
         logs: [],
-      });
+      };
     } else if (goalType === 'accumulation') {
-      onCreate({
+      payload = {
         type: 'accumulation',
         name: name.trim(),
         description: description.trim() || undefined,
@@ -106,9 +158,9 @@ export default function NewGoalModal({ open, tags, onClose, onCreate }: NewGoalM
         targetTotal: Number(accumTargetTotal),
         unit: accumUnit.trim(),
         logs: [],
-      });
+      };
     } else {
-      onCreate({
+      payload = {
         type: 'milestone',
         name: name.trim(),
         description: description.trim() || undefined,
@@ -126,7 +178,12 @@ export default function NewGoalModal({ open, tags, onClose, onCreate }: NewGoalM
             doneAt: null,
           })),
         logs: [],
-      });
+      };
+    }
+    if (mode === 'edit') {
+      await onSave?.(payload);
+    } else {
+      await onCreate?.(payload);
     }
     onClose();
   };
@@ -135,30 +192,30 @@ export default function NewGoalModal({ open, tags, onClose, onCreate }: NewGoalM
     <ModalShell
       open={open}
       onClose={onClose}
-      title="New goal"
+      title={mode === 'edit' ? 'Edit goal' : 'New goal'}
       footer={
         <>
           <button type="button" onClick={onClose} className="btn-ghost">
             Cancel
           </button>
-          {step === 2 ? (
+          {mode === 'create' && step === 2 ? (
             <button type="button" onClick={() => setStep(1)} className="btn-ghost">
               {'<-'} Back
             </button>
           ) : null}
-          {step === 1 ? (
+          {mode === 'create' && step === 1 ? (
             <button type="button" onClick={() => setStep(2)} className="btn-primary">
               Continue
             </button>
           ) : (
             <button type="button" onClick={createGoal} className="btn-primary" disabled={!canCreate}>
-              Create goal
+              {mode === 'edit' ? 'Save changes' : 'Create goal'}
             </button>
           )}
         </>
       }
     >
-      {step === 1 ? (
+      {mode === 'create' && step === 1 ? (
         <div className="space-y-2">
           <p className="text-sm text-muted">Pick a long-term goal type.</p>
           {(

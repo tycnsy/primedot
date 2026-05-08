@@ -117,9 +117,10 @@ export function Whiteboard({ boardId }) {
   const [selectedIds, setSelectedIds] = useState([]);
   const [view, setView] = useState({ x: 220, y: 80, scale: 1 });
   const canvasRef = useRef(null);
+  const [isEditingText, setIsEditingText] = useState(false);
 
   const [style, setStyle] = useState({
-    stroke: '#1e1e1e',
+    stroke: '#ffffff',
     fill: 'transparent',
     fillStyle: 'hachure',
     strokeWidth: 2,
@@ -191,6 +192,22 @@ export function Whiteboard({ boardId }) {
   const elementsRef = useRef(elements);
   useEffect(() => { elementsRef.current = elements; }, [elements]);
   useEffect(() => {
+    if (!elementsReady) return;
+    let changed = false;
+    const next = elements.map((el) => {
+      if (el.type !== 'text') return el;
+      if (Array.isArray(el.textRuns) && el.textRuns.length) return el;
+      if (!el.text) return el;
+      changed = true;
+      return {
+        ...el,
+        textRuns: [{ text: el.text, color: el.stroke || '#1e1e1e' }],
+      };
+    });
+    if (changed) setElements(next);
+  }, [elements, elementsReady, setElements]);
+
+  useEffect(() => {
     if (!elementsReady || historySeededRef.current) return;
     historyRef.current = { stack: [JSON.stringify(elements)], index: 0 };
     historySeededRef.current = true;
@@ -257,8 +274,9 @@ export function Whiteboard({ boardId }) {
   // Keyboard shortcuts
   useEffect(() => {
     const onKey = (e) => {
-      const tag = e.target.tagName;
-      if (tag === 'INPUT' || tag === 'TEXTAREA') return;
+      const target = e.target;
+      const tag = target?.tagName;
+      if (tag === 'INPUT' || tag === 'TEXTAREA' || target?.isContentEditable) return;
       const k = e.key.toLowerCase();
       if ((e.metaKey || e.ctrlKey) && k === 'z' && !e.shiftKey) { undo(); e.preventDefault(); return; }
       if ((e.metaKey || e.ctrlKey) && (k === 'z' && e.shiftKey || k === 'y')) { redo(); e.preventDefault(); return; }
@@ -276,6 +294,72 @@ export function Whiteboard({ boardId }) {
   const canRedo = historyRef.current.index < historyRef.current.stack.length - 1;
   void historyTick;
 
+  const applyStyleChange = useCallback((key, value) => {
+    setStyle((s) => ({ ...s, [key]: value }));
+
+    if (key === 'stroke' && canvasRef.current?.applyEditingTextColor?.(value)) return;
+
+    if (!selectedIds.length) return;
+
+    const selectedSet = new Set(selectedIds);
+    const fillableTypes = new Set(['rectangle', 'ellipse', 'diamond']);
+    const edgeTypes = new Set(['rectangle', 'diamond']);
+    const drawableTypes = new Set(['rectangle', 'ellipse', 'diamond', 'line', 'arrow', 'freedraw']);
+    let changed = false;
+
+    const next = elements.map((el) => {
+      if (!selectedSet.has(el.id)) return el;
+
+      if (key === 'stroke') {
+        if (el.stroke === value) return el;
+        changed = true;
+        if (el.type === 'text') {
+          const textRuns = Array.isArray(el.textRuns) && el.textRuns.length
+            ? [{ text: (el.textRuns || []).map((r) => r.text || '').join(''), color: value }]
+            : [{ text: el.text || '', color: value }];
+          return { ...el, stroke: value, textRuns };
+        }
+        return { ...el, stroke: value };
+      }
+      if (key === 'fill') {
+        if (!fillableTypes.has(el.type) || el.fill === value) return el;
+        changed = true;
+        return { ...el, fill: value };
+      }
+      if (key === 'fillStyle') {
+        if (!fillableTypes.has(el.type) || el.fillStyle === value) return el;
+        changed = true;
+        return { ...el, fillStyle: value };
+      }
+      if (key === 'strokeWidth') {
+        if (!drawableTypes.has(el.type) || el.strokeWidth === value) return el;
+        changed = true;
+        return { ...el, strokeWidth: value };
+      }
+      if (key === 'roughness') {
+        if (!drawableTypes.has(el.type) || el.roughness === value) return el;
+        changed = true;
+        return { ...el, roughness: value };
+      }
+      if (key === 'edge') {
+        if (!edgeTypes.has(el.type) || el.edge === value) return el;
+        changed = true;
+        return { ...el, edge: value };
+      }
+      if (key === 'textAlign') {
+        if (el.type !== 'text' || el.textAlign === value) return el;
+        changed = true;
+        return { ...el, textAlign: value };
+      }
+      return el;
+    });
+
+    if (changed) {
+      setElements(next);
+      pushHistory();
+    }
+  }, [elements, pushHistory, selectedIds, setElements]);
+
   return (
     <div className="wb-shell">
       <div className="wb-stage">
@@ -287,13 +371,15 @@ export function Whiteboard({ boardId }) {
           selectedIds={selectedIds} setSelectedIds={setSelectedIds}
           view={view} setView={setView}
           pushHistory={pushHistory}
+          onEditingTextStateChange={setIsEditingText}
         />
 
         <WBBrandChip docName={docName} setDocName={setDocName}/>
         <WBToolbar tool={tool} setTool={setTool}/>
         <WBPropsPanel
-          style={style} setStyle={setStyle}
-          hasSelection={selectedIds.length > 0}
+          style={style}
+          onStyleChange={applyStyleChange}
+          hasSelection={selectedIds.length > 0 || isEditingText}
           strokePalette={strokePalette}
           fillPalette={fillPalette}
           onAddStrokeColor={addStrokeColor}

@@ -8,7 +8,7 @@ import rough from 'roughjs';
 //            stroke, fill, fillStyle, strokeWidth, roughness, edge,
 //            seed }
 
-const STROKE_PALETTE = ['#1e1e1e', '#e03131', '#1971c2', '#2f9e44', '#e8590c', '#9c36b5'];
+const STROKE_PALETTE = ['#ffffff', '#1e1e1e', '#e03131', '#1971c2', '#2f9e44', '#e8590c', '#9c36b5'];
 const FILL_PALETTE   = ['transparent', '#ffd9d9', '#d0e7ff', '#d3f0d9', '#ffe5b8', '#ead8ff'];
 
 const newSeed = () => Math.floor(Math.random() * 2 ** 31);
@@ -17,7 +17,111 @@ const newId = () => 'el_' + Math.random().toString(36).slice(2, 9);
 // Measurement helper for text wrapping. Uses an offscreen div so we can
 // support manualWidth (drag-to-wrap) and accurate height computation.
 let _wbMeasureDiv = null;
-function measureText(text, fontSize, manualWidth) {
+function escapeHtml(text) {
+  return text
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+function normalizeColor(color, fallback = '#1e1e1e') {
+  if (!color || typeof color !== 'string') return fallback;
+  return color;
+}
+
+function normalizeTextRuns(runs, fallback = '#1e1e1e') {
+  if (!Array.isArray(runs)) return [];
+  const out = [];
+  for (const run of runs) {
+    const text = typeof run?.text === 'string' ? run.text : '';
+    if (!text) continue;
+    const color = normalizeColor(run?.color, fallback);
+    const prev = out[out.length - 1];
+    if (prev && prev.color === color) prev.text += text;
+    else out.push({ text, color });
+  }
+  return out;
+}
+
+function ensureRunsFromElement(el, fallback = '#1e1e1e') {
+  const fromRuns = normalizeTextRuns(el.textRuns, el.stroke || fallback);
+  if (fromRuns.length) return fromRuns;
+  if (typeof el.text === 'string' && el.text.length) {
+    return [{ text: el.text, color: normalizeColor(el.stroke, fallback) }];
+  }
+  return [];
+}
+
+function textFromRuns(runs) {
+  return runs.map((r) => r.text).join('');
+}
+
+function runsToEditableHtml(runs) {
+  if (!runs.length) return '';
+  return runs.map((run) => {
+    const color = normalizeColor(run.color);
+    const htmlText = escapeHtml(run.text).replace(/\n/g, '<br/>');
+    return `<span style="color:${color}">${htmlText}</span>`;
+  }).join('');
+}
+
+function rgbToHex(value, fallback = '#1e1e1e') {
+  if (!value || typeof value !== 'string') return fallback;
+  if (/^#[0-9a-f]{6}$/i.test(value)) return value.toLowerCase();
+  const m = value.match(/rgba?\((\d+),\s*(\d+),\s*(\d+)/i);
+  if (!m) return fallback;
+  const [r, g, b] = [m[1], m[2], m[3]].map((x) => Number(x).toString(16).padStart(2, '0'));
+  return `#${r}${g}${b}`;
+}
+
+function runsFromEditor(root, fallbackColor = '#1e1e1e') {
+  if (!root) return [];
+  const out = [];
+
+  const append = (text, color) => {
+    if (!text) return;
+    const safeColor = normalizeColor(color, fallbackColor);
+    const prev = out[out.length - 1];
+    if (prev && prev.color === safeColor) prev.text += text;
+    else out.push({ text, color: safeColor });
+  };
+
+  const walk = (node, inheritedColor) => {
+    if (node.nodeType === Node.TEXT_NODE) {
+      append(node.textContent || '', inheritedColor);
+      return;
+    }
+    if (node.nodeType !== Node.ELEMENT_NODE) return;
+
+    const tag = node.tagName;
+    const computed = window.getComputedStyle(node);
+    const color = rgbToHex(computed.color, inheritedColor);
+
+    if (tag === 'BR') {
+      append('\n', color);
+      return;
+    }
+
+    const isBlock = tag === 'DIV' || tag === 'P';
+    const childNodes = Array.from(node.childNodes);
+    for (const child of childNodes) walk(child, color);
+    if (isBlock && out.length) {
+      const last = out[out.length - 1];
+      if (!last.text.endsWith('\n')) append('\n', color);
+    }
+  };
+
+  for (const child of Array.from(root.childNodes)) walk(child, fallbackColor);
+  const normalized = normalizeTextRuns(out, fallbackColor);
+  if (normalized.length) {
+    normalized[normalized.length - 1].text = normalized[normalized.length - 1].text.replace(/\n+$/, '');
+  }
+  return normalizeTextRuns(normalized, fallbackColor);
+}
+
+function measureTextRuns(runs, fontSize, manualWidth) {
   if (!_wbMeasureDiv) {
     _wbMeasureDiv = document.createElement('div');
     _wbMeasureDiv.style.cssText = 'position:absolute;visibility:hidden;left:-99999px;top:-99999px;font-family:"Excalifont","Caveat","Comic Sans MS",cursive;font-weight:400;line-height:1.15;white-space:pre-wrap;word-break:break-word;padding:0;margin:0;border:0;box-sizing:content-box;';
@@ -25,7 +129,7 @@ function measureText(text, fontSize, manualWidth) {
   }
   _wbMeasureDiv.style.fontSize = fontSize + 'px';
   _wbMeasureDiv.style.width = manualWidth ? manualWidth + 'px' : 'auto';
-  _wbMeasureDiv.textContent = text && text.length ? text : ' ';
+  _wbMeasureDiv.innerHTML = runs.length ? runsToEditableHtml(runs) : ' ';
   return { w: manualWidth || _wbMeasureDiv.offsetWidth, h: _wbMeasureDiv.offsetHeight };
 }
 
@@ -134,6 +238,25 @@ function distToSegment(px, py, x1, y1, x2, y2) {
   return Math.hypot(px - (x1 + t * dx), py - (y1 + t * dy));
 }
 
+function cloneElements(elementsToClone) {
+  if (typeof structuredClone === 'function') return structuredClone(elementsToClone);
+  return JSON.parse(JSON.stringify(elementsToClone));
+}
+
+function bboxUnion(list) {
+  if (!list.length) return null;
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  for (const el of list) {
+    const bb = bboxOf(el);
+    if (bb.x < minX) minX = bb.x;
+    if (bb.y < minY) minY = bb.y;
+    if (bb.x + bb.w > maxX) maxX = bb.x + bb.w;
+    if (bb.y + bb.h > maxY) maxY = bb.y + bb.h;
+  }
+  if (!isFinite(minX)) return null;
+  return { x: minX, y: minY, w: maxX - minX, h: maxY - minY };
+}
+
 // =================================================================
 // Canvas
 // =================================================================
@@ -143,16 +266,20 @@ function Canvas({
   selectedIds, setSelectedIds,
   view, setView,
   pushHistory,
-  onElementsChanged,
+  onEditingTextStateChange,
 }, ref) {
   const svgRef = useRef(null);
   const layerRef = useRef(null);
   const rcRef = useRef(null);
+  const editingTextRef = useRef(null);
+  const clipboardRef = useRef([]);
+  const cursorWorldRef = useRef(null);
 
   // Drag state
   const dragRef = useRef(null);
   const [drafting, setDrafting] = useState(null); // current element being drawn
   const [editingText, setEditingText] = useState(null); // { id, x, y, ... }
+  const textEditorRef = useRef(null);
   const [marquee, setMarquee] = useState(null);
   const [hoverId, setHoverId] = useState(null);
   const [panning, setPanning] = useState(false);
@@ -167,6 +294,16 @@ function Canvas({
       setElements([]);
       setSelectedIds([]);
       pushHistory();
+    },
+    applyEditingTextColor(color) {
+      if (!editingTextRef.current || !textEditorRef.current) return false;
+      textEditorRef.current.focus();
+      document.execCommand('styleWithCSS', false, true);
+      document.execCommand('foreColor', false, color);
+      const runs = runsFromEditor(textEditorRef.current, color);
+      const text = textFromRuns(runs);
+      setEditingText((prev) => prev ? { ...prev, stroke: color, textRuns: runs, text } : prev);
+      return true;
     },
   }), [pushHistory, setElements, setSelectedIds]);
 
@@ -200,24 +337,41 @@ function Canvas({
   }, [view]);
 
   // Commit text (used for blur and before re-opening editor)
-  const editingTextRef = useRef(null);
   useEffect(() => { editingTextRef.current = editingText; }, [editingText]);
+  useEffect(() => {
+    if (onEditingTextStateChange) onEditingTextStateChange(Boolean(editingText));
+  }, [editingText, onEditingTextStateChange]);
+  useEffect(() => {
+    if (!editingText || !textEditorRef.current) return;
+    textEditorRef.current.innerHTML = runsToEditableHtml(editingText.textRuns || []);
+    textEditorRef.current.focus();
+    const selection = window.getSelection();
+    if (!selection) return;
+    const range = document.createRange();
+    range.selectNodeContents(textEditorRef.current);
+    range.collapse(false);
+    selection.removeAllRanges();
+    selection.addRange(range);
+  }, [editingText?.id, editingText?.editingId]);
 
   const commitTextValue = (et) => {
     if (!et) return;
-    if (et.text.trim()) {
+    if ((et.text || '').trim()) {
       const fontSize = et.fontSize;
-      const { w, h } = measureText(et.text, fontSize, et.manualWidth);
+      const textRuns = normalizeTextRuns(et.textRuns, et.stroke);
+      const text = textFromRuns(textRuns);
+      const primaryColor = textRuns[0]?.color || et.stroke || '#1e1e1e';
+      const { w, h } = measureTextRuns(textRuns, fontSize, et.manualWidth);
       const align = et.textAlign || 'center';
       const x = et.anchorX != null ? xFromAnchor(et.anchorX, w, align) : et.x;
       const y = et.y;
       if (et.editingId) {
         // editing existing element
         setElements(prev => prev.map(el => el.id === et.editingId
-          ? { ...el, text: et.text, w, h, x, y, fontSize, stroke: et.stroke, textAlign: align, manualWidth: et.manualWidth, _editing: false }
+          ? { ...el, text, textRuns, w, h, x, y, fontSize, stroke: primaryColor, textAlign: align, manualWidth: et.manualWidth, _editing: false }
           : el));
       } else {
-        const el = { id: et.id, type: 'text', x, y, w, h, text: et.text, fontSize, stroke: et.stroke, textAlign: align, manualWidth: et.manualWidth, seed: newSeed() };
+        const el = { id: et.id, type: 'text', x, y, w, h, text, textRuns, fontSize, stroke: primaryColor, textAlign: align, manualWidth: et.manualWidth, seed: newSeed() };
         setElements(prev => [...prev, el]);
         setSelectedIds([el.id]);
         setTool('select');
@@ -228,6 +382,8 @@ function Canvas({
 
   const startEditingExistingText = (el, screenX, screenY) => {
     commitTextValue(editingTextRef.current);
+    const textRuns = ensureRunsFromElement(el, el.stroke || style.stroke || '#1e1e1e');
+    const text = textFromRuns(textRuns);
     setSelectedIds([]);
     setEditingText({
       id: el.id,
@@ -235,9 +391,10 @@ function Canvas({
       x: el.x, y: el.y,
       anchorX: anchorOf(el),
       screenX, screenY,
-      text: el.text || '',
+      text,
+      textRuns,
       fontSize: el.fontSize || 22,
-      stroke: el.stroke,
+      stroke: textRuns[0]?.color || el.stroke || style.stroke || '#1e1e1e',
       textAlign: el.textAlign || 'center',
       manualWidth: el.manualWidth,
     });
@@ -263,6 +420,7 @@ function Canvas({
       anchorX: w.x,
       screenX: sx, screenY: sy,
       text: '',
+      textRuns: [],
       fontSize: 22,
       stroke: style.stroke,
       textAlign: style.textAlign || 'center',
@@ -281,6 +439,7 @@ function Canvas({
     const rect = svgRef.current.getBoundingClientRect();
     const sx = e.clientX - rect.left, sy = e.clientY - rect.top;
     const w = toWorld(sx, sy);
+    cursorWorldRef.current = w;
 
     if (tool === 'text') {
       // If we're already editing a text box, clicking elsewhere should
@@ -302,6 +461,7 @@ function Canvas({
           anchorX: w.x,
           screenX: sx, screenY: sy,
           text: '',
+          textRuns: [],
           fontSize: 22,
           stroke: style.stroke,
           textAlign: style.textAlign || 'center',
@@ -364,6 +524,7 @@ function Canvas({
     const rect = svgRef.current.getBoundingClientRect();
     const sx = e.clientX - rect.left, sy = e.clientY - rect.top;
     const w = toWorld(sx, sy);
+    cursorWorldRef.current = w;
 
     // hover for cursor
     if (!drag && tool === 'select') {
@@ -382,7 +543,8 @@ function Canvas({
       const newW = Math.max(40, drag.origWidth + dx);
       setElements(prev => prev.map(el => {
         if (el.id !== drag.elId) return el;
-        const m = measureText(el.text || '', el.fontSize || 22, newW);
+        const runs = ensureRunsFromElement(el, el.stroke || '#1e1e1e');
+        const m = measureTextRuns(runs, el.fontSize || 22, newW);
         return { ...el, manualWidth: newW, w: m.w, h: m.h };
       }));
       return;
@@ -525,8 +687,51 @@ function Canvas({
   // Keyboard
   useEffect(() => {
     const onKey = (e) => {
-      const tag = e.target.tagName;
-      if (tag === 'INPUT' || tag === 'TEXTAREA') return;
+      const target = e.target;
+      const tag = target?.tagName;
+      if (tag === 'INPUT' || tag === 'TEXTAREA' || target?.isContentEditable) return;
+      const hasCommand = e.metaKey || e.ctrlKey;
+      if (hasCommand && e.key.toLowerCase() === 'c') {
+        if (!selectedIds.length) return;
+        const selected = elements.filter((el) => selectedIds.includes(el.id));
+        if (!selected.length) return;
+        clipboardRef.current = cloneElements(selected);
+        e.preventDefault();
+        return;
+      }
+      if (hasCommand && e.key.toLowerCase() === 'v') {
+        const copied = clipboardRef.current;
+        if (!copied.length) return;
+        const sourceBounds = bboxUnion(copied);
+        if (!sourceBounds) return;
+        const sourceCenter = {
+          x: sourceBounds.x + sourceBounds.w / 2,
+          y: sourceBounds.y + sourceBounds.h / 2,
+        };
+        const cursor = cursorWorldRef.current;
+        const fallbackCursor = cursor || {
+          x: (window.innerWidth / 2 - view.x) / view.scale,
+          y: (window.innerHeight / 2 - view.y) / view.scale,
+        };
+        const dx = fallbackCursor.x - sourceCenter.x;
+        const dy = fallbackCursor.y - sourceCenter.y;
+        const pasted = cloneElements(copied).map((el) => {
+          const { _editing, ...rest } = el;
+          return {
+            ...rest,
+            id: newId(),
+            seed: newSeed(),
+            x: el.x + dx,
+            y: el.y + dy,
+          };
+        });
+        const pastedIds = pasted.map((el) => el.id);
+        setElements((prev) => [...prev, ...pasted]);
+        setSelectedIds(pastedIds);
+        pushHistory();
+        e.preventDefault();
+        return;
+      }
       if (e.code === 'Space' && !spaceDown) { setSpaceDown(true); e.preventDefault(); }
       if (e.key === 'Delete' || e.key === 'Backspace') {
         if (selectedIds.length) {
@@ -545,7 +750,7 @@ function Canvas({
     window.addEventListener('keydown', onKey);
     window.addEventListener('keyup', onUp);
     return () => { window.removeEventListener('keydown', onKey); window.removeEventListener('keyup', onUp); };
-  }, [selectedIds, elements, spaceDown]);
+  }, [selectedIds, elements, spaceDown, view, pushHistory, setElements, setSelectedIds, setTool]);
 
   // Selection bbox (union)
   const selectionBBox = useMemo(() => {
@@ -677,7 +882,7 @@ function Canvas({
 
       {editingText ? (() => {
         const fs = editingText.fontSize;
-        const m = measureText(editingText.text || '', fs, editingText.manualWidth);
+        const m = measureTextRuns(editingText.textRuns || [], fs, editingText.manualWidth);
         const w = Math.max(m.w, fs * 0.6) * view.scale;
         const h = Math.max(m.h, fs * 1.15) * view.scale;
         const align = editingText.textAlign || 'center';
@@ -686,11 +891,17 @@ function Canvas({
           : editingText.x;
         const yWorld = editingText.y;
         return (
-          <textarea
+          <div
+            ref={textEditorRef}
             className="wb-text-input"
-            autoFocus
-            value={editingText.text}
-            onChange={(e) => setEditingText({ ...editingText, text: e.target.value })}
+            contentEditable
+            suppressContentEditableWarning
+            spellCheck={false}
+            onInput={(e) => {
+              const runs = runsFromEditor(e.currentTarget, editingText.stroke || style.stroke);
+              const text = textFromRuns(runs);
+              setEditingText((prev) => prev ? { ...prev, textRuns: runs, text } : prev);
+            }}
             onBlur={commitText}
             onKeyDown={(e) => {
               if (e.key === 'Escape') { setEditingText(null); }
@@ -770,6 +981,7 @@ function renderElement(rc, el) {
     if (el._editing) return null;
     const fs = el.fontSize || 22;
     const align = el.textAlign || 'center';
+    const runs = ensureRunsFromElement(el, el.stroke || '#1e1e1e');
     const fo = document.createElementNS('http://www.w3.org/2000/svg', 'foreignObject');
     fo.setAttribute('x', el.x);
     fo.setAttribute('y', el.y);
@@ -777,8 +989,8 @@ function renderElement(rc, el) {
     fo.setAttribute('height', (el.h || 0) + 4);
     fo.style.overflow = 'visible';
     const div = document.createElementNS('http://www.w3.org/1999/xhtml', 'div');
-    div.style.cssText = `font-family:'Excalifont','Caveat','Comic Sans MS',cursive;font-weight:400;font-size:${fs}px;line-height:1.15;color:${el.stroke};white-space:pre-wrap;word-break:break-word;text-align:${align};width:${el.manualWidth ? el.manualWidth + 'px' : 'max-content'};user-select:none;pointer-events:none;`;
-    div.textContent = el.text || '';
+    div.style.cssText = `font-family:'Excalifont','Caveat','Comic Sans MS',cursive;font-weight:400;font-size:${fs}px;line-height:1.15;white-space:pre-wrap;word-break:break-word;text-align:${align};width:${el.manualWidth ? el.manualWidth + 'px' : 'max-content'};user-select:none;pointer-events:none;`;
+    div.innerHTML = runsToEditableHtml(runs);
     fo.appendChild(div);
     return fo;
   }

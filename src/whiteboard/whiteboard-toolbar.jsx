@@ -50,8 +50,8 @@ function Toolbar({ tool, setTool }) {
 }
 
 // ============= Properties Panel =============
-function PropsPanel({ style, setStyle, hasSelection, strokePalette, fillPalette, onAddStrokeColor, onAddFillColor, onRemoveStrokeColor, onRemoveFillColor }) {
-  const set = (k, v) => setStyle(s => ({ ...s, [k]: v }));
+function PropsPanel({ style, onStyleChange, hasSelection, strokePalette, fillPalette, onAddStrokeColor, onAddFillColor, onRemoveStrokeColor, onRemoveFillColor }) {
+  const set = (k, v) => onStyleChange(k, v);
   return (
     <div className="wb-props">
       <Section label="Stroke">
@@ -161,6 +161,7 @@ function Swatches({ palette, value, onChange, allowTransparent, onAddColor, onRe
           data-active={value === c}
           data-transparent={c === 'transparent'}
           title={c === 'transparent' ? 'transparent — alt-click to remove · double-click to edit' : c + ' — alt-click to remove · double-click to edit'}
+          onMouseDown={(e) => e.preventDefault()}
           onClick={(e) => {
             if (e.altKey && onRemoveColor) {
               onRemoveColor(c);
@@ -183,6 +184,7 @@ function Swatches({ palette, value, onChange, allowTransparent, onAddColor, onRe
       {onAddColor ? (
         <button className="wb-swatch wb-swatch-add"
           title="Add custom color"
+          onMouseDown={(e) => e.preventDefault()}
           onClick={() => {
             setPendingColor('#888888');
             setEditingColor(null);

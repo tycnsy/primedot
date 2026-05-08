@@ -39,6 +39,7 @@ type GoalLongRow = {
   direction: 'up' | 'down' | null;
   unit: string | null;
   target_total: number | null;
+  sort_order: number;
   created_at: string;
 };
 
@@ -235,7 +236,11 @@ export interface GoalsStoreActions {
   addLog: (goalId: string, log: Omit<LogEntry, 'id' | 'at'> & { at?: string }) => Promise<void>;
   toggleMilestone: (goalId: string, milestoneId: string) => Promise<void>;
   addLongGoal: (goal: NewLongGoalInput) => Promise<string>;
+  reorderLongGoals: (goalIdsInOrder: string[]) => Promise<void>;
   addDailyGoal: (goal: NewDailyGoalInput) => Promise<string>;
+  updateLongGoal: (goalId: string, goal: NewLongGoalInput) => Promise<void>;
+  archiveLongGoal: (goalId: string) => Promise<void>;
+  archiveDailyGoal: (goalId: string) => Promise<void>;
 }
 
 export type GoalsStore = GoalsStoreState & GoalsStoreActions;
@@ -273,6 +278,7 @@ export function useGoalsStore(): GoalsStore {
       const { data, error } = await supabase
         .from('goals_long')
         .select('*')
+        .order('sort_order', { ascending: true })
         .order('created_at', { ascending: false });
       if (error) throw error;
       return (data ?? []) as GoalLongRow[];
@@ -362,6 +368,11 @@ export function useGoalsStore(): GoalsStore {
     });
     return (longQuery.data ?? []).map((row) => mapLong(row, logsByGoal, milestonesByGoal));
   }, [logsQuery.data, longQuery.data, milestonesQuery.data]);
+  const nextLongSortOrder = useMemo(() => {
+    return (longQuery.data ?? [])
+      .filter((row) => !row.archived_at)
+      .reduce((max, row) => Math.max(max, row.sort_order), -1) + 1;
+  }, [longQuery.data]);
 
   const dailyGoals = useMemo(() => (dailyQuery.data ?? []).map(mapDaily), [dailyQuery.data]);
 
@@ -445,6 +456,7 @@ export function useGoalsStore(): GoalsStore {
         direction: goal.type === 'trend' ? goal.direction : null,
         unit: goal.type !== 'milestone' ? goal.unit : null,
         target_total: goal.type === 'accumulation' ? goal.targetTotal : null,
+        sort_order: nextLongSortOrder,
       };
       const { data, error } = await supabase.from('goals_long').insert(base).select('*').single();
       if (error) throw error;
@@ -469,6 +481,24 @@ export function useGoalsStore(): GoalsStore {
       qc.invalidateQueries({ queryKey: longKey(user?.id) });
       qc.invalidateQueries({ queryKey: milestonesKey(user?.id) });
       showToast('Long-term goal created.');
+    },
+  });
+
+  const reorderLongGoalsMutation = useMutation({
+    mutationFn: async (goalIdsInOrder: string[]) => {
+      if (!user) throw new Error('Not signed in');
+      for (let index = 0; index < goalIdsInOrder.length; index += 1) {
+        const goalId = goalIdsInOrder[index];
+        const { error } = await supabase
+          .from('goals_long')
+          .update({ sort_order: index })
+          .eq('id', goalId)
+          .eq('user_id', user.id);
+        if (error) throw error;
+      }
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: longKey(user?.id) });
     },
   });
 
@@ -523,6 +553,81 @@ export function useGoalsStore(): GoalsStore {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: longLogsKey(user?.id) });
       showToast('Log entry added.');
+    },
+  });
+
+  const updateLongGoalMutation = useMutation({
+    mutationFn: async ({ goalId, goal }: { goalId: string; goal: NewLongGoalInput }) => {
+      if (!user) throw new Error('Not signed in');
+      const { error } = await supabase
+        .from('goals_long')
+        .update({
+          type: goal.type,
+          name: goal.name,
+          description: goal.description ?? null,
+          start_date: goal.startDate,
+          target_date: goal.targetDate,
+          tags: goal.tags ?? [],
+          related_goal_ids: goal.relatedGoalIds ?? [],
+          archived_at: goal.archivedAt ?? null,
+          start_value: goal.type === 'trend' ? goal.startValue : null,
+          target_value: goal.type === 'trend' ? goal.targetValue : null,
+          direction: goal.type === 'trend' ? goal.direction : null,
+          unit: goal.type !== 'milestone' ? goal.unit : null,
+          target_total: goal.type === 'accumulation' ? goal.targetTotal : null,
+        })
+        .eq('id', goalId);
+      if (error) throw error;
+
+      const deleteMilestones = await supabase.from('goals_long_milestones').delete().eq('long_goal_id', goalId);
+      if (deleteMilestones.error) throw deleteMilestones.error;
+
+      if (goal.type === 'milestone' && goal.milestones.length > 0) {
+        const rows = goal.milestones.map((item, index) => ({
+          long_goal_id: goalId,
+          user_id: user.id,
+          name: item.name,
+          due_date: item.dueDate,
+          done: item.done,
+          done_at: item.doneAt,
+          sort_order: index,
+        }));
+        const milestonesInsert = await supabase.from('goals_long_milestones').insert(rows);
+        if (milestonesInsert.error) throw milestonesInsert.error;
+      }
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: longKey(user?.id) });
+      qc.invalidateQueries({ queryKey: milestonesKey(user?.id) });
+      showToast('Goal updated.');
+    },
+  });
+
+  const archiveLongGoalMutation = useMutation({
+    mutationFn: async (goalId: string) => {
+      const { error } = await supabase
+        .from('goals_long')
+        .update({ archived_at: new Date().toISOString() })
+        .eq('id', goalId);
+      if (error) throw error;
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: longKey(user?.id) });
+      showToast('Goal archived.');
+    },
+  });
+
+  const archiveDailyGoalMutation = useMutation({
+    mutationFn: async (goalId: string) => {
+      const { error } = await supabase
+        .from('goals_daily')
+        .update({ archived_at: new Date().toISOString() })
+        .eq('id', goalId);
+      if (error) throw error;
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: dailyKey(user?.id) });
+      showToast('Daily goal archived.');
     },
   });
 
@@ -649,6 +754,17 @@ export function useGoalsStore(): GoalsStore {
       await toggleMilestoneMutation.mutateAsync({ goalId, milestoneId });
     },
     addLongGoal: async (goal: NewLongGoalInput) => addLongGoalMutation.mutateAsync(goal),
+    reorderLongGoals: async (goalIdsInOrder: string[]) => {
+      await reorderLongGoalsMutation.mutateAsync(goalIdsInOrder);
+    },
     addDailyGoal: async (goal: NewDailyGoalInput) => addDailyGoalMutation.mutateAsync(goal),
+    updateLongGoal: async (goalId: string, goal: NewLongGoalInput) =>
+      updateLongGoalMutation.mutateAsync({ goalId, goal }),
+    archiveLongGoal: async (goalId: string) => {
+      await archiveLongGoalMutation.mutateAsync(goalId);
+    },
+    archiveDailyGoal: async (goalId: string) => {
+      await archiveDailyGoalMutation.mutateAsync(goalId);
+    },
   };
 }

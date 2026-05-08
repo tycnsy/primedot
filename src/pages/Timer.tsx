@@ -1,10 +1,10 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { useProjects } from '../hooks/useProjects';
 import { useTasksForProjects, useUpdateAnyTask } from '../hooks/useTasks';
 import { useTimer } from '../hooks/useTimer';
 import TimerDisplay from '../components/TimerDisplay';
-import { progressTarget } from '../lib/calc';
+import { goalProgress, progressTarget } from '../lib/calc';
 import { formatHMS, parseHMS } from '../lib/time';
 import type { Project, Task } from '../lib/types';
 
@@ -21,6 +21,9 @@ export default function Timer() {
 
   const [mode, setMode] = useState<SessionMode>('idle');
   const [activeProjectId, setActiveProjectId] = useState<string | null>(null);
+  const [showGoalDelta, setShowGoalDelta] = useState(false);
+  const [goalByTaskId, setGoalByTaskId] = useState<Record<string, number>>({});
+  const lastGoalSnapshotStartedAt = useRef<number | null>(null);
 
   useEffect(() => {
     if (!routeProjectId) return;
@@ -31,6 +34,33 @@ export default function Timer() {
   const projectMap = useMemo(() => {
     return new Map(projects.map((project) => [project.id, project]));
   }, [projects]);
+
+  useEffect(() => {
+    if (!timer.startedAt) {
+      setGoalByTaskId({});
+      lastGoalSnapshotStartedAt.current = null;
+      return;
+    }
+    if (!tasksQ.data) return;
+    const startedAtMs = timer.startedAt.getTime();
+    if (lastGoalSnapshotStartedAt.current === startedAtMs) return;
+
+    const nextGoalByTaskId: Record<string, number> = {};
+    for (const task of tasksQ.data) {
+      if (task.status === 'complete') continue;
+      const project = projectMap.get(task.project_id);
+      if (!project) continue;
+      nextGoalByTaskId[task.id] = goalProgress(
+        task,
+        project,
+        task.current_progress,
+        timer.durationSeconds,
+      );
+    }
+
+    setGoalByTaskId(nextGoalByTaskId);
+    lastGoalSnapshotStartedAt.current = startedAtMs;
+  }, [projectMap, tasksQ.data, timer.durationSeconds, timer.startedAt]);
 
   const remainingByProject = useMemo(() => {
     const byProject: Record<string, Task[]> = {};
@@ -109,9 +139,23 @@ export default function Timer() {
           <h1 className="text-3xl font-semibold tracking-tight text-fg">Timer</h1>
           <p className="text-sm text-subtle">{modeLabel}</p>
         </div>
-        <button onClick={startBulkSession} className="btn-primary">
-          Start bulk timer
-        </button>
+        <div className="flex items-center gap-2">
+          <button onClick={startBulkSession} className="btn-primary">
+            Start bulk timer
+          </button>
+          <button
+            type="button"
+            onClick={() => setShowGoalDelta((value) => !value)}
+            className={showGoalDelta ? 'btn-secondary' : 'btn-ghost'}
+            title={
+              showGoalDelta
+                ? 'Showing remaining goal delta'
+                : 'Showing absolute goal target'
+            }
+          >
+            {showGoalDelta ? 'Show goal target' : 'Show goal delta'}
+          </button>
+        </div>
       </div>
 
       <TimerDisplay
@@ -125,12 +169,15 @@ export default function Timer() {
         onChangeDuration={timer.setDurationSeconds}
       />
 
-      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
         {projects.map((project) => (
           <ProjectTimerColumn
             key={project.id}
             project={project}
             tasks={remainingByProject[project.id] ?? []}
+            goalByTaskId={goalByTaskId}
+            timerDurationSeconds={timer.durationSeconds}
+            showGoalDelta={showGoalDelta}
             active={mode === 'project' && activeProjectId === project.id}
             editable={canEditProject(project.id)}
             sessionMode={mode}
@@ -148,6 +195,9 @@ export default function Timer() {
 interface ProjectTimerColumnProps {
   project: Project;
   tasks: Task[];
+  goalByTaskId: Record<string, number>;
+  timerDurationSeconds: number;
+  showGoalDelta: boolean;
   active: boolean;
   editable: boolean;
   sessionMode: SessionMode;
@@ -158,6 +208,9 @@ interface ProjectTimerColumnProps {
 function ProjectTimerColumn({
   project,
   tasks,
+  goalByTaskId,
+  timerDurationSeconds,
+  showGoalDelta,
   active,
   editable,
   sessionMode,
@@ -202,6 +255,9 @@ function ProjectTimerColumn({
               key={task.id}
               task={task}
               project={project}
+              predictedGoal={goalByTaskId[task.id]}
+              timerDurationSeconds={timerDurationSeconds}
+              showGoalDelta={showGoalDelta}
               editable={editable}
               updateTask={updateTask}
             />
@@ -215,11 +271,17 @@ function ProjectTimerColumn({
 function TaskProgressRow({
   task,
   project,
+  predictedGoal,
+  timerDurationSeconds,
+  showGoalDelta,
   editable,
   updateTask,
 }: {
   task: Task;
   project: Project;
+  predictedGoal?: number;
+  timerDurationSeconds: number;
+  showGoalDelta: boolean;
   editable: boolean;
   updateTask: (id: string, patch: Partial<Task>) => Promise<void>;
 }) {
@@ -266,20 +328,42 @@ function TaskProgressRow({
     : `${formatHMS(task.current_progress)} / ${
         total > 0 ? formatHMS(total) : '?'
       }`;
+  const displayedGoal =
+    predictedGoal ??
+    goalProgress(task, project, task.current_progress, timerDurationSeconds);
+  const normalizedGoal = isCustom
+    ? Math.floor(displayedGoal)
+    : Math.max(0, Math.round(displayedGoal));
+  const goalDelta = normalizedGoal - task.current_progress;
+  const deltaLabel = isCustom
+    ? `${goalDelta >= 0 ? '+' : '-'}${Math.abs(goalDelta)}`
+    : `${goalDelta >= 0 ? '+' : '-'}${formatHMS(Math.abs(goalDelta))}`;
+  const predictionLabel = showGoalDelta
+    ? `goal: ${deltaLabel}`
+    : isCustom
+      ? `goal: ${normalizedGoal}`
+      : `goal: ${formatHMS(normalizedGoal)}`;
+  const isPredictedDone =
+    typeof predictedGoal === 'number' && task.current_progress >= predictedGoal;
 
   return (
-    <div className="rounded-md border border-border/70 bg-surface2/40 px-3 py-2">
-      <div className="flex items-center gap-2">
-        <span className="pill">{task.type}</span>
-        <span className="text-sm font-medium text-fg">{task.name}</span>
-      </div>
-      <div className="mt-1 text-xs font-sans tabular-nums text-subtle">
-        {progressLabel}
-      </div>
-      <div className="mt-2 flex items-center gap-2">
+    <div
+      className={`rounded-md border px-3 py-2 ${
+        isPredictedDone
+          ? 'border-success/50 bg-success/10 ring-1 ring-inset ring-success/30'
+          : 'border-border/70 bg-surface2/40'
+      }`}
+    >
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <p className="truncate text-sm font-medium text-fg">{task.name}</p>
+          <p className="mt-0.5 text-xs font-sans tabular-nums text-subtle">
+            {progressLabel}
+          </p>
+        </div>
         <input
           disabled={!editable}
-          className={`input ${isCustom ? '' : 'font-sans tabular-nums'} ${!editable ? 'opacity-60' : ''}`}
+          className={`input !w-24 shrink-0 text-right ${isCustom ? '' : 'font-sans tabular-nums'} ${!editable ? 'opacity-60' : ''}`}
           value={draft}
           onChange={(e) => setDraft(e.target.value)}
           onBlur={commit}
@@ -287,7 +371,9 @@ function TaskProgressRow({
             if (e.key === 'Enter') (e.target as HTMLInputElement).blur();
           }}
         />
-        <span className="text-[11px] text-muted">{task.status}</span>
+      </div>
+      <div className="mt-2 flex justify-end">
+        <span className="w-24 text-right text-[11px] text-muted">{predictionLabel}</span>
       </div>
       {error ? <p className="mt-1 text-xs text-danger">{error}</p> : null}
     </div>

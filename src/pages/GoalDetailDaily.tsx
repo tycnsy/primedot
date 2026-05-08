@@ -30,6 +30,7 @@ export default function GoalDetailDaily() {
     streaks,
     toggleDailyCheck,
     setDailyCount,
+    archiveDailyGoal,
   } = useGoalsStore();
   const goal = dailyGoals.find((item) => item.id === goalId);
   const linkedGoal = goal?.linkedTo ? longGoals.find((item) => item.id === goal.linkedTo) : null;
@@ -59,26 +60,40 @@ export default function GoalDetailDaily() {
 
   return (
     <div className="mx-auto max-w-3xl space-y-5">
-      <div className="space-y-1">
-        <Link
-          to="/goals"
-          className="inline-flex items-center gap-1 text-xs text-muted transition-colors hover:text-fg"
-        >
-          <span aria-hidden>←</span> Goals
-        </Link>
-        <div className="flex flex-wrap items-center gap-2">
-          <GoalTypeBadge type={goal.schedule === 'weekly' ? 'weekly' : 'daily'} />
-          {primaryTag ? <TagChip tag={primaryTag} /> : null}
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div className="space-y-1">
+          <Link
+            to="/goals"
+            className="inline-flex items-center gap-1 text-xs text-muted transition-colors hover:text-fg"
+          >
+            <span aria-hidden>←</span> Goals
+          </Link>
+          <div className="flex flex-wrap items-center gap-2">
+            <GoalTypeBadge type={goal.schedule === 'weekly' ? 'weekly' : 'daily'} />
+            {primaryTag ? <TagChip tag={primaryTag} /> : null}
+          </div>
+          <h1 className="text-3xl font-semibold tracking-tight text-fg">{goal.name}</h1>
+          <p className="text-sm text-muted">
+            {goal.kind === 'count'
+              ? `Count · target ${goal.target ?? 1} ${goal.unit ?? ''}`.trim()
+              : 'Check'}
+            {' · '}
+            {scheduleLabel(goal.schedule)}
+            {goal.timeOfDay && goal.timeOfDay !== 'anytime' ? ` · ${goal.timeOfDay}` : ''}
+          </p>
         </div>
-        <h1 className="text-3xl font-semibold tracking-tight text-fg">{goal.name}</h1>
-        <p className="text-sm text-muted">
-          {goal.kind === 'count'
-            ? `Count · target ${goal.target ?? 1} ${goal.unit ?? ''}`.trim()
-            : 'Check'}
-          {' · '}
-          {scheduleLabel(goal.schedule)}
-          {goal.timeOfDay && goal.timeOfDay !== 'anytime' ? ` · ${goal.timeOfDay}` : ''}
-        </p>
+        <button
+          type="button"
+          className="btn-ghost"
+          onClick={async () => {
+            const confirmed = window.confirm(`Archive "${goal.name}"?`);
+            if (!confirmed) return;
+            await archiveDailyGoal(goal.id);
+            navigate('/goals');
+          }}
+        >
+          Archive
+        </button>
       </div>
 
       <div className="card flex flex-wrap items-center justify-between gap-3">

@@ -17,6 +17,8 @@ interface HabitRowProps {
   weekData?: ('done' | 'partial' | 'skip' | 'idle' | 'future')[];
   todayIdx?: number;
   streak?: number;
+  notDueToday?: boolean;
+  notDueLabel?: string | null;
   focused?: boolean;
   onFocus?: () => void;
   onOpenDetail?: () => void;
@@ -51,6 +53,8 @@ export default function HabitRow({
   weekData = ['idle', 'idle', 'idle', 'idle', 'idle', 'idle', 'future'],
   todayIdx = 6,
   streak = 0,
+  notDueToday = false,
+  notDueLabel = null,
   focused = false,
   onFocus,
   onOpenDetail,
@@ -64,10 +68,12 @@ export default function HabitRow({
       tabIndex={0}
       onFocus={onFocus}
       onClick={onOpenDetail}
-      className={`grid grid-cols-[auto_1fr_auto] items-center gap-3 rounded-lg border px-3 py-2 transition-colors sm:grid-cols-[auto_1fr_auto_auto_auto] ${
+      className={`grid grid-cols-[auto_1fr_auto] cursor-pointer items-center gap-3 rounded-lg border px-3 py-2 transition-colors sm:grid-cols-[auto_1fr_auto_auto_auto] ${
         focused
           ? 'border-accent/60 bg-surface2 ring-1 ring-inset ring-accent/40'
-          : 'border-border bg-surface'
+          : notDueToday
+            ? 'border-border/80 bg-surface2/70'
+          : 'border-border bg-surface hover:border-accent/35 hover:bg-surface2/60'
       }`}
     >
       <span
@@ -81,15 +87,15 @@ export default function HabitRow({
       <div className="min-w-0">
         <p
           className={`truncate text-sm font-medium ${
-            done ? 'text-muted line-through' : 'text-fg'
+            done ? 'text-muted line-through' : notDueToday ? 'text-muted' : 'text-fg'
           }`}
         >
           {habit.name}
         </p>
         <p className="truncate text-xs text-muted">
-          {habit.kind}
-          {habit.kind === 'count' && habit.target ? ` · target ${habit.target}` : ''}
-          {habit.unit ? ` ${habit.unit}` : ''}
+          {notDueToday && notDueLabel
+            ? notDueLabel
+            : `${habit.kind}${habit.kind === 'count' && habit.target ? ` · target ${habit.target}` : ''}${habit.unit ? ` ${habit.unit}` : ''}`}
         </p>
       </div>
 

@@ -1,10 +1,10 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { GoalCard, GoalsSubnav, LogProgressModal, NewGoalModal } from '../components/goals';
+import { GoalCard, LogProgressModal, NewGoalModal } from '../components/goals';
 import { useGoalsPreferences, useGoalsStore } from '../features/goals';
 import type { LongGoal, Tag } from '../features/goals';
 
-type GoalsTab = 'all' | 'trend' | 'accumulation' | 'milestone' | 'daily';
+type GoalsTab = 'all' | 'trend' | 'accumulation' | 'milestone';
 
 function isTypingContext(target: EventTarget | null): boolean {
   const el = target as HTMLElement | null;
@@ -12,18 +12,9 @@ function isTypingContext(target: EventTarget | null): boolean {
   return el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.isContentEditable;
 }
 
-function isDailyGoalDone(
-  goal: { kind: 'check' | 'count'; target?: number },
-  entry: { done?: boolean; count?: number } | undefined,
-): boolean {
-  if (!entry) return false;
-  if (goal.kind === 'count') return (entry.count ?? 0) >= (goal.target ?? 1);
-  return entry.done === true;
-}
-
 export default function GoalsIndex() {
   const navigate = useNavigate();
-  const { longGoals, dailyGoals, tags, todayEntries, addLog, addLongGoal } = useGoalsStore();
+  const { longGoals, tags, addLog, addLongGoal, reorderLongGoals, showToast } = useGoalsStore();
   const {
     density,
     setDensity,
@@ -37,6 +28,9 @@ export default function GoalsIndex() {
   const [activeTagId, setActiveTagId] = useState<string | 'all'>('all');
   const [isNewGoalModalOpen, setIsNewGoalModalOpen] = useState(false);
   const [logGoal, setLogGoal] = useState<LongGoal | null>(null);
+  const [localOrderIds, setLocalOrderIds] = useState<string[] | null>(null);
+  const [draggedGoalId, setDraggedGoalId] = useState<string | null>(null);
+  const [isSavingOrder, setIsSavingOrder] = useState(false);
   const searchInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -56,6 +50,8 @@ export default function GoalsIndex() {
   }, []);
 
   const query = search.trim().toLowerCase();
+  const canUseFullListOrdering =
+    activeTab === 'all' && activeTagId === 'all' && query.length === 0;
 
   const filteredLongGoals = useMemo(() => {
     const visible = longGoals.filter((goal) => !goal.archivedAt);
@@ -68,40 +64,62 @@ export default function GoalsIndex() {
     });
   }, [activeTab, activeTagId, longGoals, query]);
 
-  const filteredDailyGoals = useMemo(() => {
-    const visible = dailyGoals.filter((goal) => !goal.archivedAt);
-    return visible.filter((goal) => {
-      if (activeTab !== 'all' && activeTab !== 'daily') return false;
-      if (activeTagId !== 'all' && !goal.tags.includes(activeTagId)) return false;
-      if (!query) return true;
-      const haystack = `${goal.name} ${goal.notes ?? ''}`.toLowerCase();
-      return haystack.includes(query);
-    });
-  }, [activeTab, activeTagId, dailyGoals, query]);
-
   const visibleTags = useMemo(() => {
     const usedTagIds = new Set<string>();
     longGoals.forEach((goal) => goal.tags.forEach((tagId) => usedTagIds.add(tagId)));
-    dailyGoals.forEach((goal) => goal.tags.forEach((tagId) => usedTagIds.add(tagId)));
     return tags.filter((tag) => usedTagIds.has(tag.id));
-  }, [dailyGoals, longGoals, tags]);
+  }, [longGoals, tags]);
   const tagById = useMemo(() => new Map(tags.map((tag) => [tag.id, tag])), [tags]);
+  const activeLongGoals = useMemo(() => longGoals.filter((goal) => !goal.archivedAt), [longGoals]);
+  const orderedLongGoals = useMemo(() => {
+    if (!canUseFullListOrdering || !localOrderIds) return filteredLongGoals;
+    const goalById = new Map(activeLongGoals.map((goal) => [goal.id, goal]));
+    const ordered: LongGoal[] = [];
+    localOrderIds.forEach((id) => {
+      const goal = goalById.get(id);
+      if (!goal) return;
+      ordered.push(goal);
+      goalById.delete(id);
+    });
+    goalById.forEach((goal) => {
+      ordered.push(goal);
+    });
+    return ordered;
+  }, [activeLongGoals, canUseFullListOrdering, filteredLongGoals, localOrderIds]);
 
-  const dailyDoneCount = useMemo(
-    () =>
-      dailyGoals.filter(
-        (goal) => !goal.archivedAt && isDailyGoalDone(goal, todayEntries[goal.id]),
-      ).length,
-    [dailyGoals, todayEntries],
-  );
+  useEffect(() => {
+    setLocalOrderIds(null);
+  }, [longGoals]);
 
-  const activeDailyCount = dailyGoals.filter((goal) => !goal.archivedAt).length;
-  const upNext = dailyGoals
-    .filter((goal) => !goal.archivedAt && !isDailyGoalDone(goal, todayEntries[goal.id]))
-    .slice(0, 3)
-    .map((goal) => goal.name);
-  const hasNoFilterMatches =
-    filteredLongGoals.length === 0 && filteredDailyGoals.length === 0;
+  const hasNoFilterMatches = orderedLongGoals.length === 0;
+
+  const onDropGoal = (targetGoalId: string) => {
+    if (!draggedGoalId || draggedGoalId === targetGoalId || !canUseFullListOrdering || isSavingOrder) {
+      setDraggedGoalId(null);
+      return;
+    }
+    const previousOrderIds = orderedLongGoals.map((goal) => goal.id);
+    const sourceIndex = previousOrderIds.indexOf(draggedGoalId);
+    const targetIndex = previousOrderIds.indexOf(targetGoalId);
+    if (sourceIndex < 0 || targetIndex < 0) {
+      setDraggedGoalId(null);
+      return;
+    }
+    const nextOrderIds = [...previousOrderIds];
+    const [moved] = nextOrderIds.splice(sourceIndex, 1);
+    nextOrderIds.splice(targetIndex, 0, moved);
+    setLocalOrderIds(nextOrderIds);
+    setDraggedGoalId(null);
+    setIsSavingOrder(true);
+    void reorderLongGoals(nextOrderIds)
+      .catch(() => {
+        setLocalOrderIds(previousOrderIds);
+        showToast('Could not save goal order.');
+      })
+      .finally(() => {
+        setIsSavingOrder(false);
+      });
+  };
 
   return (
     <div className="space-y-6">
@@ -117,7 +135,6 @@ export default function GoalsIndex() {
           <h1 className="text-3xl font-semibold tracking-tight text-fg">Goals</h1>
           <p className="text-sm text-muted">
             {longGoals.filter((goal) => !goal.archivedAt).length} long-term ·{' '}
-            {activeDailyCount} recurring ·{' '}
             {new Intl.DateTimeFormat('en-US', {
               weekday: 'long',
               month: 'long',
@@ -126,9 +143,6 @@ export default function GoalsIndex() {
           </p>
         </div>
         <div className="flex items-center gap-2">
-          <Link to="/goals/today" className="btn-ghost">
-            Today view
-          </Link>
           <button type="button" className="btn-primary" onClick={() => setIsNewGoalModalOpen(true)}>
             + New goal
           </button>
@@ -137,9 +151,7 @@ export default function GoalsIndex() {
 
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="segmented">
-          {(
-            ['all', 'trend', 'accumulation', 'milestone', 'daily'] as GoalsTab[]
-          ).map((tab) => (
+          {(['all', 'trend', 'accumulation', 'milestone'] as GoalsTab[]).map((tab) => (
             <button
               key={tab}
               type="button"
@@ -247,82 +259,42 @@ export default function GoalsIndex() {
         ))}
       </div>
 
-      {(activeTab === 'all' || activeTab === 'daily') && (
-        <Link to="/goals/today" className="card block transition hover:border-border hover:shadow-sm">
-          <div className="flex items-center justify-between gap-3">
-            <div>
-              <p className="label">TODAY</p>
-              <h2 className="mt-1 text-lg font-semibold text-fg">
-                {dailyDoneCount} of {activeDailyCount} daily goals done
-              </h2>
-              <p className="text-sm text-muted">
-                {upNext.length > 0
-                  ? `Up next: ${upNext.join(' · ')}`
-                  : 'All daily goals checked. Nice.'}
-              </p>
-            </div>
-            <div className="text-right">
-              <span className="text-xl font-semibold tabular-nums text-fg">
-                {activeDailyCount > 0
-                  ? Math.round((dailyDoneCount / activeDailyCount) * 100)
-                  : 0}
-                %
-              </span>
-              <p className="text-xs text-muted">today</p>
-            </div>
-          </div>
-        </Link>
-      )}
-
-      {(activeTab === 'all' || activeTab === 'daily') && (
-        <section className="space-y-3">
-          <div className="flex items-center gap-3">
-            <p className="label">Recurring goals</p>
-            <div className="h-px flex-1 bg-border" />
-          </div>
-          <div className="grid gap-3">
-            {filteredDailyGoals.map((goal) => (
-              <Link
-                key={goal.id}
-                to={`/goals/daily/${goal.id}`}
-                className="card block transition hover:border-border hover:shadow-sm"
-              >
-                <div className="flex items-center justify-between gap-3">
-                  <div>
-                    <p className="text-sm font-medium text-fg">{goal.name}</p>
-                    <p className="text-xs text-muted">
-                      {goal.schedule} · {goal.kind}
-                      {goal.kind === 'count'
-                        ? ` · ${(todayEntries[goal.id]?.count ?? 0)}/${goal.target ?? 1} ${goal.unit ?? ''}`.trim()
-                        : ''}
-                    </p>
-                  </div>
-                  <span className="text-xs text-muted">
-                    {isDailyGoalDone(goal, todayEntries[goal.id]) ? 'Done' : 'Pending'}
-                  </span>
-                </div>
-              </Link>
-            ))}
-          </div>
-        </section>
-      )}
-
-      {(activeTab === 'all' || activeTab !== 'daily') && (
-        <section className="space-y-3">
-          <div className="flex items-center gap-3">
-            <p className="label">Long-term goals</p>
-            <div className="h-px flex-1 bg-border" />
-          </div>
-          <div
-            className={
-              indexLayout === 'grid'
-                ? 'grid grid-cols-[repeat(auto-fill,minmax(320px,1fr))] gap-3.5'
-                : 'grid gap-3'
-            }
-          >
-            {filteredLongGoals.map((goal) => (
+      <section className="space-y-3">
+        <div className="flex flex-wrap items-center gap-3">
+          <p className="label">Long-term goals</p>
+          <div className="h-px flex-1 bg-border" />
+          <p className="text-xs text-muted">
+            {canUseFullListOrdering
+              ? isSavingOrder
+                ? 'Saving order...'
+                : 'Drag cards to reorder.'
+              : 'Clear search and filters to reorder goals.'}
+          </p>
+        </div>
+        <div
+          className={
+            indexLayout === 'grid'
+              ? 'grid grid-cols-[repeat(auto-fill,minmax(320px,1fr))] gap-3.5'
+              : 'grid gap-3'
+          }
+        >
+          {orderedLongGoals.map((goal) => (
+            <div
+              key={goal.id}
+              draggable={canUseFullListOrdering && !isSavingOrder}
+              onDragStart={() => setDraggedGoalId(goal.id)}
+              onDragOver={(event) => {
+                if (!canUseFullListOrdering || isSavingOrder) return;
+                event.preventDefault();
+              }}
+              onDrop={(event) => {
+                event.preventDefault();
+                onDropGoal(goal.id);
+              }}
+              onDragEnd={() => setDraggedGoalId(null)}
+              className={draggedGoalId === goal.id ? 'opacity-60' : ''}
+            >
               <GoalCard
-                key={goal.id}
                 goal={goal}
                 tags={goal.tags
                   .map((id) => tagById.get(id))
@@ -331,20 +303,16 @@ export default function GoalsIndex() {
                 onLog={() => setLogGoal(goal)}
                 showPaceLine={showPaceLine}
               />
-            ))}
-          </div>
-        </section>
-      )}
+            </div>
+          ))}
+        </div>
+      </section>
 
       {hasNoFilterMatches && (
         <div className="card">
           <p className="text-sm text-muted">No goals match. Try clearing filters.</p>
         </div>
       )}
-
-      <div className="pt-1">
-        <GoalsSubnav />
-      </div>
 
       <LogProgressModal
         open={!!logGoal}

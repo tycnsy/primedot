@@ -8,7 +8,7 @@ export type Schedule =
       type: 'weekdays';
       days: ('mon' | 'tue' | 'wed' | 'thu' | 'fri' | 'sat' | 'sun')[];
     }
-  | { type: 'times-per-week'; count: number }
+  | { type: 'every-n-days'; count: number }
   | { type: 'times-per-day'; count: number };
 
 export interface Habit {

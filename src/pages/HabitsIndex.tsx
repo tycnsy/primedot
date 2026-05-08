@@ -1,12 +1,9 @@
 import { useMemo, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { HabitRow, RingProgress } from '../components/habits';
-import {
-  buildLast7DayStates,
-  rangeProgressForHabit,
-} from '../features/habits/metrics';
+import { buildLast7DayStates, rangeProgressForHabit } from '../features/habits/metrics';
 import type { DayState } from '../features/habits/types';
-import { useEntries, useEntriesRange, useHabits } from '../hooks/useHabits';
+import { useEntries, useEntriesRange, useHabitStreaks, useHabits } from '../hooks/useHabits';
 
 type RangeTab = 'today' | 'week' | 'month' | 'all';
 
@@ -42,6 +39,7 @@ export default function HabitsIndex() {
 
   const range = useEntriesRange(bounds.from, bounds.to);
   const history7 = useEntriesRange(daysAgo(6), today);
+  const streaks = useHabitStreaks(habits, today);
 
   const rangeEntriesByHabit = range.entriesByHabit;
   const historyByHabit = history7.entriesByHabit;
@@ -115,7 +113,7 @@ export default function HabitsIndex() {
         </div>
       </div>
 
-      <div className="flex items-center justify-between">
+      <div className="flex items-center">
         <div className="segmented">
           {(['today', 'week', 'month', 'all'] as RangeTab[]).map((tab) => (
             <button
@@ -128,7 +126,6 @@ export default function HabitsIndex() {
             </button>
           ))}
         </div>
-        <p className="text-xs text-muted">N new · Space toggle · / search</p>
       </div>
 
       <div className="card">
@@ -144,7 +141,7 @@ export default function HabitsIndex() {
         </div>
       </div>
 
-      {isLoading || range.isLoading || history7.isLoading ? (
+      {isLoading || range.isLoading || history7.isLoading || streaks.isLoading ? (
         <p className="text-sm text-muted">Loading habits…</p>
       ) : null}
       {error ? (
@@ -155,6 +152,13 @@ export default function HabitsIndex() {
       {range.error ? (
         <p className="text-sm text-danger">
           {range.error instanceof Error ? range.error.message : 'Failed to load history.'}
+        </p>
+      ) : null}
+      {streaks.error ? (
+        <p className="text-sm text-danger">
+          {streaks.error instanceof Error
+            ? streaks.error.message
+            : 'Failed to load streak history.'}
         </p>
       ) : null}
 
@@ -187,7 +191,9 @@ export default function HabitsIndex() {
               showStreak
               draggable
               weekData={weekStrip(habit.id)}
-              streak={0}
+              streak={streaks.streaksByHabit[habit.id] ?? 0}
+              notDueToday={streaks.notDueTodayByHabit[habit.id] ?? false}
+              notDueLabel={streaks.notDueLabelByHabit[habit.id] ?? null}
               onOpenDetail={() => navigate(`/habits/${habit.id}`)}
               onToggle={() => void toggleCheck(habit.id)}
               onCount={(n) => void setCount(habit.id, n)}

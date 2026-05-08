@@ -8,14 +8,14 @@ import type {
   NewHabit,
   Schedule,
 } from '../features/habits/types';
-import { calcHabitStatsScheduleAware } from '../features/habits/metrics';
+import { cadenceStatusForDate, calcHabitStatsScheduleAware } from '../features/habits/metrics';
 
 type HabitRow = {
   id: string;
   user_id: string;
   name: string;
   kind: Habit['kind'];
-  schedule: Schedule;
+  schedule: Schedule | { type: 'times-per-week'; count: number };
   target: number | null;
   unit: string | null;
   scale_max: number | null;
@@ -55,9 +55,19 @@ const entriesRangeKey = (
 ) => ['habit_entries_range', userId, from, to] as const;
 const habitDetailKey = (habitId: string | undefined) => ['habit_detail', habitId] as const;
 const habitHistoryKey = (habitId: string | undefined) => ['habit_history', habitId] as const;
+const habitDetailHistoryDays = 182;
 
 function todayDateString() {
   return new Date().toISOString().slice(0, 10);
+}
+
+function normalizeSchedule(
+  schedule: HabitRow['schedule'],
+): Schedule {
+  if (schedule.type === 'times-per-week') {
+    return { type: 'every-n-days', count: 2 };
+  }
+  return schedule;
 }
 
 function mapHabit(row: HabitRow): Habit {
@@ -66,7 +76,7 @@ function mapHabit(row: HabitRow): Habit {
     userId: row.user_id,
     name: row.name,
     kind: row.kind,
-    schedule: row.schedule,
+    schedule: normalizeSchedule(row.schedule),
     target: row.target ?? undefined,
     unit: row.unit ?? undefined,
     scaleMax: row.scale_max ?? undefined,
@@ -129,7 +139,19 @@ export function useHabits() {
         .order('sort_order', { ascending: true })
         .order('created_at', { ascending: true });
       if (error) throw error;
-      return ((data ?? []) as HabitRow[]).map(mapHabit);
+      const rows = (data ?? []) as HabitRow[];
+      const legacyRows = rows.filter((row) => row.schedule?.type === 'times-per-week');
+      if (legacyRows.length > 0) {
+        await Promise.all(
+          legacyRows.map((row) =>
+            supabase
+              .from('habits')
+              .update({ schedule: { type: 'every-n-days', count: 2 } })
+              .eq('id', row.id),
+          ),
+        );
+      }
+      return rows.map(mapHabit);
     },
   });
 
@@ -399,6 +421,56 @@ export function useEntriesRange(from: string | null, to: string | null) {
   };
 }
 
+export function useHabitStreaks(habits: Habit[], anchorDate: string = todayDateString()) {
+  const history = useEntriesRange(null, anchorDate);
+
+  const summary = useMemo(() => {
+    return habits.reduce<{
+      streaksByHabit: Record<string, number>;
+      notDueTodayByHabit: Record<string, boolean>;
+      notDueLabelByHabit: Record<string, string | null>;
+    }>(
+      (acc, habit) => {
+        const entries = history.entriesByHabit[habit.id] ?? [];
+        acc.streaksByHabit[habit.id] = calcHabitStatsScheduleAware(
+          habit,
+          entries,
+          anchorDate,
+        ).currentStreak;
+
+        if (habit.schedule.type === 'every-n-days') {
+          const status = cadenceStatusForDate(habit, entries, anchorDate);
+          const notDueToday = !status.due && !status.completedOnDate;
+          acc.notDueTodayByHabit[habit.id] = notDueToday;
+          if (notDueToday && status.daysSinceLastCompletion === 1) {
+            acc.notDueLabelByHabit[habit.id] = 'Done yesterday · not due today';
+          } else if (notDueToday && status.daysUntilDue > 0) {
+            acc.notDueLabelByHabit[habit.id] =
+              status.daysUntilDue === 1
+                ? 'Not due today · due tomorrow'
+                : `Not due today · due in ${status.daysUntilDue} days`;
+          } else {
+            acc.notDueLabelByHabit[habit.id] = null;
+          }
+        } else {
+          acc.notDueTodayByHabit[habit.id] = false;
+          acc.notDueLabelByHabit[habit.id] = null;
+        }
+        return acc;
+      },
+      { streaksByHabit: {}, notDueTodayByHabit: {}, notDueLabelByHabit: {} },
+    );
+  }, [anchorDate, habits, history.entriesByHabit]);
+
+  return {
+    streaksByHabit: summary.streaksByHabit,
+    notDueTodayByHabit: summary.notDueTodayByHabit,
+    notDueLabelByHabit: summary.notDueLabelByHabit,
+    isLoading: history.isLoading,
+    error: history.error,
+  };
+}
+
 export function useHabitDetail(habitId: string | undefined) {
   const habitQuery = useQuery({
     queryKey: habitDetailKey(habitId),
@@ -418,7 +490,7 @@ export function useHabitDetail(habitId: string | undefined) {
     queryKey: habitHistoryKey(habitId),
     enabled: !!habitId,
     queryFn: async (): Promise<HabitEntry[]> => {
-      const from = dateDaysAgo(180);
+      const from = dateDaysAgo(habitDetailHistoryDays);
       const { data, error } = await supabase
         .from('habit_entries')
         .select('*')

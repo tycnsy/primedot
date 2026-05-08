@@ -20,16 +20,6 @@ function addDays(date: Date, days: number): Date {
   return next;
 }
 
-function startOfWeekMonday(date: Date): Date {
-  const day = date.getDay();
-  const diff = day === 0 ? -6 : 1 - day;
-  return addDays(date, diff);
-}
-
-function weekId(date: Date): string {
-  return formatLocalDate(startOfWeekMonday(date));
-}
-
 function listDates(from: string, to: string): string[] {
   const start = parseLocalDate(from);
   const end = parseLocalDate(to);
@@ -40,7 +30,14 @@ function listDates(from: string, to: string): string[] {
   return out;
 }
 
-function isScheduledOnDay(habit: Habit, date: string): boolean {
+function daysBetween(fromDate: string, toDate: string): number {
+  const from = parseLocalDate(fromDate);
+  const to = parseLocalDate(toDate);
+  const diffMs = to.getTime() - from.getTime();
+  return Math.floor(diffMs / 86_400_000);
+}
+
+function isScheduledOnDayStatic(habit: Habit, date: string): boolean {
   const schedule = habit.schedule;
   if (schedule.type === 'daily') return true;
   if (schedule.type === 'weekdays') {
@@ -48,7 +45,7 @@ function isScheduledOnDay(habit: Habit, date: string): boolean {
     return schedule.days.includes(day);
   }
   if (schedule.type === 'times-per-day') return true;
-  if (schedule.type === 'times-per-week') return true;
+  if (schedule.type === 'every-n-days') return true;
   return true;
 }
 
@@ -86,6 +83,57 @@ function rangeFromEntriesOrCreatedAt(habit: Habit, entries: HabitEntry[], anchor
   return anchorDate;
 }
 
+function completionForDay(habit: Habit, entry: HabitEntry | undefined): boolean {
+  const units = entryDoneUnits(habit, entry);
+  if (habit.schedule.type === 'times-per-day') {
+    return units >= Math.max(1, habit.schedule.count);
+  }
+  return units >= 1;
+}
+
+function hasLoggedProgress(entry: HabitEntry | undefined): boolean {
+  return (
+    entry != null &&
+    (entry.done != null || entry.count != null || entry.scale != null || !!entry.noteText?.trim())
+  );
+}
+
+export function cadenceStatusForDate(
+  habit: Habit,
+  entries: HabitEntry[],
+  date: string,
+): {
+  due: boolean;
+  completedOnDate: boolean;
+  daysSinceLastCompletion: number | null;
+  daysUntilDue: number;
+} {
+  const entriesByDate = new Map(entries.map((entry) => [entry.date, entry]));
+  const completedOnDate = completionForDay(habit, entriesByDate.get(date));
+  if (habit.schedule.type !== 'every-n-days') {
+    const due = isScheduledOnDayStatic(habit, date);
+    return { due, completedOnDate, daysSinceLastCompletion: null, daysUntilDue: due ? 0 : 1 };
+  }
+
+  const interval = Math.max(1, habit.schedule.count);
+  const lastCompletedDate = entries
+    .filter((entry) => entry.date <= date && completionForDay(habit, entry))
+    .sort((a, b) => b.date.localeCompare(a.date))[0]?.date;
+
+  if (!lastCompletedDate) {
+    return { due: true, completedOnDate, daysSinceLastCompletion: null, daysUntilDue: 0 };
+  }
+
+  const daysSinceLastCompletion = daysBetween(lastCompletedDate, date);
+  const due = daysSinceLastCompletion >= interval;
+  return {
+    due,
+    completedOnDate,
+    daysSinceLastCompletion,
+    daysUntilDue: due ? 0 : interval - daysSinceLastCompletion,
+  };
+}
+
 export function rangeProgressForHabit(
   habit: Habit,
   entries: HabitEntry[],
@@ -94,27 +142,31 @@ export function rangeProgressForHabit(
 ): { scheduled: number; completed: number } {
   const entriesByDate = new Map(entries.map((entry) => [entry.date, entry]));
 
-  if (habit.schedule.type === 'times-per-week') {
-    const weekMap = new Map<string, number>();
-    for (const date of listDates(from, to)) {
-      if (!isScheduledOnDay(habit, date)) continue;
-      const id = weekId(parseLocalDate(date));
-      const units = entryDoneUnits(habit, entriesByDate.get(date));
-      weekMap.set(id, (weekMap.get(id) ?? 0) + units);
-    }
-    const target = Math.max(1, habit.schedule.count);
-    const scheduled = weekMap.size * target;
+  if (habit.schedule.type === 'every-n-days') {
+    const interval = Math.max(1, habit.schedule.count);
+    const start = rangeFromEntriesOrCreatedAt(habit, entries, to);
+    let lastCompletedDate: string | null = null;
+    let scheduled = 0;
     let completed = 0;
-    weekMap.forEach((value) => {
-      completed += Math.min(target, value);
-    });
+    for (const date of listDates(start, to)) {
+      const didComplete = completionForDay(habit, entriesByDate.get(date));
+      const due = !lastCompletedDate || daysBetween(lastCompletedDate, date) >= interval;
+      const countedOccurrence = due || didComplete;
+      if (countedOccurrence && date >= from) {
+        scheduled += 1;
+        if (didComplete) completed += 1;
+      }
+      if (didComplete) {
+        lastCompletedDate = date;
+      }
+    }
     return { scheduled, completed };
   }
 
   let scheduled = 0;
   let completed = 0;
   for (const date of listDates(from, to)) {
-    if (!isScheduledOnDay(habit, date)) continue;
+    if (!isScheduledOnDayStatic(habit, date)) continue;
     const required = dayRequiredOccurrences(habit);
     const units = entryDoneUnits(habit, entriesByDate.get(date));
     scheduled += required;
@@ -133,62 +185,46 @@ export function buildLast7DayStates(
   const states: DayState[] = [];
   for (let i = 6; i >= 0; i -= 1) {
     const date = formatLocalDate(addDays(end, -i));
-    if (!isScheduledOnDay(habit, date)) {
+    if (!isScheduledOnDayStatic(habit, date)) {
       states.push('skip');
       continue;
+    }
+    if (habit.schedule.type === 'every-n-days') {
+      const cadence = cadenceStatusForDate(habit, entries, date);
+      if (!cadence.due && !cadence.completedOnDate) {
+        states.push('skip');
+        continue;
+      }
     }
     states.push(dayStateForHabitEntry(habit, entriesByDate.get(date)));
   }
   return states;
 }
 
-function completionForDay(habit: Habit, entry: HabitEntry | undefined): boolean {
-  const units = entryDoneUnits(habit, entry);
-  if (habit.schedule.type === 'times-per-day') {
-    return units >= Math.max(1, habit.schedule.count);
-  }
-  return units >= 1;
-}
-
-function timesPerWeekStreak(habit: Habit, entries: HabitEntry[], anchorDate: string) {
-  const start = rangeFromEntriesOrCreatedAt(habit, entries, anchorDate);
-  const byDate = new Map(entries.map((entry) => [entry.date, entry]));
-  const weekTotals = new Map<string, number>();
-  for (const date of listDates(start, anchorDate)) {
-    const id = weekId(parseLocalDate(date));
-    const units = entryDoneUnits(habit, byDate.get(date));
-    weekTotals.set(id, (weekTotals.get(id) ?? 0) + units);
-  }
-  const target =
-    habit.schedule.type === 'times-per-week' ? Math.max(1, habit.schedule.count) : 1;
-  const orderedWeeks = [...weekTotals.keys()].sort();
-  const completedWeeks = orderedWeeks.map((id) => (weekTotals.get(id) ?? 0) >= target);
-
-  let longest = 0;
-  let run = 0;
-  completedWeeks.forEach((done) => {
-    if (done) {
-      run += 1;
-      longest = Math.max(longest, run);
-    } else {
-      run = 0;
-    }
-  });
-
-  let current = 0;
-  for (let i = completedWeeks.length - 1; i >= 0; i -= 1) {
-    if (!completedWeeks[i]) break;
-    current += 1;
-  }
-
-  return { current, longest };
-}
-
 function dayBasedStreak(habit: Habit, entries: HabitEntry[], anchorDate: string) {
   const start = rangeFromEntriesOrCreatedAt(habit, entries, anchorDate);
   const byDate = new Map(entries.map((entry) => [entry.date, entry]));
-  const scheduledDays = listDates(start, anchorDate).filter((date) => isScheduledOnDay(habit, date));
-  const completion = scheduledDays.map((date) => completionForDay(habit, byDate.get(date)));
+  let scheduledDays: string[] = [];
+  let completion: boolean[] = [];
+
+  if (habit.schedule.type === 'every-n-days') {
+    const interval = Math.max(1, habit.schedule.count);
+    let lastCompletedDate: string | null = null;
+    for (const date of listDates(start, anchorDate)) {
+      const didComplete = completionForDay(habit, byDate.get(date));
+      const due = !lastCompletedDate || daysBetween(lastCompletedDate, date) >= interval;
+      if (due || didComplete) {
+        scheduledDays.push(date);
+        completion.push(didComplete);
+      }
+      if (didComplete) {
+        lastCompletedDate = date;
+      }
+    }
+  } else {
+    scheduledDays = listDates(start, anchorDate).filter((date) => isScheduledOnDayStatic(habit, date));
+    completion = scheduledDays.map((date) => completionForDay(habit, byDate.get(date)));
+  }
 
   let longest = 0;
   let run = 0;
@@ -202,7 +238,16 @@ function dayBasedStreak(habit: Habit, entries: HabitEntry[], anchorDate: string)
   });
 
   let current = 0;
-  for (let i = completion.length - 1; i >= 0; i -= 1) {
+  let cursor = completion.length - 1;
+  const lastScheduledDate = scheduledDays[cursor];
+  if (lastScheduledDate === anchorDate && !completion[cursor]) {
+    const anchorEntry = byDate.get(anchorDate);
+    if (!hasLoggedProgress(anchorEntry)) {
+      cursor -= 1;
+    }
+  }
+
+  for (let i = cursor; i >= 0; i -= 1) {
     if (!completion[i]) break;
     current += 1;
   }
@@ -211,6 +256,28 @@ function dayBasedStreak(habit: Habit, entries: HabitEntry[], anchorDate: string)
 }
 
 function recentOccurrenceConsistency(habit: Habit, entries: HabitEntry[], anchorDate: string) {
+  if (habit.schedule.type === 'every-n-days') {
+    const start = rangeFromEntriesOrCreatedAt(habit, entries, anchorDate);
+    const byDate = new Map(entries.map((entry) => [entry.date, entry]));
+    const interval = Math.max(1, habit.schedule.count);
+    let lastCompletedDate: string | null = null;
+    const occurrences: boolean[] = [];
+    for (const date of listDates(start, anchorDate)) {
+      const didComplete = completionForDay(habit, byDate.get(date));
+      const due = !lastCompletedDate || daysBetween(lastCompletedDate, date) >= interval;
+      if (due || didComplete) {
+        occurrences.push(didComplete);
+      }
+      if (didComplete) {
+        lastCompletedDate = date;
+      }
+    }
+    const recent = occurrences.slice(-30);
+    if (recent.length === 0) return 0;
+    const completed = recent.filter(Boolean).length;
+    return Math.round((completed / recent.length) * 100);
+  }
+
   const byDate = new Map(entries.map((entry) => [entry.date, entry]));
   let scheduled = 0;
   let completed = 0;
@@ -218,23 +285,7 @@ function recentOccurrenceConsistency(habit: Habit, entries: HabitEntry[], anchor
 
   while (scheduled < 30) {
     const date = formatLocalDate(cursor);
-    if (habit.schedule.type === 'times-per-week') {
-      const weekStart = startOfWeekMonday(cursor);
-      const weekDates = Array.from({ length: 7 }, (_, i) => formatLocalDate(addDays(weekStart, i)));
-      const inRangeDates = weekDates.filter((d) => d <= anchorDate);
-      const weekUnits = inRangeDates.reduce(
-        (sum, day) => sum + entryDoneUnits(habit, byDate.get(day)),
-        0,
-      );
-      const target = Math.max(1, habit.schedule.count);
-      const remaining = Math.min(target, 30 - scheduled);
-      scheduled += remaining;
-      completed += Math.min(remaining, weekUnits);
-      cursor = addDays(weekStart, -1);
-      continue;
-    }
-
-    if (isScheduledOnDay(habit, date)) {
+    if (isScheduledOnDayStatic(habit, date)) {
       const required = dayRequiredOccurrences(habit);
       const remaining = Math.min(required, 30 - scheduled);
       scheduled += remaining;
@@ -265,11 +316,7 @@ export function calcHabitStatsScheduleAware(
   })();
   const monthProgress = rangeProgressForHabit(habit, entries, monthStart, anchorDate);
 
-  const streak =
-    habit.schedule.type === 'times-per-week'
-      ? timesPerWeekStreak(habit, entries, anchorDate)
-      : dayBasedStreak(habit, entries, anchorDate);
-
+  const streak = dayBasedStreak(habit, entries, anchorDate);
   const consistency = recentOccurrenceConsistency(habit, entries, anchorDate);
 
   return {

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
-import { GoalTypeBadge, LogProgressModal, TagChip } from '../components/goals';
+import { GoalTypeBadge, LogProgressModal, NewGoalModal, TagChip } from '../components/goals';
 import RingProgress from '../components/habits/RingProgress';
 import {
   accumulationStats,
@@ -31,7 +31,16 @@ function formatValue(value: number, unit: string): string {
 export default function GoalDetailLong() {
   const navigate = useNavigate();
   const { goalId } = useParams<{ goalId: string }>();
-  const { longGoals, goalById, tagById, toggleMilestone, addLog } = useGoalsStore();
+  const {
+    longGoals,
+    tags,
+    goalById,
+    tagById,
+    toggleMilestone,
+    addLog,
+    updateLongGoal,
+    archiveLongGoal,
+  } = useGoalsStore();
   const {
     density,
     setDensity,
@@ -42,8 +51,9 @@ export default function GoalDetailLong() {
   } = useGoalsPreferences();
   const [tab, setTab] = useState<DetailTab>('overview');
   const [isLogModalOpen, setIsLogModalOpen] = useState(false);
+  const [isEditModalOpen, setIsEditModalOpen] = useState(false);
   const goal = longGoals.find((item) => item.id === goalId);
-  const tags = useMemo(
+  const goalTags = useMemo(
     () => (goal?.tags ?? []).map((id) => tagById(id)).filter((tag) => !!tag),
     [goal?.tags, tagById],
   );
@@ -81,7 +91,7 @@ export default function GoalDetailLong() {
           </Link>
           <div className="flex flex-wrap items-center gap-2">
             <GoalTypeBadge type={goal.type} />
-            {tags.map((tag) => (
+            {goalTags.map((tag) => (
               <TagChip key={tag.id} tag={tag} />
             ))}
           </div>
@@ -89,10 +99,19 @@ export default function GoalDetailLong() {
           {goal.description ? <p className="text-sm text-muted">{goal.description}</p> : null}
         </div>
         <div className="flex items-center gap-2">
-          <button type="button" className="btn-ghost">
+          <button type="button" className="btn-ghost" onClick={() => setIsEditModalOpen(true)}>
             Edit
           </button>
-          <button type="button" className="btn-ghost">
+          <button
+            type="button"
+            className="btn-ghost"
+            onClick={async () => {
+              const confirmed = window.confirm(`Archive "${goal.name}"?`);
+              if (!confirmed) return;
+              await archiveLongGoal(goal.id);
+              navigate('/goals');
+            }}
+          >
             Archive
           </button>
           <button type="button" className="btn-primary" onClick={() => setIsLogModalOpen(true)}>
@@ -193,6 +212,16 @@ export default function GoalDetailLong() {
         onClose={() => setIsLogModalOpen(false)}
         onSave={({ goalId: saveGoalId, value, note, at }) => {
           addLog(saveGoalId, { value, note, at });
+        }}
+      />
+      <NewGoalModal
+        open={isEditModalOpen}
+        mode="edit"
+        initialGoal={goal}
+        tags={tags}
+        onClose={() => setIsEditModalOpen(false)}
+        onSave={async (nextGoal) => {
+          await updateLongGoal(goal.id, nextGoal);
         }}
       />
     </div>

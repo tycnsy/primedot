@@ -2,17 +2,23 @@ import { FormEvent, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { HabitRow, RingProgress } from '../components/habits';
-import { useEntries, useHabits } from '../hooks/useHabits';
+import { useEntries, useHabitStreaks, useHabits } from '../hooks/useHabits';
 import type {
   Habit,
   HabitEntry,
   HabitKind,
+  Schedule,
   HabitTimeOfDay,
   NewHabit,
 } from '../features/habits/types';
 
 function localDateString() {
   return new Date().toISOString().slice(0, 10);
+}
+
+function parseDateInput(value: string): Date {
+  const [y, m, d] = value.split('-').map(Number);
+  return new Date(y, (m ?? 1) - 1, d ?? 1);
 }
 
 function dateLabel(today: Date) {
@@ -48,6 +54,8 @@ function matchesSection(habit: Habit, timeOfDay: HabitTimeOfDay) {
   return habit.timeOfDay === timeOfDay;
 }
 
+type NewScheduleOption = 'daily' | 'weekdays' | 'every-n-days' | 'times-per-day';
+
 function isHabitDone(habit: Habit, entry: HabitEntry | undefined): boolean {
   if (!entry) return false;
   switch (habit.kind) {
@@ -74,6 +82,7 @@ export default function HabitsToday() {
     createHabit: createHabitAsync,
   } = useHabits();
   const todayDate = localDateString();
+  const [selectedLogDate, setSelectedLogDate] = useState(todayDate);
   const {
     entries,
     isLoading: entriesLoading,
@@ -82,17 +91,19 @@ export default function HabitsToday() {
     setCount,
     setScale,
     setNote,
-  } = useEntries(todayDate);
+  } = useEntries(selectedLogDate);
+  const streaks = useHabitStreaks(habits, selectedLogDate);
   const searchInputRef = useRef<HTMLInputElement>(null);
   const [search, setSearch] = useState('');
-  const [focusedIndex, setFocusedIndex] = useState(0);
+  const [focusedIndex, setFocusedIndex] = useState(-1);
   const [isNewHabitOpen, setIsNewHabitOpen] = useState(false);
   const [newName, setNewName] = useState('');
   const [newKind, setNewKind] = useState<HabitKind>('check');
   const [newTarget, setNewTarget] = useState(1);
   const [newUnit, setNewUnit] = useState('');
   const [newScaleMax, setNewScaleMax] = useState(5);
-  const [newSchedule, setNewSchedule] = useState('daily');
+  const [newSchedule, setNewSchedule] = useState<NewScheduleOption>('daily');
+  const [newScheduleCount, setNewScheduleCount] = useState(2);
   const [newTimeOfDay, setNewTimeOfDay] = useState<HabitTimeOfDay>('anytime');
   const [newTags, setNewTags] = useState('');
 
@@ -114,9 +125,11 @@ export default function HabitsToday() {
   const focusableHabits = visibleHabits;
 
   useEffect(() => {
-    setFocusedIndex((current) =>
-      Math.min(Math.max(current, 0), Math.max(focusableHabits.length - 1, 0)),
-    );
+    setFocusedIndex((current) => {
+      if (focusableHabits.length === 0) return -1;
+      if (current < 0) return -1;
+      return Math.min(current, focusableHabits.length - 1);
+    });
   }, [focusableHabits.length]);
 
   useEffect(() => {
@@ -132,7 +145,7 @@ export default function HabitsToday() {
           setIsNewHabitOpen(false);
           return;
         }
-        setFocusedIndex(0);
+        setFocusedIndex(-1);
         return;
       }
 
@@ -150,17 +163,20 @@ export default function HabitsToday() {
 
       if (!typingContext && event.key === 'ArrowDown') {
         event.preventDefault();
-        setFocusedIndex((idx) => Math.min(idx + 1, Math.max(focusableHabits.length - 1, 0)));
+        setFocusedIndex((idx) => {
+          if (focusableHabits.length === 0) return -1;
+          return Math.min(idx + 1, focusableHabits.length - 1);
+        });
         return;
       }
 
       if (!typingContext && event.key === 'ArrowUp') {
         event.preventDefault();
-        setFocusedIndex((idx) => Math.max(idx - 1, 0));
+        setFocusedIndex((idx) => Math.max(idx - 1, -1));
         return;
       }
 
-      if (!typingContext && event.key === ' ' && focusableHabits.length > 0) {
+      if (!typingContext && event.key === ' ' && focusableHabits.length > 0 && focusedIndex >= 0) {
         event.preventDefault();
         const habit = focusableHabits[focusedIndex];
         if (habit?.kind === 'check') {
@@ -168,7 +184,7 @@ export default function HabitsToday() {
         }
       }
 
-      if (!typingContext && event.key === 'Enter' && focusableHabits.length > 0) {
+      if (!typingContext && event.key === 'Enter' && focusableHabits.length > 0 && focusedIndex >= 0) {
         event.preventDefault();
         const habit = focusableHabits[focusedIndex];
         if (habit) navigate(`/habits/${habit.id}`);
@@ -184,17 +200,25 @@ export default function HabitsToday() {
     const name = newName.trim();
     if (!name) return;
 
+    const schedule: Schedule =
+      newSchedule === 'daily'
+        ? { type: 'daily' }
+        : newSchedule === 'weekdays'
+          ? { type: 'weekdays', days: ['mon', 'tue', 'wed', 'thu', 'fri'] }
+          : newSchedule === 'every-n-days'
+            ? { type: 'every-n-days', count: Math.max(1, Math.floor(newScheduleCount)) }
+            : { type: 'times-per-day', count: Math.max(1, Math.floor(newScheduleCount)) };
+
     const payload: NewHabit = {
       name,
       kind: newKind,
-      schedule: { type: 'daily' },
+      schedule,
       timeOfDay: newTimeOfDay,
       ...(newKind === 'count' ? { target: Math.max(1, newTarget), unit: newUnit.trim() } : {}),
       ...(newKind === 'scale' ? { scaleMax: Math.max(2, newScaleMax) } : {}),
       ...(newTags.trim()
         ? { tags: newTags.split(',').map((tag) => tag.trim()).filter(Boolean) }
         : {}),
-      notes: `Schedule: ${newSchedule}`,
     };
     void createHabitAsync(payload);
 
@@ -205,14 +229,15 @@ export default function HabitsToday() {
     setNewUnit('');
     setNewScaleMax(5);
     setNewSchedule('daily');
+    setNewScheduleCount(2);
     setNewTimeOfDay('anytime');
     setNewTags('');
   };
 
   const sections: HabitTimeOfDay[] = ['morning', 'anytime', 'evening'];
-  const today = new Date();
-  const isLoading = habitsLoading || entriesLoading;
-  const error = habitsError ?? entriesError;
+  const logDate = parseDateInput(selectedLogDate);
+  const isLoading = habitsLoading || entriesLoading || streaks.isLoading;
+  const error = habitsError ?? entriesError ?? streaks.error;
 
   return (
     <div className="mx-auto max-w-3xl space-y-8">
@@ -224,12 +249,13 @@ export default function HabitsToday() {
           >
             <span aria-hidden>←</span> Habits
           </Link>
-          <p className="label">{dateLabel(today)}</p>
+          <p className="label">{dateLabel(logDate)}</p>
           <h1 className="text-3xl font-semibold tracking-tight text-fg">
             Good {getGreeting()}, {firstName(user?.email)}.
           </h1>
           <p className="text-sm text-muted">
-            {doneCount} of {totalCount} habits checked off · keep going
+            {doneCount} of {totalCount} habits checked off for{' '}
+            {selectedLogDate === todayDate ? 'today' : selectedLogDate}
           </p>
         </div>
         <div className="pt-2">
@@ -246,7 +272,17 @@ export default function HabitsToday() {
           className="input max-w-sm"
           aria-label="Search habits"
         />
-        <p className="text-xs text-muted">N new · Space toggle · / search · ↑/↓ focus</p>
+        <label className="flex items-center gap-2 text-sm text-muted">
+          Log date
+          <input
+            type="date"
+            className="input"
+            value={selectedLogDate}
+            max={todayDate}
+            onChange={(event) => setSelectedLogDate(event.target.value || todayDate)}
+            aria-label="Select log date"
+          />
+        </label>
       </div>
 
       {isLoading ? <p className="text-sm text-muted">Loading habits…</p> : null}
@@ -282,7 +318,9 @@ export default function HabitsToday() {
                       entry={(entries[habit.id] as HabitEntry | undefined) ?? null}
                       showWeekStrip={false}
                       showStreak
-                      streak={0}
+                      streak={streaks.streaksByHabit[habit.id] ?? 0}
+                      notDueToday={streaks.notDueTodayByHabit[habit.id] ?? false}
+                      notDueLabel={streaks.notDueLabelByHabit[habit.id] ?? null}
                       focused={index === focusedIndex}
                       onFocus={() => setFocusedIndex(index)}
                       onOpenDetail={() => navigate(`/habits/${habit.id}`)}
@@ -290,7 +328,10 @@ export default function HabitsToday() {
                       onCount={(n) => void setCount(habit.id, n)}
                       onScale={(n) => void setScale(habit.id, n)}
                       onNoteOpen={() => {
-                        const text = window.prompt('Log a note for today', entries[habit.id]?.noteText);
+                        const text = window.prompt(
+                          `Log a note for ${selectedLogDate}`,
+                          entries[habit.id]?.noteText,
+                        );
                         if (text == null) return;
                         void setNote(habit.id, text);
                       }}
@@ -415,14 +456,18 @@ export default function HabitsToday() {
                 <div className="space-y-1">
                   <span className="label">Schedule</span>
                   <div className="segmented">
-                    {['daily', 'weekdays', 'times/week', 'times/day'].map((option) => (
+                    {(['daily', 'weekdays', 'every-n-days', 'times-per-day'] as NewScheduleOption[]).map((option) => (
                       <button
                         key={option}
                         type="button"
                         data-active={newSchedule === option}
                         onClick={() => setNewSchedule(option)}
                       >
-                        {option}
+                        {option === 'every-n-days'
+                          ? 'every N days'
+                          : option === 'times-per-day'
+                            ? 'times/day'
+                            : option}
                       </button>
                     ))}
                   </div>
@@ -443,6 +488,22 @@ export default function HabitsToday() {
                   </div>
                 </div>
               </div>
+
+              {(newSchedule === 'every-n-days' || newSchedule === 'times-per-day') ? (
+                <div className="space-y-1">
+                  <label htmlFor="new-habit-schedule-count" className="label">
+                    {newSchedule === 'every-n-days' ? 'Every how many days' : 'Times per day'}
+                  </label>
+                  <input
+                    id="new-habit-schedule-count"
+                    type="number"
+                    min={1}
+                    className="input"
+                    value={newScheduleCount}
+                    onChange={(event) => setNewScheduleCount(Number(event.target.value))}
+                  />
+                </div>
+              ) : null}
 
               <div className="space-y-1">
                 <label htmlFor="habit-tags" className="label">

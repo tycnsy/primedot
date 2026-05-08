@@ -16,6 +16,10 @@ export type WhiteboardElementType =
 export type WhiteboardFillStyle = 'hachure' | 'cross-hatch' | 'solid';
 export type WhiteboardEdge = 'sharp' | 'round';
 export type WhiteboardTextAlign = 'left' | 'center' | 'right';
+export interface WhiteboardTextRun {
+  text: string;
+  color: string;
+}
 
 export interface WhiteboardElement {
   id: string;
@@ -37,6 +41,7 @@ export interface WhiteboardElement {
   points?: [number, number][];
   // text only:
   text?: string;
+  textRuns?: WhiteboardTextRun[];
   fontSize?: number;
   textAlign?: WhiteboardTextAlign;
   /** if set, text wraps at this width */

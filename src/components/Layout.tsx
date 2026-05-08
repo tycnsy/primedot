@@ -68,9 +68,14 @@ export default function Layout() {
   // The whiteboard route fills the viewport — drop Layout's centered max-width
   // and vertical padding so the canvas can bleed edge-to-edge.
   const isFullBleed = /^\/whiteboards\/[^/]+$/.test(location.pathname);
+  const isTimerWide =
+    location.pathname === '/timer' ||
+    /^\/projects\/[^/]+\/timer$/.test(location.pathname);
   const contentClass = isFullBleed
     ? 'h-full w-full'
-    : 'mx-auto max-w-5xl px-4 py-8 sm:px-6';
+    : isTimerWide
+      ? 'w-full px-4 py-8 sm:px-6'
+      : 'mx-auto max-w-5xl px-4 py-8 sm:px-6';
 
   return (
     <div className="relative min-h-screen">
