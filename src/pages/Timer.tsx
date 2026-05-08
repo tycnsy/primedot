@@ -1,13 +1,15 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
+import { usePaceSettingsForProjects, useUpsertPaceSettings } from '../hooks/usePaceSettings';
 import { useProjects } from '../hooks/useProjects';
 import { useTasksForProjects, useUpdateAnyTask } from '../hooks/useTasks';
 import { useTimer } from '../hooks/useTimer';
 import TimerDisplay from '../components/TimerDisplay';
 import { goalProgress, progressTarget } from '../lib/calc';
+import { buildPacePatchFromBufferSeconds } from '../lib/pace';
 import { formatHMS, parseHMS, parseHMSWithOptionalFrames } from '../lib/time';
 import { playPasteChime } from '../lib/chime';
-import type { Project, Task } from '../lib/types';
+import type { PaceSettings, Project, Task } from '../lib/types';
 
 type SessionMode = 'idle' | 'project' | 'bulk';
 const GOAL_DELTA_STORAGE_KEY = 'prime.timer.show_goal_delta';
@@ -19,6 +21,7 @@ export default function Timer() {
   const projects = projectsQ.data ?? [];
   const projectIds = useMemo(() => projects.map((project) => project.id), [projects]);
   const tasksQ = useTasksForProjects(projectIds);
+  const paceByProjectQ = usePaceSettingsForProjects(projectIds);
   const updateTask = useUpdateAnyTask(projectIds);
 
   const [mode, setMode] = useState<SessionMode>('idle');
@@ -119,11 +122,11 @@ export default function Timer() {
   const canEditProject = (projectId: string) =>
     mode === 'bulk' || (mode === 'project' && activeProjectId === projectId);
 
-  if (projectsQ.isLoading || tasksQ.isLoading) {
+  if (projectsQ.isLoading || tasksQ.isLoading || paceByProjectQ.isLoading) {
     return <p className="text-muted">Loading…</p>;
   }
 
-  if (projectsQ.error || tasksQ.error) {
+  if (projectsQ.error || tasksQ.error || paceByProjectQ.error) {
     return (
       <div className="space-y-3">
         <p className="text-danger">Could not load timer data.</p>
@@ -204,6 +207,7 @@ export default function Timer() {
             updateTask={async (taskId, patch) => {
               await updateTask.mutateAsync({ id: taskId, patch });
             }}
+            pace={paceByProjectQ.data?.[project.id] ?? null}
             onStartProjectSession={() => startProjectSession(project.id)}
           />
         ))}
@@ -222,6 +226,7 @@ interface ProjectTimerColumnProps {
   editable: boolean;
   sessionMode: SessionMode;
   updateTask: (id: string, patch: Partial<Task>) => Promise<void>;
+  pace: PaceSettings | null;
   onStartProjectSession: () => void;
 }
 
@@ -235,14 +240,35 @@ function ProjectTimerColumn({
   editable,
   sessionMode,
   updateTask,
+  pace,
   onStartProjectSession,
 }: ProjectTimerColumnProps) {
+  const upsertPace = useUpsertPaceSettings(project.id);
+  const [paceError, setPaceError] = useState<string | null>(null);
+
+  const handleSetPaceShortcut = async () => {
+    setPaceError(null);
+    const { patch } = buildPacePatchFromBufferSeconds(tasks, project, 120, pace?.true_deadline);
+    try {
+      await upsertPace.mutateAsync(patch);
+    } catch (e) {
+      setPaceError(e instanceof Error ? e.message : 'Failed to set pace.');
+    }
+  };
+
   return (
     <div className={`card space-y-3 ${active ? 'ring-1 ring-inset ring-border' : ''}`}>
       <div className="space-y-2">
         <div className="flex items-center justify-between gap-2">
           <h2 className="text-lg font-semibold text-fg">{project.name}</h2>
-          <span className="pill">{tasks.length} remaining</span>
+          <button
+            type="button"
+            onClick={handleSetPaceShortcut}
+            disabled={upsertPace.isPending}
+            className="btn-secondary h-7 px-2 text-xs whitespace-nowrap disabled:cursor-not-allowed disabled:opacity-70"
+          >
+            {upsertPace.isPending ? 'Setting pace…' : 'Set pace +2 min'}
+          </button>
         </div>
         <div className="flex items-center gap-2">
           <button
@@ -262,6 +288,7 @@ function ProjectTimerColumn({
               : 'Project mode is active on another project.'}
           </p>
         ) : null}
+        {paceError ? <p className="text-xs text-danger">{paceError}</p> : null}
       </div>
 
       {tasks.length === 0 ? (

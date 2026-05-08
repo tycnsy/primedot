@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import type { PaceSettings, Project, Task } from '../lib/types';
-import { estimatedCompletion } from '../lib/calc';
+import { buildPacePatchFromBufferSeconds } from '../lib/pace';
 import { useUpsertPaceSettings } from '../hooks/usePaceSettings';
 
 interface Props {
@@ -55,16 +55,15 @@ export default function PaceSettingsForm({ project, tasks, pace }: Props) {
     setError(null);
     const n = Number.parseFloat(paceAmount);
     if (!Number.isFinite(n)) return setError('Pace amount must be a number.');
-    const seconds = paceUnit === 'minutes' ? n * 60 : n * 3600;
-    const completion = estimatedCompletion(tasks, project);
-    const target = new Date(completion.getTime() + seconds * 1000);
+    const bufferSeconds = paceUnit === 'minutes' ? n * 60 : n * 3600;
+    const { target, patch } = buildPacePatchFromBufferSeconds(
+      tasks,
+      project,
+      bufferSeconds,
+      pace?.true_deadline,
+    );
     try {
-      await upsert.mutateAsync({
-        target_deadline: target.toISOString(),
-        true_deadline:
-          pace?.true_deadline ??
-          new Date(target.getTime() + 7 * 86_400_000).toISOString(),
-      });
+      await upsert.mutateAsync(patch);
       setTargetLocal(toLocalInput(target.toISOString()));
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Failed to set pace.');
