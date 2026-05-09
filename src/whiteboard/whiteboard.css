@@ -467,7 +467,7 @@
   font-weight: 400;
   color: rgb(var(--fg));
   z-index: 7;
-  overflow: hidden;
+  overflow: visible;
   line-height: 1.15;
 }
 
@@ -575,6 +575,11 @@
   display: flex; align-items: center; justify-content: space-between;
   gap: 12px;
 }
+.wb-bgpicker-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
 .wb-bgpicker-customlabel {
   display: inline-flex; align-items: center; gap: 6px;
   font-size: 12px; color: rgb(var(--muted));
@@ -591,6 +596,17 @@
   font-size: 13px; font-weight: 500; cursor: pointer;
 }
 .wb-bgpicker-confirm:hover { filter: brightness(1.08); }
+.wb-bgpicker-cancel {
+  border: 1px solid rgb(var(--border));
+  background: rgb(var(--surface));
+  color: rgb(var(--fg));
+  padding: 8px 12px;
+  border-radius: 8px;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+}
+.wb-bgpicker-cancel:hover { border-color: rgb(var(--fg) / .25); }
 
 .wb-new-board-btn {
   position: absolute;

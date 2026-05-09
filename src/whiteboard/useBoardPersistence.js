@@ -12,6 +12,12 @@ function defaultFillPalette() {
   return ['transparent', '#ffffff', '#ffd9d9', '#d0e7ff', '#d3f0d9', '#ffe5b8', '#ead8ff'];
 }
 
+function normalizePalette(value, fallback) {
+  if (!Array.isArray(value)) return fallback;
+  const filtered = value.filter((entry) => typeof entry === 'string' && entry.trim().length > 0);
+  return filtered.length ? filtered : fallback;
+}
+
 function safeReadJSON(key, fallback) {
   try {
     const raw = window.localStorage.getItem(key);
@@ -60,6 +66,8 @@ export function useBoardElements(boardId, makeStarterElements) {
   const { user, loading: authLoading } = useAuth();
   const [elements, setElementsState] = useState([]);
   const [ready, setReady] = useState(false);
+  const [boardRowId, setBoardRowId] = useState(null);
+  const [canonicalSlug, setCanonicalSlug] = useState(boardId || null);
   const rowIdRef = useRef(null);
   const saveTimerRef = useRef(null);
   const latestRef = useRef(elements);
@@ -73,6 +81,8 @@ export function useBoardElements(boardId, makeStarterElements) {
   useEffect(() => {
     cancelledRef.current = false;
     rowIdRef.current = null;
+    setBoardRowId(null);
+    setCanonicalSlug(boardId || null);
     setReady(false);
     setElementsState([]);
 
@@ -88,7 +98,7 @@ export function useBoardElements(boardId, makeStarterElements) {
     (async () => {
       const { data: existing, error: selectError } = await supabase
         .from('whiteboards')
-        .select('id, elements')
+        .select('id, slug, elements')
         .eq('user_id', user.id)
         .eq('slug', boardId)
         .maybeSingle();
@@ -105,10 +115,46 @@ export function useBoardElements(boardId, makeStarterElements) {
 
       if (existing) {
         rowIdRef.current = existing.id;
+        setBoardRowId(existing.id);
+        setCanonicalSlug(existing.slug || boardId);
         const loaded = Array.isArray(existing.elements) ? existing.elements : [];
         setElementsState(loaded);
         setReady(true);
         return;
+      }
+
+      const { data: aliasRow, error: aliasError } = await supabase
+        .from('whiteboard_slug_aliases')
+        .select('board_id')
+        .eq('user_id', user.id)
+        .eq('slug', boardId)
+        .maybeSingle();
+
+      if (cancelledRef.current) return;
+      if (aliasError) {
+        console.error('[whiteboard] failed to resolve slug alias', aliasError);
+      }
+
+      if (aliasRow?.board_id) {
+        const { data: aliasedBoard, error: aliasedBoardError } = await supabase
+          .from('whiteboards')
+          .select('id, slug, elements')
+          .eq('user_id', user.id)
+          .eq('id', aliasRow.board_id)
+          .maybeSingle();
+
+        if (cancelledRef.current) return;
+        if (aliasedBoardError) {
+          console.error('[whiteboard] failed to load canonical board from alias', aliasedBoardError);
+        } else if (aliasedBoard) {
+          rowIdRef.current = aliasedBoard.id;
+          setBoardRowId(aliasedBoard.id);
+          setCanonicalSlug(aliasedBoard.slug || boardId);
+          const loaded = Array.isArray(aliasedBoard.elements) ? aliasedBoard.elements : [];
+          setElementsState(loaded);
+          setReady(true);
+          return;
+        }
       }
 
       const starter = makeStarterElements ? makeStarterElements() : [];
@@ -128,6 +174,8 @@ export function useBoardElements(boardId, makeStarterElements) {
         console.error('[whiteboard] failed to create board', insertError);
       } else if (inserted) {
         rowIdRef.current = inserted.id;
+        setBoardRowId(inserted.id);
+        setCanonicalSlug(boardId);
       }
       setElementsState(starter);
       setReady(true);
@@ -187,34 +235,152 @@ export function useBoardElements(boardId, makeStarterElements) {
     };
   }, [flushSave]);
 
-  return { elements, setElements, ready };
+  return { elements, setElements, ready, boardRowId, canonicalSlug };
 }
 
-// useBoardPalettes — boardId-namespaced localStorage for the three palette/bg keys.
+// useBoardPalettes — account-level stroke palette + board-scoped fill/background.
 // Returns the same shape the original whiteboard-app code consumed.
-export function useBoardPalettes(boardId) {
-  const strokeKey = `wb-${boardId}-stroke-palette`;
-  const fillKey = `wb-${boardId}-fill-palette`;
-  const bgKey = `wb-${boardId}-bg-color`;
+export function useBoardPalettes(boardId, boardStorageId) {
+  const { user, loading: authLoading } = useAuth();
+  const strokeKey = 'wb-stroke-palette';
+  const legacyStrokeKey = `wb-${boardId}-stroke-palette`;
+  const scopedKey = boardStorageId || boardId || 'default';
+  const fillKey = `wb-board-${scopedKey}-fill-palette`;
+  const bgKey = `wb-board-${scopedKey}-bg-color`;
+  const legacyFillKey = boardId ? `wb-${boardId}-fill-palette` : null;
+  const legacyBgKey = boardId ? `wb-${boardId}-bg-color` : null;
 
-  const [strokePalette, setStrokePalette] = useState(() =>
-    safeReadJSON(strokeKey, defaultStrokePalette()),
-  );
-  const [fillPalette, setFillPalette] = useState(() =>
-    safeReadJSON(fillKey, defaultFillPalette()),
-  );
-  const [bgColor, setBgColor] = useState(() => safeReadString(bgKey));
-
-  // Reset state when boardId changes (read fresh values from localStorage).
-  useEffect(() => {
-    setStrokePalette(safeReadJSON(strokeKey, defaultStrokePalette()));
-    setFillPalette(safeReadJSON(fillKey, defaultFillPalette()));
-    setBgColor(safeReadString(bgKey));
-  }, [strokeKey, fillKey, bgKey]);
+  const [strokePalette, setStrokePalette] = useState(defaultStrokePalette);
+  const [fillPalette, setFillPalette] = useState(() => defaultFillPalette());
+  const [bgColor, setBgColor] = useState(() => null);
+  const strokeReadyRef = useRef(false);
+  const strokeSaveTimerRef = useRef(null);
+  const strokePersistedRef = useRef(JSON.stringify(defaultStrokePalette()));
 
   useEffect(() => {
-    safeWriteJSON(strokeKey, strokePalette);
-  }, [strokeKey, strokePalette]);
+    let cancelled = false;
+
+    strokeReadyRef.current = false;
+    if (strokeSaveTimerRef.current) {
+      clearTimeout(strokeSaveTimerRef.current);
+      strokeSaveTimerRef.current = null;
+    }
+
+    if (authLoading) return undefined;
+
+    const fromStorage = normalizePalette(
+      safeReadJSON(strokeKey, safeReadJSON(legacyStrokeKey, defaultStrokePalette())),
+      defaultStrokePalette(),
+    );
+
+    if (!user) {
+      setStrokePalette(fromStorage);
+      strokePersistedRef.current = JSON.stringify(fromStorage);
+      strokeReadyRef.current = true;
+      return undefined;
+    }
+
+    (async () => {
+      const { data, error } = await supabase
+        .from('whiteboard_preferences')
+        .select('stroke_palette')
+        .eq('user_id', user.id)
+        .maybeSingle();
+
+      if (cancelled) return;
+
+      if (error) {
+        console.error('[whiteboard] failed to load stroke palette', error);
+        setStrokePalette(fromStorage);
+        strokePersistedRef.current = JSON.stringify(fromStorage);
+        strokeReadyRef.current = true;
+        return;
+      }
+
+      const hasRemotePalette = Array.isArray(data?.stroke_palette) && data.stroke_palette.length > 0;
+      const resolvedPalette = hasRemotePalette
+        ? normalizePalette(data.stroke_palette, defaultStrokePalette())
+        : fromStorage;
+
+      if (!hasRemotePalette) {
+        const { error: upsertError } = await supabase.from('whiteboard_preferences').upsert(
+          { user_id: user.id, stroke_palette: resolvedPalette, updated_at: new Date().toISOString() },
+          { onConflict: 'user_id' },
+        );
+        if (upsertError) {
+          console.error('[whiteboard] failed to seed stroke palette', upsertError);
+        }
+      }
+
+      setStrokePalette(resolvedPalette);
+      strokePersistedRef.current = JSON.stringify(resolvedPalette);
+      strokeReadyRef.current = true;
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [authLoading, legacyStrokeKey, strokeKey, user]);
+
+  // Reset board-scoped palette values when board key changes.
+  useEffect(() => {
+    const primaryFill = safeReadJSON(fillKey, null);
+    const legacyFill = legacyFillKey ? safeReadJSON(legacyFillKey, null) : null;
+    const resolvedFill = normalizePalette(primaryFill ?? legacyFill, defaultFillPalette());
+    setFillPalette(resolvedFill);
+
+    const primaryBg = safeReadString(bgKey);
+    const legacyBg = legacyBgKey ? safeReadString(legacyBgKey) : null;
+    const resolvedBg = primaryBg ?? legacyBg;
+    setBgColor(resolvedBg);
+
+    if (primaryFill == null && legacyFill != null) {
+      safeWriteJSON(fillKey, resolvedFill);
+      if (legacyFillKey) safeRemove(legacyFillKey);
+    }
+    if (primaryBg == null && legacyBg != null) {
+      safeWriteString(bgKey, legacyBg);
+      if (legacyBgKey) safeRemove(legacyBgKey);
+    }
+  }, [bgKey, fillKey, legacyBgKey, legacyFillKey]);
+
+  useEffect(() => {
+    if (!strokeReadyRef.current || authLoading) return undefined;
+
+    const serialized = JSON.stringify(strokePalette);
+    if (serialized === strokePersistedRef.current) return undefined;
+
+    if (!user) {
+      safeWriteJSON(strokeKey, strokePalette);
+      strokePersistedRef.current = serialized;
+      return undefined;
+    }
+
+    if (strokeSaveTimerRef.current) {
+      clearTimeout(strokeSaveTimerRef.current);
+    }
+    strokeSaveTimerRef.current = setTimeout(async () => {
+      strokeSaveTimerRef.current = null;
+      const { error } = await supabase.from('whiteboard_preferences').upsert(
+        { user_id: user.id, stroke_palette: strokePalette, updated_at: new Date().toISOString() },
+        { onConflict: 'user_id' },
+      );
+      if (error) {
+        console.error('[whiteboard] failed to save stroke palette', error);
+        return;
+      }
+      strokePersistedRef.current = serialized;
+      safeWriteJSON(strokeKey, strokePalette);
+      safeRemove(legacyStrokeKey);
+    }, SAVE_DEBOUNCE_MS);
+
+    return () => {
+      if (strokeSaveTimerRef.current) {
+        clearTimeout(strokeSaveTimerRef.current);
+        strokeSaveTimerRef.current = null;
+      }
+    };
+  }, [authLoading, legacyStrokeKey, strokeKey, strokePalette, user]);
   useEffect(() => {
     safeWriteJSON(fillKey, fillPalette);
   }, [fillKey, fillPalette]);

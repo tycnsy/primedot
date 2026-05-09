@@ -1,5 +1,11 @@
 import { useEffect, useState } from 'react';
-import { Link, Navigate, useNavigate, useParams } from 'react-router-dom';
+import {
+  Link,
+  Navigate,
+  useNavigate,
+  useParams,
+  useSearchParams,
+} from 'react-router-dom';
 import {
   useDeleteProject,
   useProject,
@@ -44,6 +50,8 @@ function reorderTasks(tasks: Task[], sourceId: string, targetId: string): Task[]
 
 export default function ProjectDetail() {
   const { id } = useParams();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const requestedTab = searchParams.get('tab');
   const navigate = useNavigate();
   const project = useProject(id);
   const projectTags = useProjectTags();
@@ -72,6 +80,10 @@ export default function ProjectDetail() {
     setOrderedTasks(allTasks);
   }, [allTasks]);
 
+  useEffect(() => {
+    setActiveTab(requestedTab === 'pace' ? 'pace' : 'overview');
+  }, [id, requestedTab]);
+
   const handleDropOnTask = (targetId: string) => {
     if (!draggingTaskId) return;
     const next = reorderTasks(orderedTasks, draggingTaskId, targetId);
@@ -79,6 +91,14 @@ export default function ProjectDetail() {
     if (next === orderedTasks) return;
     setOrderedTasks(next);
     reorderTasksMutation.mutate(next.map((task) => task.id));
+  };
+
+  const handleTabChange = (nextTab: 'overview' | 'pace') => {
+    setSearchParams((prev) => {
+      const next = new URLSearchParams(prev);
+      next.set('tab', nextTab);
+      return next;
+    });
   };
 
   if (!id) return <Navigate to="/projects" replace />;
@@ -235,13 +255,13 @@ export default function ProjectDetail() {
       <div className="segmented">
         <button
           data-active={activeTab === 'overview'}
-          onClick={() => setActiveTab('overview')}
+          onClick={() => handleTabChange('overview')}
         >
           Overview
         </button>
         <button
           data-active={activeTab === 'pace'}
-          onClick={() => setActiveTab('pace')}
+          onClick={() => handleTabChange('pace')}
         >
           Pace
         </button>

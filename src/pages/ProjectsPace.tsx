@@ -87,7 +87,7 @@ export default function ProjectsPace() {
             return (
               <li key={project.id}>
                 <Link
-                  to={`/projects/${project.id}`}
+                  to={`/projects/${project.id}?tab=pace`}
                   className={`block rounded-lg border p-3 text-center transition-colors hover:border-border ${cardTint(
                     paceSeconds,
                   )}`}

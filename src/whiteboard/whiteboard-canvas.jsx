@@ -45,6 +45,10 @@ function normalizeTextRuns(runs, fallback = '#1e1e1e') {
   return out;
 }
 
+function isBlockTag(tag) {
+  return tag === 'DIV' || tag === 'P';
+}
+
 function ensureRunsFromElement(el, fallback = '#1e1e1e') {
   const fromRuns = normalizeTextRuns(el.textRuns, el.stroke || fallback);
   if (fromRuns.length) return fromRuns;
@@ -104,7 +108,7 @@ function runsFromEditor(root, fallbackColor = '#1e1e1e') {
       return;
     }
 
-    const isBlock = tag === 'DIV' || tag === 'P';
+    const isBlock = isBlockTag(tag);
     const childNodes = Array.from(node.childNodes);
     for (const child of childNodes) walk(child, color);
     if (isBlock && out.length) {
@@ -113,12 +117,43 @@ function runsFromEditor(root, fallbackColor = '#1e1e1e') {
     }
   };
 
-  for (const child of Array.from(root.childNodes)) walk(child, fallbackColor);
+  for (const child of Array.from(root.childNodes)) {
+    // Browsers often insert a block sibling on Enter in contentEditable.
+    // Preserve the boundary as a real newline before normalization.
+    if (child.nodeType === Node.ELEMENT_NODE && isBlockTag(child.tagName) && out.length) {
+      const last = out[out.length - 1];
+      if (!last.text.endsWith('\n')) append('\n', fallbackColor);
+    }
+    walk(child, fallbackColor);
+  }
   const normalized = normalizeTextRuns(out, fallbackColor);
   if (normalized.length) {
     normalized[normalized.length - 1].text = normalized[normalized.length - 1].text.replace(/\n+$/, '');
   }
   return normalizeTextRuns(normalized, fallbackColor);
+}
+
+function insertEditorLineBreak(root) {
+  if (document.queryCommandSupported?.('insertLineBreak')) {
+    document.execCommand('insertLineBreak');
+    return;
+  }
+  const selection = window.getSelection();
+  if (!selection || !selection.rangeCount) return;
+  const range = selection.getRangeAt(0);
+  range.deleteContents();
+  const br = document.createElement('br');
+  range.insertNode(br);
+  // If newline is inserted at the end, add a trailing break so caret can move.
+  if (!br.nextSibling) {
+    const tail = document.createElement('br');
+    br.parentNode?.insertBefore(tail, br.nextSibling);
+  }
+  range.setStartAfter(br);
+  range.collapse(true);
+  selection.removeAllRanges();
+  selection.addRange(range);
+  root.focus();
 }
 
 function measureTextRuns(runs, fontSize, manualWidth) {
@@ -257,6 +292,44 @@ function bboxUnion(list) {
   return { x: minX, y: minY, w: maxX - minX, h: maxY - minY };
 }
 
+function scaleFromPivot(value, pivot, scale) {
+  return pivot + (value - pivot) * scale;
+}
+
+function scaleElementFromPivot(el, pivotX, pivotY, scaleX, scaleY) {
+  if (el.type === 'freedraw') {
+    return {
+      ...el,
+      x: scaleFromPivot(el.x, pivotX, scaleX),
+      y: scaleFromPivot(el.y, pivotY, scaleY),
+      points: Array.isArray(el.points) ? el.points.map(([px, py]) => [px * scaleX, py * scaleY]) : el.points,
+      w: (el.w || 0) * scaleX,
+      h: (el.h || 0) * scaleY,
+    };
+  }
+
+  if (el.type === 'text') {
+    const align = el.textAlign || 'center';
+    const runs = ensureRunsFromElement(el, el.stroke || '#1e1e1e');
+    const fontScale = Math.sqrt(scaleX * scaleY);
+    const fontSize = Math.max(8, (el.fontSize || 22) * fontScale);
+    const manualWidth = typeof el.manualWidth === 'number'
+      ? Math.max(20, el.manualWidth * scaleX)
+      : el.manualWidth;
+    const measured = measureTextRuns(runs, fontSize, manualWidth);
+    const nextAnchor = scaleFromPivot(anchorOf(el), pivotX, scaleX);
+    const x = xFromAnchor(nextAnchor, measured.w, align);
+    const y = scaleFromPivot(el.y, pivotY, scaleY);
+    return { ...el, x, y, w: measured.w, h: measured.h, fontSize, manualWidth };
+  }
+
+  const x1 = scaleFromPivot(el.x, pivotX, scaleX);
+  const y1 = scaleFromPivot(el.y, pivotY, scaleY);
+  const x2 = scaleFromPivot(el.x + el.w, pivotX, scaleX);
+  const y2 = scaleFromPivot(el.y + el.h, pivotY, scaleY);
+  return { ...el, x: x1, y: y1, w: x2 - x1, h: y2 - y1 };
+}
+
 // =================================================================
 // Canvas
 // =================================================================
@@ -298,11 +371,16 @@ function Canvas({
     applyEditingTextColor(color) {
       if (!editingTextRef.current || !textEditorRef.current) return false;
       textEditorRef.current.focus();
+      const selection = window.getSelection();
+      const hasSelectionRange = Boolean(selection && selection.rangeCount > 0 && !selection.isCollapsed);
+      const fallbackColor = editingTextRef.current.stroke || '#1e1e1e';
       document.execCommand('styleWithCSS', false, true);
       document.execCommand('foreColor', false, color);
-      const runs = runsFromEditor(textEditorRef.current, color);
+      const runs = runsFromEditor(textEditorRef.current, fallbackColor);
       const text = textFromRuns(runs);
-      setEditingText((prev) => prev ? { ...prev, stroke: color, textRuns: runs, text } : prev);
+      setEditingText((prev) => prev
+        ? { ...prev, stroke: hasSelectionRange ? prev.stroke : color, textRuns: runs, text }
+        : prev);
       return true;
     },
   }), [pushHistory, setElements, setSelectedIds]);
@@ -538,14 +616,22 @@ function Canvas({
       setView(v => ({ ...v, x: drag.ox + (e.clientX - drag.sx), y: drag.oy + (e.clientY - drag.sy) }));
       return;
     }
-    if (drag.mode === 'resize-text-width') {
-      const dx = (e.clientX - drag.startX) / view.scale;
-      const newW = Math.max(40, drag.origWidth + dx);
+    if (drag.mode === 'resize-scale') {
+      const rawScaleX = (w.x - drag.pivotX) / drag.startDX;
+      const rawScaleY = (w.y - drag.pivotY) / drag.startDY;
+      let scaleX = Math.max(0.1, rawScaleX);
+      let scaleY = Math.max(0.1, rawScaleY);
+      // Default to uniform scaling; hold Shift for non-uniform stretch.
+      if (!e.shiftKey) {
+        const uniform = Math.max(scaleX, scaleY);
+        scaleX = uniform;
+        scaleY = uniform;
+      }
+      const originalsById = new Map(drag.originals.map((el) => [el.id, el]));
       setElements(prev => prev.map(el => {
-        if (el.id !== drag.elId) return el;
-        const runs = ensureRunsFromElement(el, el.stroke || '#1e1e1e');
-        const m = measureTextRuns(runs, el.fontSize || 22, newW);
-        return { ...el, manualWidth: newW, w: m.w, h: m.h };
+        const original = originalsById.get(el.id);
+        if (!original) return el;
+        return scaleElementFromPivot(original, drag.pivotX, drag.pivotY, scaleX, scaleY);
       }));
       return;
     }
@@ -595,7 +681,7 @@ function Canvas({
     setPanning(false);
 
     if (drag?.mode === 'pan') return;
-    if (drag?.mode === 'resize-text-width') {
+    if (drag?.mode === 'resize-scale') {
       pushHistory();
       return;
     }
@@ -668,7 +754,11 @@ function Canvas({
 
   // Commit text
   const commitText = () => {
-    const et = editingTextRef.current;
+    let et = editingTextRef.current;
+    if (et && textEditorRef.current) {
+      const liveRuns = runsFromEditor(textEditorRef.current, et.stroke || style.stroke || '#1e1e1e');
+      et = { ...et, textRuns: liveRuns, text: textFromRuns(liveRuns) };
+    }
     commitTextValue(et);
     // if editing existing, restore _editing flag off
     if (et && et.editingId) {
@@ -753,21 +843,14 @@ function Canvas({
   }, [selectedIds, elements, spaceDown, view, pushHistory, setElements, setSelectedIds, setTool]);
 
   // Selection bbox (union)
-  const selectionBBox = useMemo(() => {
-    if (!selectedIds.length) return null;
-    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
-    for (const id of selectedIds) {
-      const el = elements.find(e => e.id === id);
-      if (!el) continue;
-      const bb = bboxOf(el);
-      if (bb.x < minX) minX = bb.x;
-      if (bb.y < minY) minY = bb.y;
-      if (bb.x + bb.w > maxX) maxX = bb.x + bb.w;
-      if (bb.y + bb.h > maxY) maxY = bb.y + bb.h;
-    }
-    if (!isFinite(minX)) return null;
-    return { x: minX - 6, y: minY - 6, w: maxX - minX + 12, h: maxY - minY + 12 };
-  }, [selectedIds, elements]);
+  const selectedElements = useMemo(
+    () => elements.filter((el) => selectedIds.includes(el.id)),
+    [elements, selectedIds],
+  );
+  const selectionBBox = useMemo(
+    () => bboxUnion(selectedElements),
+    [selectedElements],
+  );
 
   // Grid pattern (in screen space, but offset by view)
   const gridSize = 20;
@@ -821,35 +904,6 @@ function Canvas({
             );
           })}
 
-          {/* right-edge width handle for a single selected text element */}
-          {selectedIds.length === 1 && (() => {
-            const el = elements.find(e => e.id === selectedIds[0]);
-            if (!el || el.type !== 'text') return null;
-            const bb = bboxOf(el);
-            const hx = bb.x + bb.w + 3;
-            const hy = bb.y + bb.h / 2;
-            const r = 5 / view.scale;
-            return (
-              <circle
-                cx={hx} cy={hy} r={r}
-                fill="rgb(var(--wb-selection))"
-                stroke="white"
-                strokeWidth={1.5 / view.scale}
-                style={{ cursor: 'ew-resize' }}
-                onPointerDown={(e) => {
-                  e.stopPropagation();
-                  e.currentTarget.setPointerCapture(e.pointerId);
-                  dragRef.current = {
-                    mode: 'resize-text-width',
-                    elId: el.id,
-                    startX: e.clientX,
-                    origWidth: el.w,
-                  };
-                }}
-              />
-            );
-          })()}
-
           {/* rough.js renders here */}
           <g ref={layerRef}/>
 
@@ -863,6 +917,35 @@ function Canvas({
                 strokeWidth={1.2 / view.scale}
                 strokeDasharray={`${6 / view.scale} ${4 / view.scale}`}/>
             </g>
+          ) : null}
+
+          {/* bottom-right scale handle for selected elements */}
+          {selectionBBox && selectedIds.length ? (
+            <circle
+              cx={selectionBBox.x + selectionBBox.w}
+              cy={selectionBBox.y + selectionBBox.h}
+              r={6 / view.scale}
+              fill="rgb(var(--wb-selection))"
+              stroke="white"
+              strokeWidth={1.5 / view.scale}
+              style={{ cursor: 'nwse-resize' }}
+              onPointerDown={(e) => {
+                e.stopPropagation();
+                const rect = svgRef.current.getBoundingClientRect();
+                const sx = e.clientX - rect.left;
+                const sy = e.clientY - rect.top;
+                const startW = toWorld(sx, sy);
+                e.currentTarget.setPointerCapture(e.pointerId);
+                dragRef.current = {
+                  mode: 'resize-scale',
+                  originals: cloneElements(selectedElements),
+                  pivotX: selectionBBox.x,
+                  pivotY: selectionBBox.y,
+                  startDX: Math.max(0.01, startW.x - selectionBBox.x),
+                  startDY: Math.max(0.01, startW.y - selectionBBox.y),
+                };
+              }}
+            />
           ) : null}
 
           {/* marquee */}
@@ -906,6 +989,13 @@ function Canvas({
             onKeyDown={(e) => {
               if (e.key === 'Escape') { setEditingText(null); }
               if (e.key === 'Enter' && e.metaKey) { e.preventDefault(); commitText(); }
+              if (e.key === 'Enter' && !e.metaKey) {
+                e.preventDefault();
+                insertEditorLineBreak(e.currentTarget);
+                const runs = runsFromEditor(e.currentTarget, editingText.stroke || style.stroke);
+                const text = textFromRuns(runs);
+                setEditingText((prev) => (prev ? { ...prev, textRuns: runs, text } : prev));
+              }
             }}
             style={{
               left: xWorld * view.scale + view.x,
@@ -914,9 +1004,10 @@ function Canvas({
               color: editingText.stroke,
               textAlign: align,
               width: w,
-              height: h,
+              minHeight: h,
+              height: 'auto',
               whiteSpace: editingText.manualWidth ? 'pre-wrap' : 'pre',
-              overflow: 'hidden',
+              overflow: 'visible',
               wordBreak: 'break-word',
             }}
           />

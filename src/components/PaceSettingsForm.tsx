@@ -133,6 +133,21 @@ export default function PaceSettingsForm({ project, tasks, pace }: Props) {
     }
   };
 
+  const handleCopyTrueDeadlineToTarget = async () => {
+    setError(null);
+    if (!trueLocal) return setError('Pick a true deadline first.');
+    const trueIso = fromLocalInput(trueLocal);
+    try {
+      await upsert.mutateAsync({
+        true_deadline: trueIso,
+        target_deadline: trueIso,
+      });
+      setTargetLocal(trueLocal);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Failed to copy true deadline.');
+    }
+  };
+
   return (
     <div className="card space-y-4">
       <h2 className="text-lg font-semibold text-fg">Pace settings</h2>
@@ -178,6 +193,12 @@ export default function PaceSettingsForm({ project, tasks, pace }: Props) {
           />
           <button onClick={handleSetTarget} className="btn-secondary whitespace-nowrap">
             Set target
+          </button>
+          <button
+            onClick={handleCopyTrueDeadlineToTarget}
+            className="btn-ghost whitespace-nowrap"
+          >
+            Copy true deadline
           </button>
           <button
             onClick={handleSetTomorrowAtEight}

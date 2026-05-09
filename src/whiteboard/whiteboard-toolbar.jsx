@@ -293,17 +293,10 @@ function HistoryControls({ canUndo, canRedo, onUndo, onRedo }) {
 }
 
 // ============= Top brand chip =============
-function BrandChip({ docName, setDocName }) {
+function BrandChip() {
   return (
     <div className="wb-brand">
       <span className="wb-brand-mark">prime<span className="dot"/></span>
-      <span className="wb-brand-divider"/>
-      <input
-        className="wb-brand-doc"
-        value={docName}
-        onChange={(e) => setDocName(e.target.value)}
-        spellCheck={false}
-      />
     </div>
   );
 }

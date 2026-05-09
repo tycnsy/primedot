@@ -87,7 +87,7 @@ export default function RightPaceSidebar() {
           return (
             <Link
               key={project.id}
-              to={`/projects/${project.id}`}
+              to={`/projects/${project.id}?tab=pace`}
               className={`block rounded-lg border p-3 text-center transition-colors hover:border-border ${paceTint(
                 paceSeconds,
               )}`}

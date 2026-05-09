@@ -75,16 +75,22 @@ function makeStarterElements() {
   ];
 }
 
-// ============= Background picker (one-time, on new board) =============
-function BgPickerModal({ onConfirm }) {
-  const presets = ['#ffffff', '#fafaf7', '#fff7e6', '#eef5ff', '#eef7ee', '#f7eef5', '#1e1e1e'];
-  const [chosen, setChosen] = React.useState('#ffffff');
-  const [custom, setCustom] = React.useState('#ffffff');
+// ============= Background picker =============
+function BgPickerModal({ initialColor, onConfirm, onClose, canClose }) {
+  const presets = ['#ffffff', '#fafaf7', '#fff7e6', '#eef5ff', '#eef7ee', '#f1efe6', '#1e1e1e'];
+  const fallbackColor = initialColor || '#ffffff';
+  const [chosen, setChosen] = React.useState(fallbackColor);
+  const [custom, setCustom] = React.useState(fallbackColor);
+  useEffect(() => {
+    const nextColor = initialColor || '#ffffff';
+    setChosen(nextColor);
+    setCustom(nextColor);
+  }, [initialColor]);
   return (
     <div className="wb-bgpicker-overlay">
       <div className="wb-bgpicker-card">
         <div className="wb-bgpicker-title">Choose a background</div>
-        <div className="wb-bgpicker-sub">Set the canvas color for this whiteboard. This is locked once chosen.</div>
+        <div className="wb-bgpicker-sub">Set the canvas color for this whiteboard at any time.</div>
         <div className="wb-bgpicker-preview" style={{ background: chosen }}/>
         <div className="wb-bgpicker-presets">
           {presets.map(p => (
@@ -99,7 +105,10 @@ function BgPickerModal({ onConfirm }) {
             <input type="color" value={custom} onChange={(e) => { setCustom(e.target.value); setChosen(e.target.value); }}/>
             <span>Custom</span>
           </label>
-          <button className="wb-bgpicker-confirm" onClick={() => onConfirm(chosen)}>Create board</button>
+          <div className="wb-bgpicker-actions">
+            {canClose ? <button className="wb-bgpicker-cancel" onClick={onClose}>Cancel</button> : null}
+            <button className="wb-bgpicker-confirm" onClick={() => onConfirm(chosen)}>Apply</button>
+          </div>
         </div>
       </div>
     </div>
@@ -107,17 +116,23 @@ function BgPickerModal({ onConfirm }) {
 }
 
 // ============= App =============
-export function Whiteboard({ boardId }) {
+export function Whiteboard({ boardId, onCanonicalSlugResolved }) {
   const [tweaks, setTweak] = useTweaks(TWEAK_DEFAULTS);
   useEffect(() => { applyTweaks(tweaks); }, [tweaks]);
 
   const [tool, setTool] = useState('select');
-  const [docName, setDocName] = useState('House plan');
-  const { elements, setElements, ready: elementsReady } = useBoardElements(boardId, makeStarterElements);
+  const {
+    elements,
+    setElements,
+    ready: elementsReady,
+    boardRowId,
+    canonicalSlug,
+  } = useBoardElements(boardId, makeStarterElements);
   const [selectedIds, setSelectedIds] = useState([]);
   const [view, setView] = useState({ x: 220, y: 80, scale: 1 });
   const canvasRef = useRef(null);
   const [isEditingText, setIsEditingText] = useState(false);
+  const [bgPickerOpen, setBgPickerOpen] = useState(false);
 
   const [style, setStyle] = useState({
     stroke: '#ffffff',
@@ -136,28 +151,32 @@ export function Whiteboard({ boardId }) {
     setFillPalette,
     bgColor,
     commitBgColor: commitBgColorRaw,
-    clearBgColor,
-  } = useBoardPalettes(boardId);
+  } = useBoardPalettes(boardId, boardRowId);
+
+  useEffect(() => {
+    if (!canonicalSlug || !onCanonicalSlugResolved) return;
+    onCanonicalSlugResolved(canonicalSlug);
+  }, [canonicalSlug, onCanonicalSlugResolved]);
   const addStrokeColor = (c) => setStrokePalette(p => p.includes(c) ? p : [...p, c]);
   const addFillColor = (c) => setFillPalette(p => p.includes(c) ? p : [...p, c]);
   const removeStrokeColor = (c) => setStrokePalette(p => p.filter(x => x !== c));
   const removeFillColor = (c) => setFillPalette(p => p.filter(x => x !== c));
 
-  const showBgPicker = bgColor == null;
-  const commitBgColor = (c) => commitBgColorRaw(c);
-  const newBoard = () => {
-    clearBgColor();
-    setElements([]);
-    setSelectedIds([]);
+  const showBgPicker = bgPickerOpen || bgColor == null;
+  const commitBgColor = (c) => {
+    commitBgColorRaw(c);
+    setBgPickerOpen(false);
   };
   useEffect(() => {
-    if (bgColor) {
-      // convert hex -> r g b for the css variable
-      const m = bgColor.match(/^#([0-9a-f]{6})$/i);
-      if (m) {
-        const r = parseInt(m[1].slice(0,2),16), g = parseInt(m[1].slice(2,4),16), b = parseInt(m[1].slice(4,6),16);
-        document.documentElement.style.setProperty('--wb-canvas', `${r} ${g} ${b}`);
-      }
+    if (bgColor == null) setBgPickerOpen(true);
+  }, [bgColor, boardId]);
+  useEffect(() => {
+    const color = bgColor || '#ffffff';
+    // convert hex -> r g b for the css variable
+    const m = color.match(/^#([0-9a-f]{6})$/i);
+    if (m) {
+      const r = parseInt(m[1].slice(0,2),16), g = parseInt(m[1].slice(2,4),16), b = parseInt(m[1].slice(4,6),16);
+      document.documentElement.style.setProperty('--wb-canvas', `${r} ${g} ${b}`);
     }
   }, [bgColor]);
 
@@ -374,7 +393,7 @@ export function Whiteboard({ boardId }) {
           onEditingTextStateChange={setIsEditingText}
         />
 
-        <WBBrandChip docName={docName} setDocName={setDocName}/>
+        <WBBrandChip/>
         <WBToolbar tool={tool} setTool={setTool}/>
         <WBPropsPanel
           style={style}
@@ -390,8 +409,17 @@ export function Whiteboard({ boardId }) {
         <WBHistoryControls canUndo={canUndo} canRedo={canRedo} onUndo={undo} onRedo={redo}/>
         {tweaks.showLibrary ? <WBLibrary onInsert={insertLibraryItem}/> : null}
         <WBHint/>
-        {showBgPicker ? <BgPickerModal onConfirm={commitBgColor}/> : null}
-        <button className="wb-new-board-btn" title="New whiteboard" onClick={newBoard}>+ New board</button>
+        {showBgPicker ? (
+          <BgPickerModal
+            initialColor={bgColor || '#ffffff'}
+            canClose={bgColor != null}
+            onClose={() => setBgPickerOpen(false)}
+            onConfirm={commitBgColor}
+          />
+        ) : null}
+        <button className="wb-new-board-btn" title="Change board background" onClick={() => setBgPickerOpen(true)}>
+          Background
+        </button>
       </div>
 
       <TweaksPanel title="Tweaks">
