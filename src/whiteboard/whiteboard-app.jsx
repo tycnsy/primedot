@@ -116,7 +116,7 @@ function BgPickerModal({ initialColor, onConfirm, onClose, canClose }) {
 }
 
 // ============= App =============
-export function Whiteboard({ boardId, onCanonicalSlugResolved }) {
+export function Whiteboard({ boardId, onCanonicalSlugResolved, openBackgroundOnLoad = false }) {
   const [tweaks, setTweak] = useTweaks(TWEAK_DEFAULTS);
   useEffect(() => { applyTweaks(tweaks); }, [tweaks]);
 
@@ -162,14 +162,14 @@ export function Whiteboard({ boardId, onCanonicalSlugResolved }) {
   const removeStrokeColor = (c) => setStrokePalette(p => p.filter(x => x !== c));
   const removeFillColor = (c) => setFillPalette(p => p.filter(x => x !== c));
 
-  const showBgPicker = bgPickerOpen || bgColor == null;
+  const showBgPicker = bgPickerOpen;
   const commitBgColor = (c) => {
     commitBgColorRaw(c);
     setBgPickerOpen(false);
   };
   useEffect(() => {
-    if (bgColor == null) setBgPickerOpen(true);
-  }, [bgColor, boardId]);
+    setBgPickerOpen(openBackgroundOnLoad);
+  }, [openBackgroundOnLoad, boardId]);
   useEffect(() => {
     const color = bgColor || '#ffffff';
     // convert hex -> r g b for the css variable

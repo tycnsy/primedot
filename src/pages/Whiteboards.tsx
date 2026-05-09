@@ -391,7 +391,7 @@ export default function Whiteboards() {
       setName('');
       setNewBoardFolderId('');
       setCreating(false);
-      navigate(`/whiteboards/${slug}`);
+      navigate(`/whiteboards/${slug}?new=1`);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to create board.');
       setCreating(false);
