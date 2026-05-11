@@ -130,6 +130,44 @@ describe('progressDelta + goalProgress (SPEC worked example)', () => {
     expect(progressDelta(task, baseProject, 540)).toBe(60);
     expect(goalProgress(task, baseProject, 300, 540)).toBe(360);
   });
+  it('paceModifier=1 preserves current projection behavior', () => {
+    const task = baseTask({
+      type: 'manual',
+      manual_length: 600,
+      current_progress: 120,
+    });
+    expect(progressDelta(task, baseProject, 600, 1)).toBe(200);
+    expect(goalProgress(task, baseProject, 120, 600, 1)).toBe(320);
+  });
+  it('paceModifier=2 doubles delta and goal projections', () => {
+    const scalingTask = baseTask({
+      type: 'scaling',
+      scaling_modifier: 3,
+      current_progress: 300,
+    });
+    const scriptingTask = baseTask({
+      id: 'script',
+      type: 'scripting',
+      script_length: 600,
+      scripting_modifier: 2,
+      current_progress: 90,
+    });
+    const manualTask = baseTask({
+      id: 'manual',
+      type: 'manual',
+      manual_length: 900,
+      current_progress: 120,
+    });
+
+    expect(progressDelta(scalingTask, baseProject, 540, 2)).toBe(120);
+    expect(goalProgress(scalingTask, baseProject, 300, 540, 2)).toBe(420);
+
+    expect(progressDelta(scriptingTask, baseProject, 600, 2)).toBe(200);
+    expect(goalProgress(scriptingTask, baseProject, 90, 600, 2)).toBe(290);
+
+    expect(progressDelta(manualTask, baseProject, 600, 2)).toBe(400);
+    expect(goalProgress(manualTask, baseProject, 120, 600, 2)).toBe(520);
+  });
   it('manual: timer / buffer', () => {
     const task = baseTask({ type: 'manual', manual_length: 600 });
     expect(progressDelta(task, baseProject, 600)).toBe(200);
@@ -143,6 +181,20 @@ describe('progressDelta + goalProgress (SPEC worked example)', () => {
     });
     expect(progressDelta(task, baseProject, 100)).toBe(1);
     expect(goalProgress(task, baseProject, 5, 100)).toBe(6);
+  });
+  it('custom paceModifier keeps whole-unit goal output', () => {
+    const task = baseTask({
+      type: 'custom',
+      unit_count: 100,
+      unit_length: 30,
+      current_progress: 5,
+    });
+
+    expect(progressDelta(task, baseProject, 100, 2)).toBe(2);
+    expect(goalProgress(task, baseProject, 5, 100, 2)).toBe(7);
+
+    expect(progressDelta(task, baseProject, 100, 1.5)).toBe(1.5);
+    expect(goalProgress(task, baseProject, 5, 100, 1.5)).toBe(6);
   });
 });
 

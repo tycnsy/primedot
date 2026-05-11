@@ -13,9 +13,17 @@ import type { PaceSettings, Project, Task } from '../lib/types';
 
 type SessionMode = 'idle' | 'project' | 'bulk';
 const GOAL_DELTA_STORAGE_KEY = 'prime.timer.show_goal_delta';
+const PACE_MODIFIER_STORAGE_KEY = 'prime.timer.pace_modifier';
 type GoalSnapshot = {
   projectedGoal: number;
   startProgress: number;
+};
+
+const parsePaceModifier = (raw: string | null): number => {
+  if (raw == null) return 1;
+  const parsed = Number.parseFloat(raw);
+  if (!Number.isFinite(parsed)) return 1;
+  return Math.max(0, parsed);
 };
 
 export default function Timer() {
@@ -36,6 +44,16 @@ export default function Timer() {
       return window.localStorage.getItem(GOAL_DELTA_STORAGE_KEY) === 'true';
     } catch {
       return false;
+    }
+  });
+  const [paceModifier, setPaceModifier] = useState<number>(() => {
+    if (typeof window === 'undefined') return 1;
+    try {
+      return parsePaceModifier(
+        window.localStorage.getItem(PACE_MODIFIER_STORAGE_KEY),
+      );
+    } catch {
+      return 1;
     }
   });
   const [goalSnapshotByTaskId, setGoalSnapshotByTaskId] = useState<
@@ -65,6 +83,17 @@ export default function Timer() {
   }, [showGoalDelta]);
 
   useEffect(() => {
+    try {
+      window.localStorage.setItem(
+        PACE_MODIFIER_STORAGE_KEY,
+        String(paceModifier),
+      );
+    } catch {
+      // localStorage may be unavailable; ignore persistence.
+    }
+  }, [paceModifier]);
+
+  useEffect(() => {
     if (!timer.startedAt) {
       setGoalSnapshotByTaskId({});
       lastGoalSnapshotStartedAt.current = null;
@@ -85,6 +114,7 @@ export default function Timer() {
           project,
           task.current_progress,
           timer.durationSeconds,
+          paceModifier,
         ),
         startProgress: task.current_progress,
       };
@@ -92,7 +122,7 @@ export default function Timer() {
 
     setGoalSnapshotByTaskId(nextGoalSnapshotByTaskId);
     lastGoalSnapshotStartedAt.current = startedAtMs;
-  }, [projectMap, tasksQ.data, timer.durationSeconds, timer.startedAt]);
+  }, [paceModifier, projectMap, tasksQ.data, timer.durationSeconds, timer.startedAt]);
 
   const remainingByProject = useMemo(() => {
     const byProject: Record<string, Task[]> = {};
@@ -201,6 +231,31 @@ export default function Timer() {
         onChangeDuration={timer.setDurationSeconds}
       />
 
+      <div className="card flex flex-wrap items-center justify-between gap-3">
+        <p className="text-sm text-subtle">
+          Pace modifier scales goal projections for this timer page.
+        </p>
+        <label
+          htmlFor="pace-modifier"
+          className="flex items-center gap-2 text-sm text-fg"
+        >
+          Pace modifier
+          <input
+            id="pace-modifier"
+            type="number"
+            min="0"
+            step="0.1"
+            value={paceModifier}
+            onChange={(event) => {
+              const next = Number.parseFloat(event.target.value);
+              if (!Number.isFinite(next)) return;
+              setPaceModifier(Math.max(0, next));
+            }}
+            className="input h-8 w-24 text-right font-sans tabular-nums"
+          />
+        </label>
+      </div>
+
       <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
         {projects.map((project) => (
           <ProjectTimerColumn
@@ -209,6 +264,7 @@ export default function Timer() {
             tasks={remainingByProject[project.id] ?? []}
             goalSnapshotByTaskId={goalSnapshotByTaskId}
             timerDurationSeconds={timer.durationSeconds}
+            paceModifier={paceModifier}
             showGoalDelta={showGoalDelta}
             active={mode === 'project' && activeProjectId === project.id}
             editable={canEditProject(project.id)}
@@ -230,6 +286,7 @@ interface ProjectTimerColumnProps {
   tasks: Task[];
   goalSnapshotByTaskId: Record<string, GoalSnapshot>;
   timerDurationSeconds: number;
+  paceModifier: number;
   showGoalDelta: boolean;
   active: boolean;
   editable: boolean;
@@ -244,6 +301,7 @@ function ProjectTimerColumn({
   tasks,
   goalSnapshotByTaskId,
   timerDurationSeconds,
+  paceModifier,
   showGoalDelta,
   active,
   editable,
@@ -314,6 +372,7 @@ function ProjectTimerColumn({
               predictedGoal={goalSnapshotByTaskId[task.id]?.projectedGoal}
               predictedStartProgress={goalSnapshotByTaskId[task.id]?.startProgress}
               timerDurationSeconds={timerDurationSeconds}
+              paceModifier={paceModifier}
               showGoalDelta={showGoalDelta}
               editable={editable}
               updateTask={updateTask}
@@ -331,6 +390,7 @@ function TaskProgressRow({
   predictedGoal,
   predictedStartProgress,
   timerDurationSeconds,
+  paceModifier,
   showGoalDelta,
   editable,
   updateTask,
@@ -340,6 +400,7 @@ function TaskProgressRow({
   predictedGoal?: number;
   predictedStartProgress?: number;
   timerDurationSeconds: number;
+  paceModifier: number;
   showGoalDelta: boolean;
   editable: boolean;
   updateTask: (id: string, patch: Partial<Task>) => Promise<void>;
@@ -426,7 +487,13 @@ function TaskProgressRow({
       }`;
   const displayedGoal =
     predictedGoal ??
-    goalProgress(task, project, task.current_progress, timerDurationSeconds);
+    goalProgress(
+      task,
+      project,
+      task.current_progress,
+      timerDurationSeconds,
+      paceModifier,
+    );
   const normalizedGoal = isCustom
     ? Math.floor(displayedGoal)
     : Math.max(0, Math.round(displayedGoal));

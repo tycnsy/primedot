@@ -2,6 +2,8 @@ import type { PaceSettings, Project, Task } from './types';
 
 const safeNum = (v: number | null | undefined, fallback = 0): number =>
   typeof v === 'number' && Number.isFinite(v) ? v : fallback;
+const normalizePaceModifier = (value: number | undefined): number =>
+  Math.max(0, safeNum(value, 1));
 
 /**
  * `task_length` (seconds) — total real time the task is expected to take, buffered.
@@ -111,23 +113,25 @@ export function progressDelta(
   task: Task,
   project: Project,
   timerDurationSeconds: number,
+  paceModifier = 1,
 ): number {
   const buffer = safeNum(project.buffer_modifier, 1);
   const t = Math.max(0, timerDurationSeconds);
+  const modifier = normalizePaceModifier(paceModifier);
   switch (task.type) {
     case 'scaling': {
       const denom = safeNum(task.scaling_modifier) * buffer;
-      return denom > 0 ? t / denom : 0;
+      return (denom > 0 ? t / denom : 0) * modifier;
     }
     case 'scripting': {
       const denom = safeNum(task.scripting_modifier) * buffer;
-      return denom > 0 ? t / denom : 0;
+      return (denom > 0 ? t / denom : 0) * modifier;
     }
     case 'manual':
-      return buffer > 0 ? t / buffer : 0;
+      return (buffer > 0 ? t / buffer : 0) * modifier;
     case 'custom': {
       const denom = safeNum(task.unit_length) * buffer;
-      return denom > 0 ? Math.floor(t / denom) : 0;
+      return (denom > 0 ? Math.floor(t / denom) : 0) * modifier;
     }
     default:
       return 0;
@@ -143,8 +147,9 @@ export function goalProgress(
   project: Project,
   startCurrentProgress: number,
   timerDurationSeconds: number,
+  paceModifier = 1,
 ): number {
-  const delta = progressDelta(task, project, timerDurationSeconds);
+  const delta = progressDelta(task, project, timerDurationSeconds, paceModifier);
   if (task.type === 'custom') {
     return Math.floor(startCurrentProgress) + Math.floor(delta);
   }
