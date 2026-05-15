@@ -3,6 +3,7 @@ import {
   calculatedProgress,
   currentPace,
   currentPaceEnd,
+  deriveTaskStatus,
   estimatedCompletion,
   goalProgress,
   paceMargin,
@@ -92,12 +93,12 @@ describe('progressTarget', () => {
 });
 
 describe('calculatedProgress', () => {
-  it('complete task always returns task_length', () => {
+  it('100%+ progress always returns task_length', () => {
     const task = baseTask({
       type: 'scaling',
       scaling_modifier: 2,
-      current_progress: 0,
-      status: 'complete',
+      current_progress: 1200,
+      status: 'not_started',
     });
     expect(calculatedProgress(task, baseProject)).toBe(taskLength(task, baseProject));
   });
@@ -117,6 +118,53 @@ describe('calculatedProgress', () => {
       current_progress: 4,
     });
     expect(calculatedProgress(task, baseProject)).toBe(4 * 30 * 3);
+  });
+});
+
+describe('deriveTaskStatus', () => {
+  it('returns not_started at exactly 0 progress', () => {
+    const task = baseTask({
+      type: 'manual',
+      manual_length: 600,
+      current_progress: 0,
+    });
+    expect(deriveTaskStatus(task, baseProject)).toBe('not_started');
+  });
+
+  it('returns in_progress between 0 and 100%', () => {
+    const task = baseTask({
+      type: 'manual',
+      manual_length: 600,
+      current_progress: 300,
+    });
+    expect(deriveTaskStatus(task, baseProject)).toBe('in_progress');
+  });
+
+  it('returns complete at 100% and above for numeric tasks', () => {
+    const atTarget = baseTask({
+      type: 'custom',
+      unit_count: 10,
+      unit_length: 30,
+      current_progress: 10,
+    });
+    const aboveTarget = baseTask({
+      type: 'custom',
+      unit_count: 10,
+      unit_length: 30,
+      current_progress: 15,
+    });
+    expect(deriveTaskStatus(atTarget, baseProject)).toBe('complete');
+    expect(deriveTaskStatus(aboveTarget, baseProject)).toBe('complete');
+  });
+
+  it('handles hh:mm:ss-style tasks by stored seconds', () => {
+    const task = baseTask({
+      type: 'scripting',
+      scripting_modifier: 2,
+      script_length: 600,
+      current_progress: 1,
+    });
+    expect(deriveTaskStatus(task, baseProject)).toBe('in_progress');
   });
 });
 

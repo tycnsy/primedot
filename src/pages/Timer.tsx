@@ -6,7 +6,7 @@ import { useTasksForProjects, useUpdateAnyTask } from '../hooks/useTasks';
 import { useTimer } from '../hooks/useTimer';
 import { useHiddenPaceCards } from '../hooks/useHiddenPaceCards';
 import TimerDisplay from '../components/TimerDisplay';
-import { goalProgress, progressTarget } from '../lib/calc';
+import { deriveTaskStatus, goalProgress, progressTarget } from '../lib/calc';
 import { buildPacePatchFromBufferSeconds } from '../lib/pace';
 import { formatHMS, parseHMS, parseHMSWithOptionalFrames } from '../lib/time';
 import { playPasteChime } from '../lib/chime';
@@ -111,9 +111,9 @@ export default function Timer() {
 
     const nextGoalSnapshotByTaskId: Record<string, GoalSnapshot> = {};
     for (const task of tasksQ.data) {
-      if (task.status === 'complete') continue;
       const project = projectMap.get(task.project_id);
       if (!project) continue;
+      if (deriveTaskStatus(task, project) === 'complete') continue;
       nextGoalSnapshotByTaskId[task.id] = {
         projectedGoal: goalProgress(
           task,
@@ -134,12 +134,14 @@ export default function Timer() {
     const byProject: Record<string, Task[]> = {};
     for (const projectId of projectIds) byProject[projectId] = [];
     for (const task of tasksQ.data ?? []) {
-      if (task.status === 'complete') continue;
+      const project = projectMap.get(task.project_id);
+      if (!project) continue;
+      if (deriveTaskStatus(task, project) === 'complete') continue;
       if (!byProject[task.project_id]) byProject[task.project_id] = [];
       byProject[task.project_id].push(task);
     }
     return byProject;
-  }, [tasksQ.data, projectIds]);
+  }, [projectIds, projectMap, tasksQ.data]);
 
   const modeLabel = useMemo(() => {
     if (mode === 'bulk') return 'Bulk Session: All Projects';
@@ -437,7 +439,10 @@ function TaskProgressRow({
       next = value;
     }
     if (next === task.current_progress) return;
-    await updateTask(task.id, { current_progress: next });
+    await updateTask(task.id, {
+      current_progress: next,
+      status: deriveTaskStatus({ ...task, current_progress: next }, project),
+    });
   };
 
   const handlePaste = async () => {
@@ -467,7 +472,10 @@ function TaskProgressRow({
     }
     try {
       if (next !== task.current_progress) {
-        await updateTask(task.id, { current_progress: next });
+        await updateTask(task.id, {
+          current_progress: next,
+          status: deriveTaskStatus({ ...task, current_progress: next }, project),
+        });
       }
       setDraft(isCustom ? String(next) : formatHMS(next));
       playPasteChime();

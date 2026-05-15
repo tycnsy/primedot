@@ -27,6 +27,7 @@ import TaskRow from '../components/TaskRow';
 import PaceDisplay from '../components/PaceDisplay';
 import PaceSettingsForm from '../components/PaceSettingsForm';
 import {
+  deriveTaskStatus,
   projectProgress,
   progressTarget,
   remainingProgress,
@@ -317,7 +318,10 @@ export default function ProjectDetail() {
                   onCancel={() => setShowNewTask(false)}
                   submitLabel="Create"
                   onSubmit={async (input) => {
-                    await createTask.mutateAsync(input);
+                    await createTask.mutateAsync({
+                      ...input,
+                      status: deriveTaskStatus(input, p),
+                    });
                     setShowNewTask(false);
                   }}
                 />
@@ -340,7 +344,7 @@ export default function ProjectDetail() {
                   onSubmit={async (input) => {
                     await updateTask.mutateAsync({
                       id: editingTask.id,
-                      patch: input,
+                      patch: { ...input, status: deriveTaskStatus(input, p) },
                     });
                     setEditingTask(null);
                   }}
@@ -385,17 +389,28 @@ export default function ProjectDetail() {
                         task={t}
                         project={p}
                         onUpdateProgress={async (taskId, nextProgress) => {
+                          const updatedTask = { ...t, current_progress: nextProgress };
                           await updateTask.mutateAsync({
                             id: taskId,
-                            patch: { current_progress: nextProgress },
+                            patch: {
+                              current_progress: nextProgress,
+                              status: deriveTaskStatus(updatedTask, p),
+                            },
                           });
                         }}
                         progressInputDisabled={updateTask.isPending}
                         onEdit={() => setEditingTask(t)}
                         onDone={async () => {
+                          const nextProgress = progressTarget(t, p);
                           await updateTask.mutateAsync({
                             id: t.id,
-                            patch: { current_progress: progressTarget(t, p) },
+                            patch: {
+                              current_progress: nextProgress,
+                              status: deriveTaskStatus(
+                                { ...t, current_progress: nextProgress },
+                                p,
+                              ),
+                            },
                           });
                         }}
                       />

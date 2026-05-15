@@ -1,6 +1,11 @@
 import { useEffect, useState } from 'react';
 import type { Project, Task } from '../lib/types';
-import { calculatedProgress, progressTarget, taskLength } from '../lib/calc';
+import {
+  calculatedProgress,
+  deriveTaskStatus,
+  progressTarget,
+  taskLength,
+} from '../lib/calc';
 import { formatHMS, parseHMSWithOptionalFrames } from '../lib/time';
 
 interface Props {
@@ -20,6 +25,11 @@ const statusStyles: Record<Task['status'], string> = {
   complete:
     'bg-success/15 text-success ring-1 ring-inset ring-success/30',
 };
+const statusLabels: Record<Task['status'], string> = {
+  not_started: 'not started',
+  in_progress: 'in progress',
+  complete: 'done',
+};
 
 export default function TaskRow({
   task,
@@ -31,6 +41,7 @@ export default function TaskRow({
 }: Props) {
   const tLen = taskLength(task, project);
   const cProg = calculatedProgress(task, project);
+  const status = deriveTaskStatus(task, project);
   const target = progressTarget(task, project);
   const pct = tLen > 0 ? Math.min(100, (cProg / tLen) * 100) : 0;
   const isCustom = task.type === 'custom';
@@ -84,10 +95,10 @@ export default function TaskRow({
       <div className="flex-1 space-y-2">
         <div className="flex items-center gap-2">
           <span
-            className={`inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-medium ${statusStyles[task.status]}`}
-            aria-label={task.status}
+            className={`inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-medium ${statusStyles[status]}`}
+            aria-label={status}
           >
-            {task.status.replace('_', ' ')}
+            {statusLabels[status]}
           </span>
           <span className="pill">{task.type}</span>
           <h3 className="text-sm font-medium text-fg">{task.name}</h3>

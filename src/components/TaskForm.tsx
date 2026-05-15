@@ -2,10 +2,12 @@ import { useEffect, useMemo, useState, type FormEvent } from 'react';
 import type { Task, TaskInput, TaskType } from '../lib/types';
 import { formatHMS, parseHMS } from '../lib/time';
 
+type TaskFormInput = Omit<TaskInput, 'status'>;
+
 interface Props {
   projectId: string;
   initial?: Task | null;
-  onSubmit: (input: TaskInput) => Promise<void> | void;
+  onSubmit: (input: TaskFormInput) => Promise<void> | void;
   onCancel?: () => void;
   onDelete?: () => Promise<void> | void;
   submitLabel?: string;
@@ -48,9 +50,6 @@ export default function TaskForm({
 }: Props) {
   const [name, setName] = useState(initial?.name ?? '');
   const [type, setType] = useState<TaskType>(initial?.type ?? 'scaling');
-  const [status, setStatus] = useState<Task['status']>(
-    initial?.status ?? 'not_started',
-  );
   const [currentProgressStr, setCurrentProgressStr] = useState<string>(() => {
     if (!initial) return type === 'custom' ? '0' : '00:00:00';
     return initial.type === 'custom'
@@ -99,10 +98,9 @@ export default function TaskForm({
       current_progress = sec;
     }
 
-    const input: TaskInput = {
+    const input: TaskFormInput = {
       project_id: projectId,
       name: name.trim(),
-      status,
       type,
       current_progress,
       scaling_modifier: null,
@@ -175,19 +173,6 @@ export default function TaskForm({
             <option value="scripting">scripting</option>
             <option value="custom">custom</option>
             <option value="manual">manual</option>
-          </select>
-        </div>
-
-        <div className="space-y-1">
-          <label className="label">Status</label>
-          <select
-            className="input"
-            value={status}
-            onChange={(e) => setStatus(e.target.value as Task['status'])}
-          >
-            <option value="not_started">not_started</option>
-            <option value="in_progress">in_progress</option>
-            <option value="complete">complete</option>
           </select>
         </div>
 

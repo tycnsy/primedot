@@ -7,6 +7,17 @@ const tasksKey = (projectId: string | undefined) =>
 const tasksManyKey = (projectIds: string[]) =>
   ['tasks', 'many', ...projectIds] as const;
 const PROJECT_IDS_CHUNK_SIZE = 50;
+type TaskStatusDraft = Pick<
+  Task,
+  | 'type'
+  | 'current_progress'
+  | 'scaling_modifier'
+  | 'scripting_modifier'
+  | 'script_length'
+  | 'unit_count'
+  | 'unit_length'
+  | 'manual_length'
+>;
 
 function isMissingTaskSortOrderColumn(error: unknown): boolean {
   if (!error || typeof error !== 'object') return false;
@@ -24,6 +35,54 @@ function upsertTask(tasks: Task[] | undefined, task: Task): Task[] {
   const next = [...tasks];
   next[idx] = task;
   return next;
+}
+
+async function fetchProjectVideoLength(projectId: string): Promise<number> {
+  const { data, error } = await supabase
+    .from('projects')
+    .select('video_length')
+    .eq('id', projectId)
+    .single();
+  if (error) throw error;
+  return typeof data?.video_length === 'number' ? data.video_length : 0;
+}
+
+function deriveStatusFromDraft(
+  draft: TaskStatusDraft,
+  projectVideoLength: number,
+): Task['status'] {
+  const current = Number.isFinite(draft.current_progress) ? draft.current_progress : 0;
+  if (current <= 0) return 'not_started';
+
+  let target = 0;
+  switch (draft.type) {
+    case 'scaling':
+      target = Number.isFinite(projectVideoLength) ? projectVideoLength : 0;
+      break;
+    case 'scripting':
+      target =
+        typeof draft.script_length === 'number' &&
+        Number.isFinite(draft.script_length)
+          ? draft.script_length
+          : 0;
+      break;
+    case 'manual':
+      target =
+        typeof draft.manual_length === 'number' &&
+        Number.isFinite(draft.manual_length)
+          ? draft.manual_length
+          : 0;
+      break;
+    case 'custom':
+      target =
+        typeof draft.unit_count === 'number' && Number.isFinite(draft.unit_count)
+          ? draft.unit_count
+          : 0;
+      break;
+  }
+
+  if (target > 0 && current >= target) return 'complete';
+  return 'in_progress';
 }
 
 export function useTasks(projectId: string | undefined) {
@@ -104,6 +163,8 @@ export function useCreateTask(projectId: string) {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: async (input: TaskInput) => {
+      const projectVideoLength = await fetchProjectVideoLength(projectId);
+      const nextStatus = deriveStatusFromDraft(input, projectVideoLength);
       const { data: lastTask, error: lastTaskError } = await supabase
         .from('tasks')
         .select('sort_order')
@@ -118,6 +179,7 @@ export function useCreateTask(projectId: string) {
         .from('tasks')
         .insert({
           ...input,
+          status: nextStatus,
           ...(isLegacyDb ? {} : { sort_order: (lastTask?.sort_order ?? -1) + 1 }),
         })
         .select()
@@ -138,9 +200,25 @@ export function useUpdateTask(projectId: string) {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: async ({ id, patch }: { id: string; patch: Partial<Task> }) => {
+      const { data: existingTask, error: existingTaskError } = await supabase
+        .from('tasks')
+        .select(
+          'project_id,type,current_progress,scaling_modifier,scripting_modifier,script_length,unit_count,unit_length,manual_length',
+        )
+        .eq('id', id)
+        .single();
+      if (existingTaskError) throw existingTaskError;
+
+      const mergedDraft = {
+        ...(existingTask as TaskStatusDraft),
+        ...patch,
+      } as TaskStatusDraft;
+      const projectVideoLength = await fetchProjectVideoLength(projectId);
+      const nextStatus = deriveStatusFromDraft(mergedDraft, projectVideoLength);
+
       const { data, error } = await supabase
         .from('tasks')
-        .update(patch)
+        .update({ ...patch, status: nextStatus })
         .eq('id', id)
         .select()
         .single();
@@ -160,9 +238,25 @@ export function useUpdateAnyTask(projectIds: string[]) {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: async ({ id, patch }: { id: string; patch: Partial<Task> }) => {
+      const { data: existingTask, error: existingTaskError } = await supabase
+        .from('tasks')
+        .select(
+          'project_id,type,current_progress,scaling_modifier,scripting_modifier,script_length,unit_count,unit_length,manual_length',
+        )
+        .eq('id', id)
+        .single();
+      if (existingTaskError) throw existingTaskError;
+
+      const mergedDraft = {
+        ...(existingTask as TaskStatusDraft),
+        ...patch,
+      } as TaskStatusDraft;
+      const projectVideoLength = await fetchProjectVideoLength(existingTask.project_id);
+      const nextStatus = deriveStatusFromDraft(mergedDraft, projectVideoLength);
+
       const { data, error } = await supabase
         .from('tasks')
-        .update(patch)
+        .update({ ...patch, status: nextStatus })
         .eq('id', id)
         .select()
         .single();

@@ -1,9 +1,20 @@
-import type { PaceSettings, Project, Task } from './types';
+import type { PaceSettings, Project, Task, TaskStatus } from './types';
 
 const safeNum = (v: number | null | undefined, fallback = 0): number =>
   typeof v === 'number' && Number.isFinite(v) ? v : fallback;
 const normalizePaceModifier = (value: number | undefined): number =>
   Math.max(0, safeNum(value, 1));
+type TaskProgressSource = Pick<
+  Task,
+  | 'type'
+  | 'current_progress'
+  | 'scaling_modifier'
+  | 'scripting_modifier'
+  | 'script_length'
+  | 'unit_count'
+  | 'unit_length'
+  | 'manual_length'
+>;
 
 /**
  * `task_length` (seconds) — total real time the task is expected to take, buffered.
@@ -13,7 +24,7 @@ const normalizePaceModifier = (value: number | undefined): number =>
  * custom:     unit_count * unit_length * buffer_modifier
  * manual:     manual_length * buffer_modifier
  */
-export function taskLength(task: Task, project: Project): number {
+export function taskLength(task: TaskProgressSource, project: Project): number {
   const buffer = safeNum(project.buffer_modifier, 1);
   switch (task.type) {
     case 'scaling':
@@ -41,11 +52,11 @@ export function taskLength(task: Task, project: Project): number {
  * `calculated_progress` (seconds) — converts the user's stored `current_progress`
  * input into real-time seconds, applying buffer.
  *
- * For `complete` tasks we treat progress as fully-done regardless of the stored
- * value, per the SPEC open-question resolution.
+ * For complete tasks (derived from progress), treat progress as fully-done
+ * regardless of the stored value.
  */
-export function calculatedProgress(task: Task, project: Project): number {
-  if (task.status === 'complete') return taskLength(task, project);
+export function calculatedProgress(task: TaskProgressSource, project: Project): number {
+  if (deriveTaskStatus(task, project) === 'complete') return taskLength(task, project);
   const buffer = safeNum(project.buffer_modifier, 1);
   const cp = safeNum(task.current_progress);
   switch (task.type) {
@@ -70,7 +81,7 @@ export function calculatedProgress(task: Task, project: Project): number {
  * manual:    task.manual_length
  * custom:    task.unit_count
  */
-export function progressTarget(task: Task, project: Project): number {
+export function progressTarget(task: TaskProgressSource, project: Project): number {
   switch (task.type) {
     case 'scaling':
       return safeNum(project.video_length);
@@ -83,6 +94,31 @@ export function progressTarget(task: Task, project: Project): number {
     default:
       return 0;
   }
+}
+
+/**
+ * Progress percentage derived from current_progress vs task target.
+ * Can exceed 100 when progress is beyond target.
+ */
+export function taskProgressPercent(task: TaskProgressSource, project: Project): number {
+  const current = safeNum(task.current_progress);
+  const target = progressTarget(task, project);
+  if (target <= 0) return current <= 0 ? 0 : 100;
+  return (current / target) * 100;
+}
+
+/**
+ * Automatic status derived from progress thresholds.
+ * <= 0% => not_started, >= 100% => complete, otherwise in_progress.
+ */
+export function deriveTaskStatus(
+  task: TaskProgressSource,
+  project: Project,
+): TaskStatus {
+  const percent = taskProgressPercent(task, project);
+  if (percent <= 0) return 'not_started';
+  if (percent >= 100) return 'complete';
+  return 'in_progress';
 }
 
 export function totalTaskLength(tasks: Task[], project: Project): number {
@@ -110,7 +146,7 @@ export function remainingProgress(tasks: Task[], project: Project): number {
  *   custom:    floor(timer / (unit_length * buffer))   // whole units only
  */
 export function progressDelta(
-  task: Task,
+  task: TaskProgressSource,
   project: Project,
   timerDurationSeconds: number,
   paceModifier = 1,
@@ -143,7 +179,7 @@ export function progressDelta(
  * For custom tasks this is a whole-integer count of units.
  */
 export function goalProgress(
-  task: Task,
+  task: TaskProgressSource,
   project: Project,
   startCurrentProgress: number,
   timerDurationSeconds: number,
