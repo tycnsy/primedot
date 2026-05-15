@@ -4,6 +4,7 @@ import { useAuth } from '../contexts/AuthContext';
 import PaceWidgetSync from './PaceWidgetSync';
 import ThemeToggle from './ThemeToggle';
 import RightPaceSidebar from './RightPaceSidebar';
+import { useHiddenPaceCards } from '../hooks/useHiddenPaceCards';
 
 const LEFT_STORAGE_KEY = 'prime:sidebar-collapsed';
 const RIGHT_STORAGE_KEY = 'prime:right-sidebar-collapsed';
@@ -11,6 +12,7 @@ const RIGHT_STORAGE_KEY = 'prime:right-sidebar-collapsed';
 export default function Layout() {
   const { user, signOut } = useAuth();
   const location = useLocation();
+  const { isHideMode, toggleHideMode } = useHiddenPaceCards();
 
   const [collapsed, setCollapsed] = useState<boolean>(() => {
     if (typeof window === 'undefined') return false;
@@ -296,7 +298,18 @@ export default function Layout() {
             </span>
           </div>
         ) : (
-          <RightPaceSidebar />
+          <div className="flex min-h-0 flex-1 flex-col">
+            <RightPaceSidebar isHideMode={isHideMode} />
+            <div className="border-t border-border/60 p-2">
+              <button
+                type="button"
+                onClick={toggleHideMode}
+                className={isHideMode ? 'btn-secondary w-full' : 'btn-ghost w-full'}
+              >
+                {isHideMode ? 'Confirm hidden cards' : 'Hide cards'}
+              </button>
+            </div>
+          </div>
         )}
       </aside>
     </div>

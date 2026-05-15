@@ -4,6 +4,7 @@ import { usePaceSettingsForProjects, useUpsertPaceSettings } from '../hooks/useP
 import { useProjects } from '../hooks/useProjects';
 import { useTasksForProjects, useUpdateAnyTask } from '../hooks/useTasks';
 import { useTimer } from '../hooks/useTimer';
+import { useHiddenPaceCards } from '../hooks/useHiddenPaceCards';
 import TimerDisplay from '../components/TimerDisplay';
 import { goalProgress, progressTarget } from '../lib/calc';
 import { buildPacePatchFromBufferSeconds } from '../lib/pace';
@@ -31,6 +32,11 @@ export default function Timer() {
   const timer = useTimer();
   const projectsQ = useProjects();
   const projects = projectsQ.data ?? [];
+  const { hiddenProjectIds } = useHiddenPaceCards();
+  const visibleProjects = useMemo(
+    () => projects.filter((project) => !hiddenProjectIds.has(project.id)),
+    [projects, hiddenProjectIds],
+  );
   const projectIds = useMemo(() => projects.map((project) => project.id), [projects]);
   const tasksQ = useTasksForProjects(projectIds);
   const paceByProjectQ = usePaceSettingsForProjects(projectIds);
@@ -183,6 +189,18 @@ export default function Timer() {
     );
   }
 
+  if (visibleProjects.length === 0) {
+    return (
+      <div className="space-y-3">
+        <h1 className="text-3xl font-semibold tracking-tight text-fg">Timer</h1>
+        <p className="text-muted">
+          All timer cards are hidden. Use Hide cards in the Pace sidebar to show
+          cards again.
+        </p>
+      </div>
+    );
+  }
+
   return (
     <div className="space-y-6">
       <div className="flex flex-wrap items-end justify-between gap-3">
@@ -254,7 +272,7 @@ export default function Timer() {
       </div>
 
       <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
-        {projects.map((project) => (
+        {visibleProjects.map((project) => (
           <ProjectTimerColumn
             key={project.id}
             project={project}

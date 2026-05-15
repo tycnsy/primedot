@@ -6,6 +6,7 @@ import { useProjects } from '../hooks/useProjects';
 import { usePaceSettingsForProjects } from '../hooks/usePaceSettings';
 import { useTasksForProjects } from '../hooks/useTasks';
 import { useTicker } from '../hooks/useTicker';
+import { useHiddenPaceCards } from '../hooks/useHiddenPaceCards';
 import type { Task } from '../lib/types';
 
 function formatPaceEnd(date: Date | null): string {
@@ -26,10 +27,16 @@ function paceTint(seconds: number | null): string {
   return 'bg-success/10 border-success/35';
 }
 
-export default function RightPaceSidebar() {
+export default function RightPaceSidebar({
+  isHideMode,
+}: {
+  isHideMode: boolean;
+}) {
   const now = useTicker(1000);
   const { data: projects = [], isLoading: projectsLoading, error: projectsError } =
     useProjects();
+  const { hideModeProjectIds, hiddenProjectIds, toggleProjectHidden } =
+    useHiddenPaceCards();
 
   const projectIds = projects.map((project) => project.id);
   const {
@@ -69,10 +76,27 @@ export default function RightPaceSidebar() {
     return <div className="p-3 text-xs text-muted">No projects yet.</div>;
   }
 
+  const visibleProjects = isHideMode
+    ? projects
+    : projects.filter((project) => !hiddenProjectIds.has(project.id));
+
   return (
     <div className="flex h-full flex-col">
       <div className="flex-1 space-y-2 overflow-y-auto p-2">
-        {projects.map((project) => {
+        {isHideMode ? (
+          <div className="rounded-md border border-border/70 bg-surface2/40 px-2.5 py-2 text-[11px] text-muted">
+            Select cards to hide from this Pace sidebar and the Timer page, then
+            confirm below.
+          </div>
+        ) : null}
+
+        {!isHideMode && visibleProjects.length === 0 ? (
+          <div className="rounded-md border border-border/70 bg-surface2/40 px-3 py-2 text-xs text-muted">
+            All pace cards are hidden. Use Hide cards below to unhide any card.
+          </div>
+        ) : null}
+
+        {visibleProjects.map((project) => {
           const pace = paceByProject[project.id];
           const projectTasks = tasksByProject[project.id] ?? [];
           const showComputed = !!pace && !tasksLoading && !paceLoading;
@@ -83,46 +107,94 @@ export default function RightPaceSidebar() {
           const paceEnd = showComputed
             ? currentPaceEnd(projectTasks, project, pace)
             : null;
+          const hiddenInEdit = hideModeProjectIds.has(project.id);
+          const cardTint = paceTint(paceSeconds);
 
           return (
-            <Link
-              key={project.id}
-              to={`/projects/${project.id}?tab=pace`}
-              className={`block rounded-lg border p-3 text-center transition-colors hover:border-border ${paceTint(
-                paceSeconds,
-              )}`}
-            >
-              <div className="text-base font-semibold text-fg">{project.name}</div>
-              <div
-                className={`mt-2 font-sans text-2xl font-semibold tabular-nums ${
-                  paceSeconds == null ? 'text-muted' : metricTone(paceSeconds)
+            isHideMode ? (
+              <button
+                key={project.id}
+                type="button"
+                onClick={() => toggleProjectHidden(project.id)}
+                className={`block w-full rounded-lg border p-3 text-center transition-colors hover:border-border ${
+                  hiddenInEdit
+                    ? 'border-dashed border-border/80 bg-surface2/80 text-muted opacity-75'
+                    : cardTint
                 }`}
+                aria-pressed={hiddenInEdit}
               >
-                {paceSeconds == null
-                  ? paceLoading || tasksLoading
-                    ? 'Loading...'
-                    : 'No pace set'
-                  : formatHMS(paceSeconds)}
-              </div>
-              <div
-                className={`mt-1 font-sans text-sm tabular-nums ${
-                  marginSeconds == null
-                    ? 'text-muted'
-                    : marginSeconds < 0
-                      ? 'text-danger'
-                      : 'text-fg'
-                }`}
+                <div className="text-base font-semibold text-fg">{project.name}</div>
+                <div className="mt-1 text-[11px] font-medium uppercase tracking-wide text-muted">
+                  {hiddenInEdit ? 'Hidden on confirm' : 'Visible on confirm'}
+                </div>
+                <div
+                  className={`mt-2 font-sans text-2xl font-semibold tabular-nums ${
+                    paceSeconds == null ? 'text-muted' : metricTone(paceSeconds)
+                  }`}
+                >
+                  {paceSeconds == null
+                    ? paceLoading || tasksLoading
+                      ? 'Loading...'
+                      : 'No pace set'
+                    : formatHMS(paceSeconds)}
+                </div>
+                <div
+                  className={`mt-1 font-sans text-sm tabular-nums ${
+                    marginSeconds == null
+                      ? 'text-muted'
+                      : marginSeconds < 0
+                        ? 'text-danger'
+                        : 'text-fg'
+                  }`}
+                >
+                  {marginSeconds == null
+                    ? paceLoading || tasksLoading
+                      ? 'Loading...'
+                      : 'No pace set'
+                    : formatHMS(marginSeconds)}
+                </div>
+                <div className="mt-1 text-xs text-fg/90">
+                  {paceLoading || tasksLoading ? 'Loading...' : formatPaceEnd(paceEnd)}
+                </div>
+              </button>
+            ) : (
+              <Link
+                key={project.id}
+                to={`/projects/${project.id}?tab=pace`}
+                className={`block rounded-lg border p-3 text-center transition-colors hover:border-border ${cardTint}`}
               >
-                {marginSeconds == null
-                  ? paceLoading || tasksLoading
-                    ? 'Loading...'
-                    : 'No pace set'
-                  : formatHMS(marginSeconds)}
-              </div>
-              <div className="mt-1 text-xs text-fg/90">
-                {paceLoading || tasksLoading ? 'Loading...' : formatPaceEnd(paceEnd)}
-              </div>
-            </Link>
+                <div className="text-base font-semibold text-fg">{project.name}</div>
+                <div
+                  className={`mt-2 font-sans text-2xl font-semibold tabular-nums ${
+                    paceSeconds == null ? 'text-muted' : metricTone(paceSeconds)
+                  }`}
+                >
+                  {paceSeconds == null
+                    ? paceLoading || tasksLoading
+                      ? 'Loading...'
+                      : 'No pace set'
+                    : formatHMS(paceSeconds)}
+                </div>
+                <div
+                  className={`mt-1 font-sans text-sm tabular-nums ${
+                    marginSeconds == null
+                      ? 'text-muted'
+                      : marginSeconds < 0
+                        ? 'text-danger'
+                        : 'text-fg'
+                  }`}
+                >
+                  {marginSeconds == null
+                    ? paceLoading || tasksLoading
+                      ? 'Loading...'
+                      : 'No pace set'
+                    : formatHMS(marginSeconds)}
+                </div>
+                <div className="mt-1 text-xs text-fg/90">
+                  {paceLoading || tasksLoading ? 'Loading...' : formatPaceEnd(paceEnd)}
+                </div>
+              </Link>
+            )
           );
         })}
       </div>
