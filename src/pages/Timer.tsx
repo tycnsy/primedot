@@ -158,9 +158,6 @@ export default function Timer() {
     if (!timer.running) timer.start();
   };
 
-  const canEditProject = (projectId: string) =>
-    mode === 'bulk' || (mode === 'project' && activeProjectId === projectId);
-
   if (projectsQ.isLoading || tasksQ.isLoading || paceByProjectQ.isLoading) {
     return <p className="text-muted">Loading…</p>;
   }
@@ -267,8 +264,6 @@ export default function Timer() {
             paceModifier={paceModifier}
             showGoalDelta={showGoalDelta}
             active={mode === 'project' && activeProjectId === project.id}
-            editable={canEditProject(project.id)}
-            sessionMode={mode}
             updateTask={async (taskId, patch) => {
               await updateTask.mutateAsync({ id: taskId, patch });
             }}
@@ -289,8 +284,6 @@ interface ProjectTimerColumnProps {
   paceModifier: number;
   showGoalDelta: boolean;
   active: boolean;
-  editable: boolean;
-  sessionMode: SessionMode;
   updateTask: (id: string, patch: Partial<Task>) => Promise<void>;
   pace: PaceSettings | null;
   onStartProjectSession: () => void;
@@ -304,8 +297,6 @@ function ProjectTimerColumn({
   paceModifier,
   showGoalDelta,
   active,
-  editable,
-  sessionMode,
   updateTask,
   pace,
   onStartProjectSession,
@@ -348,13 +339,6 @@ function ProjectTimerColumn({
             Open project
           </Link>
         </div>
-        {!editable ? (
-          <p className="text-xs text-subtle">
-            {sessionMode === 'idle'
-              ? 'Start this project or a bulk session to edit progress.'
-              : 'Project mode is active on another project.'}
-          </p>
-        ) : null}
         {paceError ? <p className="text-xs text-danger">{paceError}</p> : null}
       </div>
 
@@ -374,7 +358,6 @@ function ProjectTimerColumn({
               timerDurationSeconds={timerDurationSeconds}
               paceModifier={paceModifier}
               showGoalDelta={showGoalDelta}
-              editable={editable}
               updateTask={updateTask}
             />
           ))}
@@ -392,7 +375,6 @@ function TaskProgressRow({
   timerDurationSeconds,
   paceModifier,
   showGoalDelta,
-  editable,
   updateTask,
 }: {
   task: Task;
@@ -402,7 +384,6 @@ function TaskProgressRow({
   timerDurationSeconds: number;
   paceModifier: number;
   showGoalDelta: boolean;
-  editable: boolean;
   updateTask: (id: string, patch: Partial<Task>) => Promise<void>;
 }) {
   const isCustom = task.type === 'custom';
@@ -420,7 +401,6 @@ function TaskProgressRow({
   }, [task.current_progress, isCustom]);
 
   const commit = async () => {
-    if (!editable) return;
     setError(null);
     let next: number;
     if (isCustom) {
@@ -443,7 +423,6 @@ function TaskProgressRow({
   };
 
   const handlePaste = async () => {
-    if (!editable) return;
     setError(null);
     let text: string;
     try {
@@ -529,8 +508,7 @@ function TaskProgressRow({
           </p>
         </div>
         <input
-          disabled={!editable}
-          className={`input !w-24 shrink-0 text-right ${isCustom ? '' : 'font-sans tabular-nums'} ${!editable ? 'opacity-60' : ''}`}
+          className={`input !w-24 shrink-0 text-right ${isCustom ? '' : 'font-sans tabular-nums'}`}
           value={draft}
           onChange={(e) => setDraft(e.target.value)}
           onBlur={commit}
@@ -542,7 +520,6 @@ function TaskProgressRow({
       <div className="mt-2 flex items-center justify-between gap-2">
         <button
           type="button"
-          disabled={!editable}
           onClick={handlePaste}
           className="btn-ghost h-6 px-2 text-[11px]"
           title="Paste timecode from clipboard (drops :ff frames)"

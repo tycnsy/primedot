@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import type { PaceSettings, Project, Task } from '../lib/types';
 import { buildPacePatchFromBufferSeconds } from '../lib/pace';
-import { useUpsertPaceSettings } from '../hooks/usePaceSettings';
+import { useClearPaceSettings, useUpsertPaceSettings } from '../hooks/usePaceSettings';
 
 interface Props {
   project: Project;
@@ -34,6 +34,7 @@ function tomorrowAtEightPmLocal(): string {
 
 export default function PaceSettingsForm({ project, tasks, pace }: Props) {
   const upsert = useUpsertPaceSettings(project.id);
+  const clear = useClearPaceSettings(project.id);
 
   // "Set pace" — number + unit toggle
   const [paceAmount, setPaceAmount] = useState('2');
@@ -148,6 +149,19 @@ export default function PaceSettingsForm({ project, tasks, pace }: Props) {
     }
   };
 
+  const handleResetPace = async () => {
+    setError(null);
+    if (!pace) return setError('No pace is currently set.');
+    if (!confirm('Reset pace? This clears target and true deadlines.')) return;
+    try {
+      await clear.mutateAsync();
+      setTargetLocal('');
+      setTrueLocal('');
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Failed to reset pace.');
+    }
+  };
+
   return (
     <div className="card space-y-4">
       <h2 className="text-lg font-semibold text-fg">Pace settings</h2>
@@ -231,6 +245,17 @@ export default function PaceSettingsForm({ project, tasks, pace }: Props) {
             Copy target
           </button>
         </div>
+      </div>
+
+      <div className="flex justify-end">
+        <button
+          type="button"
+          onClick={handleResetPace}
+          disabled={!pace || clear.isPending}
+          className="btn-danger whitespace-nowrap disabled:opacity-60"
+        >
+          {clear.isPending ? 'Resetting…' : 'Reset pace'}
+        </button>
       </div>
 
       {error ? <p className="text-xs text-danger">{error}</p> : null}

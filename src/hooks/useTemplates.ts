@@ -219,3 +219,23 @@ export function useCreateProjectFromTemplate() {
     },
   });
 }
+
+export function useDeleteTemplate() {
+  const qc = useQueryClient();
+  const { user } = useAuth();
+  return useMutation({
+    mutationFn: async (templateId: string) => {
+      if (!user) throw new Error('Not signed in');
+      const { error } = await supabase
+        .from('project_templates')
+        .delete()
+        .eq('id', templateId);
+      if (error) throw error;
+      return templateId;
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: templatesKey(user?.id) });
+      qc.invalidateQueries({ queryKey: ['template_tasks'] });
+    },
+  });
+}

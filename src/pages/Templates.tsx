@@ -2,6 +2,7 @@ import { useMemo, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import {
   useCreateProjectFromTemplate,
+  useDeleteTemplate,
   useTemplateTasksForTemplates,
   useTemplates,
 } from '../hooks/useTemplates';
@@ -13,8 +14,11 @@ export default function Templates() {
   const templatesQ = useTemplates();
   const [activeTemplate, setActiveTemplate] = useState<ProjectTemplate | null>(null);
   const [projectName, setProjectName] = useState('');
-  const [error, setError] = useState<string | null>(null);
+  const [createError, setCreateError] = useState<string | null>(null);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
+  const [deletingTemplateId, setDeletingTemplateId] = useState<string | null>(null);
   const createProjectFromTemplate = useCreateProjectFromTemplate();
+  const deleteTemplate = useDeleteTemplate();
   const templateIds = useMemo(
     () => (templatesQ.data ?? []).map((template) => template.id),
     [templatesQ.data],
@@ -30,7 +34,7 @@ export default function Templates() {
   const openCreateFlow = (template: ProjectTemplate) => {
     setActiveTemplate(template);
     setProjectName(`${template.name} Project`);
-    setError(null);
+    setCreateError(null);
   };
 
   return (
@@ -65,13 +69,13 @@ export default function Templates() {
               placeholder="My project"
             />
           </div>
-          {error ? <p className="text-xs text-danger">{error}</p> : null}
+          {createError ? <p className="text-xs text-danger">{createError}</p> : null}
           <div className="flex justify-end gap-2">
             <button
               type="button"
               onClick={() => {
                 setActiveTemplate(null);
-                setError(null);
+                setCreateError(null);
               }}
               className="btn-ghost"
             >
@@ -82,7 +86,7 @@ export default function Templates() {
               disabled={createProjectFromTemplate.isPending}
               onClick={async () => {
                 if (!projectName.trim()) {
-                  setError('Project name is required.');
+                  setCreateError('Project name is required.');
                   return;
                 }
                 try {
@@ -94,7 +98,7 @@ export default function Templates() {
                   });
                   navigate(`/projects/${created.id}`);
                 } catch (err) {
-                  setError(
+                  setCreateError(
                     err instanceof Error ? err.message : 'Failed to create project.',
                   );
                 }
@@ -115,6 +119,7 @@ export default function Templates() {
             : 'Failed to load templates.'}
         </p>
       ) : null}
+      {deleteError ? <p className="text-danger">{deleteError}</p> : null}
 
       {templatesQ.data && templatesQ.data.length === 0 ? (
         <div className="card text-center text-sm text-muted">
@@ -124,28 +129,73 @@ export default function Templates() {
 
       <ul className="grid gap-3 sm:grid-cols-2">
         {templatesQ.data?.map((template) => (
-          <li key={template.id}>
-            <button
-              type="button"
-              onClick={() => openCreateFlow(template)}
-              className="card-interactive group block w-full text-left"
-            >
-              <div className="flex items-start justify-between gap-3">
-                <h3 className="font-medium text-fg group-hover:text-accent transition-colors">
-                  {template.name}
-                </h3>
-                {template.tag ? <span className="pill shrink-0">{template.tag}</span> : null}
-              </div>
-              <div className="mt-3 divider" />
-              <dl className="mt-3 grid grid-cols-3 gap-2">
-                <Metric label="Video" value={formatHMS(template.video_length)} mono />
-                <Metric label="Buffer" value={`×${template.buffer_modifier}`} />
-                <Metric
-                  label="Tasks"
-                  value={String(taskCountByTemplate[template.id] ?? 0)}
-                />
-              </dl>
-            </button>
+          <li key={template.id} className="card space-y-3">
+            <div className="flex items-start justify-between gap-3">
+              <h3 className="font-medium text-fg">{template.name}</h3>
+              {template.tag ? <span className="pill shrink-0">{template.tag}</span> : null}
+            </div>
+            <div className="divider" />
+            <dl className="grid grid-cols-3 gap-2">
+              <Metric label="Video" value={formatHMS(template.video_length)} mono />
+              <Metric label="Buffer" value={`×${template.buffer_modifier}`} />
+              <Metric label="Tasks" value={String(taskCountByTemplate[template.id] ?? 0)} />
+            </dl>
+            <div className="flex items-center justify-between gap-2">
+              <button
+                type="button"
+                aria-label={`Delete template ${template.name}`}
+                title="Delete template"
+                disabled={deletingTemplateId === template.id}
+                onClick={async () => {
+                  if (!confirm(`Delete template "${template.name}"?`)) return;
+                  const isActiveTemplate = activeTemplate?.id === template.id;
+                  setDeleteError(null);
+                  setDeletingTemplateId(template.id);
+                  try {
+                    await deleteTemplate.mutateAsync(template.id);
+                    if (isActiveTemplate) {
+                      setActiveTemplate(null);
+                      setCreateError(null);
+                    }
+                  } catch (err) {
+                    setDeleteError(
+                      err instanceof Error ? err.message : 'Failed to delete template.',
+                    );
+                  } finally {
+                    setDeletingTemplateId(null);
+                  }
+                }}
+                className="btn-ghost !h-8 !w-8 !rounded-md !p-0 text-danger disabled:opacity-60"
+              >
+                {deletingTemplateId === template.id ? (
+                  <span className="text-[10px] leading-none">…</span>
+                ) : (
+                  <svg
+                    aria-hidden="true"
+                    viewBox="0 0 24 24"
+                    className="mx-auto h-4 w-4"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  >
+                    <path d="M3 6h18" />
+                    <path d="M8 6V4h8v2" />
+                    <path d="M19 6l-1 14H6L5 6" />
+                    <path d="M10 11v6" />
+                    <path d="M14 11v6" />
+                  </svg>
+                )}
+              </button>
+              <button
+                type="button"
+                onClick={() => openCreateFlow(template)}
+                className="btn-ghost !px-3 !py-1.5 text-xs"
+              >
+                Use template
+              </button>
+            </div>
           </li>
         ))}
       </ul>

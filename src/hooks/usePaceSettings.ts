@@ -96,3 +96,28 @@ export function useUpsertPaceSettings(projectId: string) {
     },
   });
 }
+
+export function useClearPaceSettings(projectId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async () => {
+      const { error } = await supabase
+        .from('pace_settings')
+        .delete()
+        .eq('project_id', projectId);
+      if (error) throw error;
+    },
+    onSuccess: () => {
+      qc.setQueryData<PaceSettings | null>(paceKey(projectId), null);
+      qc.setQueriesData<Record<string, PaceSettings>>(
+        { queryKey: ['pace_settings', 'many'] },
+        (prev) => {
+          if (!prev || !prev[projectId]) return prev ?? {};
+          const next = { ...prev };
+          delete next[projectId];
+          return next;
+        },
+      );
+    },
+  });
+}
