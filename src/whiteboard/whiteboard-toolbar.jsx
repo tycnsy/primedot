@@ -17,10 +17,12 @@ const TIcon = {
   redo: <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round"><path d="M11 5.5L13.5 8L11 10.5"/><path d="M13.5 8h-7a4 4 0 0 0 0 8H9"/></svg>,
   zoomIn: <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round"><circle cx="7" cy="7" r="4.5"/><path d="M10.5 10.5L13.5 13.5M5 7h4M7 5v4"/></svg>,
   zoomOut: <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round"><circle cx="7" cy="7" r="4.5"/><path d="M10.5 10.5L13.5 13.5M5 7h4"/></svg>,
+  image: <svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round"><rect x="2.5" y="3.5" width="11" height="9" rx="1"/><circle cx="6" cy="7" r="1"/><path d="M4 11l2.6-2 2 1.5L11 8.5l1.5 2.5"/></svg>,
+  youtube: <svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round"><rect x="2.5" y="4" width="11" height="8" rx="2"/><path d="M7 6.7l3 1.8-3 1.8z" fill="currentColor" stroke="none"/></svg>,
 };
 
 // ============= Toolbar =============
-function Toolbar({ tool, setTool }) {
+function Toolbar({ tool, setTool, onAction }) {
   const tools = [
     { id: 'select', icon: TIcon.select, label: 'Select', key: 'V' },
     { id: 'hand', icon: TIcon.hand, label: 'Pan', key: 'H' },
@@ -33,16 +35,19 @@ function Toolbar({ tool, setTool }) {
     { id: 'freedraw', icon: TIcon.freedraw, label: 'Draw', key: 'B' },
     { id: 'text', icon: TIcon.text, label: 'Text', key: 'T' },
     { divider: true },
+    { id: 'image', icon: TIcon.image, label: 'Image', kind: 'action' },
+    { id: 'youtube', icon: TIcon.youtube, label: 'YouTube', kind: 'action' },
+    { divider: true },
     { id: 'eraser', icon: TIcon.eraser, label: 'Eraser', key: 'E' },
   ];
   return (
     <div className="wb-toolbar">
       {tools.map((t, i) => t.divider ? <div key={'d'+i} className="wb-tool-divider"/> : (
         <button key={t.id} className="wb-tool" data-active={tool === t.id}
-          title={`${t.label} — ${t.key}`}
-          onClick={() => setTool(t.id)}>
+          title={t.key ? `${t.label} — ${t.key}` : t.label}
+          onClick={() => (t.kind === 'action' ? onAction?.(t.id) : setTool(t.id))}>
           {t.icon}
-          <span className="wb-tool-key">{t.key}</span>
+          {t.key ? <span className="wb-tool-key">{t.key}</span> : null}
         </button>
       ))}
     </div>

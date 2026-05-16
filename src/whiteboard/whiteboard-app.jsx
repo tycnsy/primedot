@@ -18,6 +18,8 @@ import {
   TweakSlider,
 } from './tweaks-panel';
 import { useBoardElements, useBoardPalettes } from './useBoardPersistence';
+import { useAuth } from '../contexts/AuthContext';
+import { parseYouTubeUrl, uploadBoardImage } from './whiteboardMedia';
 
 // ============= Tweaks =============
 const TWEAK_DEFAULTS = /*EDITMODE-BEGIN*/{
@@ -115,8 +117,57 @@ function BgPickerModal({ initialColor, onConfirm, onClose, canClose }) {
   );
 }
 
+function YouTubeModal({ value, onChange, onConfirm, onClose }) {
+  return (
+    <div className="wb-bgpicker-overlay">
+      <div className="wb-bgpicker-card">
+        <div className="wb-bgpicker-title">Embed YouTube video</div>
+        <div className="wb-bgpicker-sub">Paste a YouTube URL to add it to the board.</div>
+        <div className="wb-bgpicker-row" style={{ marginTop: 14 }}>
+          <input
+            className="wb-color-picker-hex"
+            type="text"
+            value={value}
+            placeholder="https://www.youtube.com/watch?v=..."
+            onChange={(e) => onChange(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') {
+                e.preventDefault();
+                onConfirm();
+              }
+              if (e.key === 'Escape') {
+                e.preventDefault();
+                onClose();
+              }
+            }}
+          />
+        </div>
+        <div className="wb-bgpicker-row">
+          <div className="wb-bgpicker-actions" style={{ marginLeft: 'auto' }}>
+            <button className="wb-bgpicker-cancel" onClick={onClose}>Cancel</button>
+            <button className="wb-bgpicker-confirm" onClick={onConfirm}>Embed</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function isEditableTarget(target) {
+  const tag = target?.tagName;
+  return tag === 'INPUT' || tag === 'TEXTAREA' || target?.isContentEditable;
+}
+
+function fileExtFromName(name) {
+  if (!name) return undefined;
+  const parts = name.split('.');
+  if (parts.length < 2) return undefined;
+  return parts[parts.length - 1];
+}
+
 // ============= App =============
 export function Whiteboard({ boardId, onCanonicalSlugResolved, openBackgroundOnLoad = false }) {
+  const { user } = useAuth();
   const [tweaks, setTweak] = useTweaks(TWEAK_DEFAULTS);
   useEffect(() => { applyTweaks(tweaks); }, [tweaks]);
 
@@ -131,8 +182,12 @@ export function Whiteboard({ boardId, onCanonicalSlugResolved, openBackgroundOnL
   const [selectedIds, setSelectedIds] = useState([]);
   const [view, setView] = useState({ x: 220, y: 80, scale: 1 });
   const canvasRef = useRef(null);
+  const imageInputRef = useRef(null);
   const [isEditingText, setIsEditingText] = useState(false);
   const [bgPickerOpen, setBgPickerOpen] = useState(false);
+  const [youtubeModalOpen, setYoutubeModalOpen] = useState(false);
+  const [youtubeInput, setYoutubeInput] = useState('');
+  const [mediaBusy, setMediaBusy] = useState(false);
 
   const [style, setStyle] = useState({
     stroke: '#ffffff',
@@ -233,6 +288,15 @@ export function Whiteboard({ boardId, onCanonicalSlugResolved, openBackgroundOnL
     setHistoryTick(t => t + 1);
   }, [elementsReady, elements]);
 
+  const getViewportCenter = useCallback(() => ({
+    x: (window.innerWidth / 2 - view.x) / view.scale,
+    y: (window.innerHeight / 2 - view.y) / view.scale,
+  }), [view.scale, view.x, view.y]);
+
+  const getInsertPoint = useCallback(() => {
+    return canvasRef.current?.getCursorWorld?.() || getViewportCenter();
+  }, [getViewportCenter]);
+
   const undo = () => {
     const h = historyRef.current;
     if (h.index <= 0) return;
@@ -252,8 +316,7 @@ export function Whiteboard({ boardId, onCanonicalSlugResolved, openBackgroundOnL
 
   // Library insert
   const insertLibraryItem = (kind) => {
-    const cx = (window.innerWidth / 2 - view.x) / view.scale;
-    const cy = (window.innerHeight / 2 - view.y) / view.scale;
+    const { x: cx, y: cy } = getViewportCenter();
     const newEls = [];
     const seed = () => newSeed();
     if (kind === 'sticky') {
@@ -290,12 +353,103 @@ export function Whiteboard({ boardId, onCanonicalSlugResolved, openBackgroundOnL
     pushHistory();
   };
 
+  const insertImageFromFile = useCallback(async (file) => {
+    if (!file) return;
+    if (!user || !boardRowId) {
+      window.alert('Sign in and open a saved board before uploading images.');
+      return;
+    }
+    setMediaBusy(true);
+    try {
+      const uploaded = await uploadBoardImage(file, fileExtFromName(file.name), {
+        userId: user.id,
+        boardRowId,
+      });
+      const maxSide = 480;
+      const longest = Math.max(uploaded.w, uploaded.h, 1);
+      const scale = Math.min(1, maxSide / longest);
+      const width = Math.max(40, Math.round(uploaded.w * scale));
+      const height = Math.max(40, Math.round(uploaded.h * scale));
+      const point = getInsertPoint();
+      const next = {
+        id: newId(),
+        type: 'image',
+        x: point.x - width / 2,
+        y: point.y - height / 2,
+        w: width,
+        h: height,
+        src: uploaded.url,
+        storagePath: uploaded.path,
+        mime: uploaded.mime,
+        naturalW: uploaded.w,
+        naturalH: uploaded.h,
+        seed: newSeed(),
+      };
+      setElements((prev) => [...prev, next]);
+      setSelectedIds([next.id]);
+      setTool('select');
+      pushHistory();
+      // Intentional for now: deleting an image element does not delete its storage object.
+    } catch (error) {
+      window.alert(error instanceof Error ? error.message : 'Failed to import image.');
+    } finally {
+      setMediaBusy(false);
+      if (imageInputRef.current) imageInputRef.current.value = '';
+    }
+  }, [boardRowId, getInsertPoint, pushHistory, setElements, user]);
+
+  const insertYouTubeFromUrl = useCallback((url) => {
+    const parsed = parseYouTubeUrl(url);
+    if (!parsed) {
+      window.alert('Please paste a valid YouTube URL.');
+      return false;
+    }
+    const point = getInsertPoint();
+    const width = 480;
+    const height = 270;
+    const next = {
+      id: newId(),
+      type: 'embed',
+      provider: 'youtube',
+      x: point.x - width / 2,
+      y: point.y - height / 2,
+      w: width,
+      h: height,
+      videoId: parsed.videoId,
+      startSeconds: parsed.start,
+      seed: newSeed(),
+    };
+    setElements((prev) => [...prev, next]);
+    setSelectedIds([next.id]);
+    setTool('select');
+    pushHistory();
+    return true;
+  }, [getInsertPoint, pushHistory, setElements]);
+
+  const handleToolbarAction = useCallback((actionId) => {
+    if (actionId === 'image') {
+      imageInputRef.current?.click();
+      return;
+    }
+    if (actionId === 'youtube') {
+      setYoutubeInput('');
+      setYoutubeModalOpen(true);
+    }
+  }, []);
+
+  const submitYoutubeModal = useCallback(() => {
+    if (insertYouTubeFromUrl(youtubeInput)) {
+      setYoutubeModalOpen(false);
+      setYoutubeInput('');
+    }
+  }, [insertYouTubeFromUrl, youtubeInput]);
+
   // Keyboard shortcuts
   useEffect(() => {
     const onKey = (e) => {
       const target = e.target;
-      const tag = target?.tagName;
-      if (tag === 'INPUT' || tag === 'TEXTAREA' || target?.isContentEditable) return;
+      if (youtubeModalOpen || bgPickerOpen) return;
+      if (isEditableTarget(target)) return;
       const k = e.key.toLowerCase();
       if ((e.metaKey || e.ctrlKey) && k === 'z' && !e.shiftKey) { undo(); e.preventDefault(); return; }
       if ((e.metaKey || e.ctrlKey) && (k === 'z' && e.shiftKey || k === 'y')) { redo(); e.preventDefault(); return; }
@@ -307,7 +461,45 @@ export function Whiteboard({ boardId, onCanonicalSlugResolved, openBackgroundOnL
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, []);
+  }, [bgPickerOpen, youtubeModalOpen]);
+
+  useEffect(() => {
+    const onPaste = async (e) => {
+      const target = e.target;
+      if (youtubeModalOpen || bgPickerOpen || isEditableTarget(target)) return;
+      if (mediaBusy) return;
+      const items = Array.from(e.clipboardData?.items || []);
+      if (!items.length) return;
+
+      const imageFiles = [];
+      for (const item of items) {
+        if (item.kind !== 'file' || !item.type.startsWith('image/')) continue;
+        const file = item.getAsFile();
+        if (file) imageFiles.push(file);
+      }
+
+      if (imageFiles.length) {
+        e.preventDefault();
+        for (const file of imageFiles) {
+          // eslint-disable-next-line no-await-in-loop
+          await insertImageFromFile(file);
+        }
+        return;
+      }
+
+      const textItem = items.find((item) => item.kind === 'string' && item.type === 'text/plain');
+      if (!textItem) return;
+      const pastedText = await new Promise((resolve) => {
+        textItem.getAsString((value) => resolve(value || ''));
+      });
+      if (!parseYouTubeUrl(String(pastedText).trim())) return;
+      e.preventDefault();
+      insertYouTubeFromUrl(String(pastedText).trim());
+    };
+
+    window.addEventListener('paste', onPaste);
+    return () => window.removeEventListener('paste', onPaste);
+  }, [bgPickerOpen, insertImageFromFile, insertYouTubeFromUrl, mediaBusy, youtubeModalOpen]);
 
   const canUndo = historyRef.current.index > 0;
   const canRedo = historyRef.current.index < historyRef.current.stack.length - 1;
@@ -394,7 +586,7 @@ export function Whiteboard({ boardId, onCanonicalSlugResolved, openBackgroundOnL
         />
 
         <WBBrandChip/>
-        <WBToolbar tool={tool} setTool={setTool}/>
+        <WBToolbar tool={tool} setTool={setTool} onAction={handleToolbarAction}/>
         <WBPropsPanel
           style={style}
           onStyleChange={applyStyleChange}
@@ -417,6 +609,30 @@ export function Whiteboard({ boardId, onCanonicalSlugResolved, openBackgroundOnL
             onConfirm={commitBgColor}
           />
         ) : null}
+        {youtubeModalOpen ? (
+          <YouTubeModal
+            value={youtubeInput}
+            onChange={setYoutubeInput}
+            onClose={() => setYoutubeModalOpen(false)}
+            onConfirm={submitYoutubeModal}
+          />
+        ) : null}
+        <input
+          ref={imageInputRef}
+          type="file"
+          accept="image/png,image/jpeg,image/webp,image/gif"
+          multiple
+          style={{ display: 'none' }}
+          onChange={(e) => {
+            const files = Array.from(e.target.files || []);
+            if (!files.length || mediaBusy) return;
+            void (async () => {
+              for (const file of files) {
+                await insertImageFromFile(file);
+              }
+            })();
+          }}
+        />
         <button className="wb-new-board-btn" title="Change board background" onClick={() => setBgPickerOpen(true)}>
           Background
         </button>

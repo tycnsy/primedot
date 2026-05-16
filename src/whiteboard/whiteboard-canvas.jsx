@@ -4,9 +4,11 @@ import rough from 'roughjs';
 // =================================================================
 // Element model
 // =================================================================
-// element: { id, type, x, y, w, h, points?, text?, fontSize?,
-//            stroke, fill, fillStyle, strokeWidth, roughness, edge,
-//            seed }
+// element:
+// - shape/text: { id, type, x, y, w, h, points?, text?, fontSize?,
+//                 stroke, fill, fillStyle, strokeWidth, roughness, edge, seed }
+// - image: { id, type:'image', x, y, w, h, src, storagePath, mime, naturalW, naturalH, seed }
+// - embed: { id, type:'embed', provider:'youtube', x, y, w, h, videoId, startSeconds?, seed }
 
 const STROKE_PALETTE = ['#ffffff', '#1e1e1e', '#e03131', '#1971c2', '#2f9e44', '#e8590c', '#9c36b5'];
 const FILL_PALETTE   = ['transparent', '#ffd9d9', '#d0e7ff', '#d3f0d9', '#ffe5b8', '#ead8ff'];
@@ -246,6 +248,9 @@ function hitTest(el, px, py) {
   if (el.type === 'text') {
     return px >= bb.x - 2 && px <= bb.x + bb.w + 2 && py >= bb.y - 2 && py <= bb.y + bb.h + 2;
   }
+  if (el.type === 'image' || el.type === 'embed') {
+    return px >= bb.x && px <= bb.x + bb.w && py >= bb.y && py <= bb.y + bb.h;
+  }
   // shape: hit if inside bbox (with some grace) or near edge for unfilled
   const inside = px >= bb.x && px <= bb.x + bb.w && py >= bb.y && py <= bb.y + bb.h;
   if (el.fill && el.fill !== 'transparent') return inside;
@@ -342,7 +347,8 @@ function Canvas({
   onEditingTextStateChange,
 }, ref) {
   const svgRef = useRef(null);
-  const layerRef = useRef(null);
+  const drawLayerRef = useRef(null);
+  const embedLayerRef = useRef(null);
   const rcRef = useRef(null);
   const editingTextRef = useRef(null);
   const clipboardRef = useRef([]);
@@ -357,6 +363,7 @@ function Canvas({
   const [hoverId, setHoverId] = useState(null);
   const [panning, setPanning] = useState(false);
   const [spaceDown, setSpaceDown] = useState(false);
+  const [activeEmbedId, setActiveEmbedId] = useState(null);
 
   useImperativeHandle(ref, () => ({
     addElement(el) {
@@ -383,6 +390,9 @@ function Canvas({
         : prev);
       return true;
     },
+    getCursorWorld() {
+      return cursorWorldRef.current;
+    },
   }), [pushHistory, setElements, setSelectedIds]);
 
   // Setup rough generator
@@ -392,14 +402,14 @@ function Canvas({
     }
   }, []);
 
-  // Render elements via rough.js (imperative)
+  // Render non-embed elements via rough.js (imperative)
   useEffect(() => {
-    if (!layerRef.current || !rcRef.current) return;
-    const layer = layerRef.current;
+    if (!drawLayerRef.current || !rcRef.current) return;
+    const layer = drawLayerRef.current;
     while (layer.firstChild) layer.removeChild(layer.firstChild);
     const rc = rcRef.current;
-    const list = [...elements];
-    if (drafting) list.push(drafting);
+    const list = elements.filter((el) => el.type !== 'embed');
+    if (drafting && drafting.type !== 'embed') list.push(drafting);
     for (const el of list) {
       const node = renderElement(rc, el);
       if (node) {
@@ -408,6 +418,92 @@ function Canvas({
       }
     }
   }, [elements, drafting]);
+
+  // Keep embed nodes mounted and sync their properties to avoid iframe remount flicker.
+  useEffect(() => {
+    if (!embedLayerRef.current || !rcRef.current) return;
+    const layer = embedLayerRef.current;
+    const rc = rcRef.current;
+    const embeds = elements.filter((el) => el.type === 'embed' && el.provider === 'youtube');
+    const nextIds = new Set(embeds.map((el) => el.id));
+    const existing = new Map();
+    for (const child of Array.from(layer.children)) {
+      const id = child?.dataset?.elId;
+      if (id) existing.set(id, child);
+    }
+    for (const [id, node] of existing) {
+      if (!nextIds.has(id)) node.remove();
+    }
+    for (const el of embeds) {
+      const isActive = activeEmbedId === el.id;
+      const bb = bboxOf(el);
+      const start = Number.isFinite(el.startSeconds) ? `&start=${Math.max(0, Math.floor(el.startSeconds))}` : '';
+      const embedUrl = `https://www.youtube.com/embed/${el.videoId}?rel=0${start}`;
+      let node = existing.get(el.id);
+
+      if (!node) {
+        node = renderElement(rc, el, { activeEmbedId });
+        if (!node) continue;
+        node.dataset.elId = el.id;
+        layer.appendChild(node);
+      }
+
+      if (node.tagName !== 'foreignObject') {
+        const replacement = renderElement(rc, el, { activeEmbedId });
+        if (replacement) {
+          replacement.dataset.elId = el.id;
+          node.replaceWith(replacement);
+        }
+        continue;
+      }
+
+      node.setAttribute('x', String(bb.x));
+      node.setAttribute('y', String(bb.y));
+      node.setAttribute('width', String(Math.max(bb.w, 1)));
+      node.setAttribute('height', String(Math.max(bb.h, 1)));
+
+      const wrap = node.firstChild;
+      if (!(wrap instanceof HTMLElement)) continue;
+      wrap.style.width = `${Math.max(bb.w, 1)}px`;
+      wrap.style.height = `${Math.max(bb.h, 1)}px`;
+
+      const staleThumb = wrap.querySelector('.wb-embed-thumb');
+      if (staleThumb) staleThumb.remove();
+
+      let iframe = wrap.querySelector('iframe');
+      if (!(iframe instanceof HTMLIFrameElement)) {
+        iframe = document.createElement('iframe');
+        iframe.className = 'wb-embed-iframe';
+        wrap.prepend(iframe);
+      }
+      iframe.setAttribute('title', 'YouTube video');
+      iframe.setAttribute('allow', 'autoplay; fullscreen; picture-in-picture');
+      iframe.setAttribute('allowfullscreen', 'true');
+      if (iframe.getAttribute('src') !== embedUrl) iframe.setAttribute('src', embedUrl);
+      iframe.style.pointerEvents = isActive ? 'auto' : 'none';
+
+      const watchUrl = `https://www.youtube.com/watch?v=${el.videoId}`;
+      let link = wrap.querySelector('.wb-embed-open');
+      if (isActive) {
+        if (!(link instanceof HTMLAnchorElement)) {
+          link = document.createElement('a');
+          link.className = 'wb-embed-open';
+          link.textContent = 'Open in YouTube';
+          wrap.append(link);
+        }
+        link.setAttribute('href', watchUrl);
+        link.setAttribute('target', '_blank');
+        link.setAttribute('rel', 'noreferrer');
+      } else if (link) {
+        link.remove();
+      }
+    }
+  }, [elements, activeEmbedId]);
+
+  useEffect(() => {
+    if (!activeEmbedId) return;
+    if (!selectedIds.includes(activeEmbedId)) setActiveEmbedId(null);
+  }, [activeEmbedId, selectedIds]);
 
   // Coords transform (screen -> world)
   const toWorld = useCallback((sx, sy) => {
@@ -508,6 +604,7 @@ function Canvas({
   // Pointer / wheel handlers
   const onPointerDown = (e) => {
     if (e.button === 1 || (e.button === 0 && (spaceDown || tool === 'hand'))) {
+      setActiveEmbedId(null);
       setPanning(true);
       dragRef.current = { mode: 'pan', sx: e.clientX, sy: e.clientY, ox: view.x, oy: view.y };
       e.currentTarget.setPointerCapture(e.pointerId);
@@ -520,6 +617,7 @@ function Canvas({
     cursorWorldRef.current = w;
 
     if (tool === 'text') {
+      setActiveEmbedId(null);
       // If we're already editing a text box, clicking elsewhere should
       // simply commit + close it — not open a new one.
       if (editingTextRef.current) {
@@ -555,12 +653,20 @@ function Canvas({
       // check hit
       const hit = [...elements].reverse().find(el => hitTest(el, w.x, w.y));
       if (hit) {
+        const alreadyOnlySelected = selectedIds.length === 1 && selectedIds[0] === hit.id;
+        if (hit.type === 'embed' && alreadyOnlySelected && !e.shiftKey) {
+          setActiveEmbedId(hit.id);
+          setSelectedIds([hit.id]);
+          return;
+        }
         const ids = selectedIds.includes(hit.id)
           ? selectedIds
           : (e.shiftKey ? [...selectedIds, hit.id] : [hit.id]);
+        setActiveEmbedId(null);
         setSelectedIds(ids);
         dragRef.current = { mode: 'move', startW: w, originals: elements.filter(el => ids.includes(el.id)).map(el => ({ id: el.id, x: el.x, y: el.y })) };
       } else {
+        setActiveEmbedId(null);
         if (!e.shiftKey) setSelectedIds([]);
         dragRef.current = { mode: 'marquee', sx: w.x, sy: w.y };
         setMarquee({ x: w.x, y: w.y, w: 0, h: 0 });
@@ -569,6 +675,7 @@ function Canvas({
     }
 
     if (tool === 'eraser') {
+      setActiveEmbedId(null);
       dragRef.current = { mode: 'erase' };
       const hit = [...elements].reverse().find(el => hitTest(el, w.x, w.y));
       if (hit) setElements(prev => prev.filter(el => el.id !== hit.id));
@@ -576,6 +683,7 @@ function Canvas({
     }
 
     // creating new shape
+    setActiveEmbedId(null);
     const seed = newSeed();
     const base = {
       id: newId(),
@@ -832,8 +940,16 @@ function Canvas({
         }
       }
       if (e.key === 'Escape') {
+        setActiveEmbedId(null);
         setSelectedIds([]);
         setTool('select');
+      }
+      if (e.key === 'Enter' && selectedIds.length === 1) {
+        const selected = elements.find((el) => el.id === selectedIds[0]);
+        if (selected?.type === 'embed') {
+          setActiveEmbedId(selected.id);
+          e.preventDefault();
+        }
       }
     };
     const onUp = (e) => { if (e.code === 'Space') setSpaceDown(false); };
@@ -905,7 +1021,8 @@ function Canvas({
           })}
 
           {/* rough.js renders here */}
-          <g ref={layerRef}/>
+          <g ref={drawLayerRef}/>
+          <g ref={embedLayerRef}/>
 
           {/* selection union bbox + handles */}
           {selectionBBox && selectedIds.length > 1 ? (
@@ -1018,9 +1135,9 @@ function Canvas({
 }
 
 // =================================================================
-// renderElement(rc, el) -> SVGGElement
+// renderElement(rc, el) -> SVGElement
 // =================================================================
-function renderElement(rc, el) {
+function renderElement(rc, el, options = {}) {
   const opts = roughOptions(el);
   if (el.type === 'rectangle') {
     const bb = bboxOf(el);
@@ -1083,6 +1200,58 @@ function renderElement(rc, el) {
     div.style.cssText = `font-family:'Excalifont','Caveat','Comic Sans MS',cursive;font-weight:400;font-size:${fs}px;line-height:1.15;white-space:pre-wrap;word-break:break-word;text-align:${align};width:${el.manualWidth ? el.manualWidth + 'px' : 'max-content'};user-select:none;pointer-events:none;`;
     div.innerHTML = runsToEditableHtml(runs);
     fo.appendChild(div);
+    return fo;
+  }
+  if (el.type === 'image') {
+    const bb = bboxOf(el);
+    const image = document.createElementNS('http://www.w3.org/2000/svg', 'image');
+    image.setAttribute('x', String(bb.x));
+    image.setAttribute('y', String(bb.y));
+    image.setAttribute('width', String(Math.max(bb.w, 1)));
+    image.setAttribute('height', String(Math.max(bb.h, 1)));
+    image.setAttribute('href', el.src || '');
+    image.setAttribute('preserveAspectRatio', 'xMidYMid meet');
+    return image;
+  }
+  if (el.type === 'embed' && el.provider === 'youtube') {
+    const bb = bboxOf(el);
+    const fo = document.createElementNS('http://www.w3.org/2000/svg', 'foreignObject');
+    fo.setAttribute('x', String(bb.x));
+    fo.setAttribute('y', String(bb.y));
+    fo.setAttribute('width', String(Math.max(bb.w, 1)));
+    fo.setAttribute('height', String(Math.max(bb.h, 1)));
+    fo.style.overflow = 'visible';
+
+    const isActive = options.activeEmbedId === el.id;
+    const start = Number.isFinite(el.startSeconds) ? `&start=${Math.max(0, Math.floor(el.startSeconds))}` : '';
+    const embedUrl = `https://www.youtube.com/embed/${el.videoId}?rel=0${start}`;
+    const watchUrl = `https://www.youtube.com/watch?v=${el.videoId}`;
+
+    const wrap = document.createElementNS('http://www.w3.org/1999/xhtml', 'div');
+    wrap.className = 'wb-embed-wrap';
+    wrap.style.width = `${Math.max(bb.w, 1)}px`;
+    wrap.style.height = `${Math.max(bb.h, 1)}px`;
+
+    const iframe = document.createElementNS('http://www.w3.org/1999/xhtml', 'iframe');
+    iframe.setAttribute('src', embedUrl);
+    iframe.setAttribute('title', 'YouTube video');
+    iframe.setAttribute('allow', 'autoplay; fullscreen; picture-in-picture');
+    iframe.setAttribute('allowfullscreen', 'true');
+    iframe.className = 'wb-embed-iframe';
+    iframe.style.pointerEvents = isActive ? 'auto' : 'none';
+    wrap.appendChild(iframe);
+
+    if (isActive) {
+      const link = document.createElementNS('http://www.w3.org/1999/xhtml', 'a');
+      link.className = 'wb-embed-open';
+      link.setAttribute('href', watchUrl);
+      link.setAttribute('target', '_blank');
+      link.setAttribute('rel', 'noreferrer');
+      link.textContent = 'Open in YouTube';
+      wrap.appendChild(link);
+    }
+
+    fo.appendChild(wrap);
     return fo;
   }
   return null;
