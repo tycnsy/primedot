@@ -117,6 +117,11 @@ export default function PaceDisplay({
   const paceEnd = currentPaceEnd(tasks, project, pace);
   const target = new Date(pace.target_deadline);
   const trueDl = new Date(pace.true_deadline);
+  const due = project.due_date ? new Date(project.due_date) : null;
+  const trueVsDueSeconds =
+    due && !Number.isNaN(due.getTime())
+      ? Math.round((trueDl.getTime() - due.getTime()) / 1000)
+      : null;
 
   const state = paceState(pace_secs);
   const paceColor = paceTextColor[state];
@@ -202,6 +207,20 @@ export default function PaceDisplay({
         <Stat label="Estimated completion" value={fmtDate(completion)} />
         <Stat label="Target deadline" value={fmtDate(target)} />
         <Stat label="True deadline" value={fmtDate(trueDl)} />
+        <Stat
+          label="True vs due"
+          value={trueVsDueSeconds == null ? '—' : formatHMS(trueVsDueSeconds)}
+          subtext={
+            trueVsDueSeconds == null
+              ? 'Set a project due date to compare.'
+              : trueVsDueSeconds < 0
+                ? 'true deadline is before due date'
+                : trueVsDueSeconds > 0
+                  ? 'true deadline is after due date'
+                  : 'true deadline matches due date'
+          }
+          mono
+        />
         <Stat
           label="Remaining"
           value={formatHMS(remaining)}

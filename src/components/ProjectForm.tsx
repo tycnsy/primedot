@@ -10,6 +10,21 @@ interface Props {
   submitLabel?: string;
 }
 
+function toLocalDateTimeInput(iso: string | null | undefined): string {
+  if (!iso) return '';
+  if (/^\d{4}-\d{2}-\d{2}$/.test(iso)) return `${iso}T00:00`;
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return '';
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(
+    d.getHours(),
+  )}:${pad(d.getMinutes())}`;
+}
+
+function fromLocalDateTimeInput(local: string): string {
+  return new Date(local).toISOString();
+}
+
 export default function ProjectForm({
   initial,
   tagOptions = [],
@@ -21,7 +36,9 @@ export default function ProjectForm({
   const [videoLengthStr, setVideoLengthStr] = useState(
     initial ? formatHMS(initial.video_length) : '00:10:00',
   );
-  const [dueDate, setDueDate] = useState<string>(initial?.due_date ?? '');
+  const [dueDateLocal, setDueDateLocal] = useState<string>(
+    toLocalDateTimeInput(initial?.due_date),
+  );
   const [bufferModifier, setBufferModifier] = useState<string>(
     initial ? String(initial.buffer_modifier) : '1',
   );
@@ -52,7 +69,7 @@ export default function ProjectForm({
       await onSubmit({
         name: name.trim(),
         video_length: videoLength,
-        due_date: dueDate || null,
+        due_date: dueDateLocal ? fromLocalDateTimeInput(dueDateLocal) : null,
         buffer_modifier: buffer,
         tag: tag.trim() || null,
       });
@@ -107,14 +124,14 @@ export default function ProjectForm({
         </div>
         <div className="space-y-1">
           <label className="label" htmlFor="proj-due">
-            Due date
+            Due date & time
           </label>
           <input
             id="proj-due"
             className="input"
-            type="date"
-            value={dueDate}
-            onChange={(e) => setDueDate(e.target.value)}
+            type="datetime-local"
+            value={dueDateLocal}
+            onChange={(e) => setDueDateLocal(e.target.value)}
           />
         </div>
         <div className="space-y-1">

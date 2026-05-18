@@ -124,7 +124,7 @@ public/                static assets, PWA icons
 ## What's in v1 (Sessions)
 
 - Auth (Google OAuth via Supabase).
-- Projects CRUD with `video_length`, `due_date`, `buffer_modifier`, `tag`.
+- Projects CRUD with `video_length`, datetime `due_date`, `buffer_modifier`, `tag`.
 - Tasks CRUD across all four types (`scaling`, `scripting`, `custom`, `manual`) with type-specific fields and read-only "task summary" panel that surfaces computed `task_length` and `calculated_progress`.
 - Pace settings: `target_deadline`, `true_deadline`, "Set pace" and "Set target time" controls. Live-ticking pace display.
 - Timer page: countdown that flips red and counts up at zero, persisted duration, single-task mode and bulk mode.

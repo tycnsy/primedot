@@ -28,6 +28,19 @@ function reorderProjects(
   return next;
 }
 
+function formatDueDateTime(iso: string | null): string {
+  if (!iso) return '—';
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return iso;
+  return d.toLocaleString([], {
+    weekday: 'short',
+    month: 'short',
+    day: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+  });
+}
+
 export default function Projects() {
   const { data, isLoading, error } = useProjects();
   const createProject = useCreateProject();
@@ -150,7 +163,7 @@ export default function Projects() {
               <dl className="mt-3 grid grid-cols-3 gap-2">
                 <Metric label="Video" value={formatHMS(project.video_length)} mono />
                 <Metric label="Buffer" value={`×${project.buffer_modifier}`} />
-                <Metric label="Due" value={project.due_date ?? '—'} />
+                <Metric label="Due" value={formatDueDateTime(project.due_date)} />
               </dl>
             </Link>
           </li>

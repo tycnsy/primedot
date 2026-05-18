@@ -29,7 +29,7 @@ All time values are stored as **integers representing total seconds**. The UI co
 | `user_id` | uuid (FK → auth.users) | |
 | `name` | text | |
 | `video_length` | integer (seconds) | The total length of the finished video. Used in scaling task calculations. |
-| `due_date` | date (nullable) | Optional. |
+| `due_date` | timestamptz (nullable) | Optional project deadline with date and time. |
 | `buffer_modifier` | numeric | Multiplier (e.g. `1.2`, `2.5`, `12`). See Buffer Modifier section. |
 | `tag` | text (nullable) | Optional select-style tag. |
 | `created_at` | timestamptz | |

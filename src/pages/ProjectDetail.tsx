@@ -36,6 +36,19 @@ import {
 import { formatHMS } from '../lib/time';
 import type { Task } from '../lib/types';
 
+function formatDueDateTime(iso: string | null): string | null {
+  if (!iso) return null;
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return iso;
+  return d.toLocaleString([], {
+    weekday: 'short',
+    month: 'short',
+    day: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+  });
+}
+
 function reorderTasks(tasks: Task[], sourceId: string, targetId: string): Task[] {
   if (sourceId === targetId) return tasks;
 
@@ -122,6 +135,7 @@ export default function ProjectDetail() {
   const progress = projectProgress(allTasks, p);
   const remaining = remainingProgress(allTasks, p);
   const overallPct = totalLen > 0 ? Math.min(100, (progress / totalLen) * 100) : 0;
+  const dueLabel = formatDueDateTime(p.due_date);
 
   return (
     <div className="space-y-8">
@@ -139,7 +153,7 @@ export default function ProjectDetail() {
           <div className="mt-1 flex flex-wrap items-center gap-2">
             <span className="pill">video {formatHMS(p.video_length)}</span>
             <span className="pill">×{p.buffer_modifier} buffer</span>
-            {p.due_date ? <span className="pill">due {p.due_date}</span> : null}
+            {dueLabel ? <span className="pill">due {dueLabel}</span> : null}
             {p.tag ? <span className="pill">{p.tag}</span> : null}
           </div>
         </div>
