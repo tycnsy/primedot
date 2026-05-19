@@ -58,6 +58,12 @@ function internal(message: string): Response {
   return json({ error: 'internal', message }, 500);
 }
 
+function isResultLike<T>(
+  value: unknown,
+): value is { data: T | null; error: { message?: string } | null } {
+  return typeof value === 'object' && value !== null && 'data' in value && 'error' in value;
+}
+
 // Strip the function-route prefix so we can match on /whoami, /projects, etc.
 // Supabase invokes the function at `/functions/v1/sync/<rest>`.
 function routePath(url: URL): string {
@@ -68,21 +74,29 @@ function routePath(url: URL): string {
 }
 
 async function handleWhoami(userId: string): Promise<Response> {
-  const { data, error } = await admin.auth.admin.getUserById(userId);
+  const whoamiRes = await admin.auth.admin.getUserById(userId);
+  if (!isResultLike<{ user?: { email?: string | null } }>(whoamiRes)) {
+    return internal('whoami lookup returned an invalid response');
+  }
+  const { data, error } = whoamiRes;
   if (error) return internal(error.message);
   return json({
     user_id: userId,
-    email: data.user?.email ?? null,
+    email: data?.user?.email ?? null,
   });
 }
 
 async function handleListProjects(userId: string): Promise<Response> {
-  const projectsRes = await admin
+  const projectsResUnknown = await admin
     .from('projects')
-    .select('*')
+    .select('id,name,video_length,due_date,buffer_modifier,tag,sort_order,created_at')
     .eq('user_id', userId)
     .order('sort_order', { ascending: true })
     .order('created_at', { ascending: true });
+  if (!isResultLike<Array<{ id: string }>>(projectsResUnknown)) {
+    return internal('projects query returned an invalid response');
+  }
+  const projectsRes = projectsResUnknown;
   if (projectsRes.error) return internal(projectsRes.error.message);
 
   const projects = projectsRes.data ?? [];
@@ -90,15 +104,24 @@ async function handleListProjects(userId: string): Promise<Response> {
 
   let tasks: unknown[] = [];
   if (projectIds.length > 0) {
-    const tasksRes = await admin
-      .from('tasks')
-      .select('*')
-      .in('project_id', projectIds)
-      .order('project_id', { ascending: true })
-      .order('sort_order', { ascending: true })
-      .order('created_at', { ascending: true });
-    if (tasksRes.error) return internal(tasksRes.error.message);
-    tasks = tasksRes.data ?? [];
+    const CHUNK_SIZE = 100;
+    for (let i = 0; i < projectIds.length; i += CHUNK_SIZE) {
+      const chunk = projectIds.slice(i, i + CHUNK_SIZE);
+      const tasksResUnknown = await admin
+        .from('tasks')
+        .select(
+          'id,project_id,name,status,type,current_progress,scaling_modifier,scripting_modifier,script_length,unit_count,unit_length,manual_length,sort_order,created_at',
+        )
+        .in('project_id', chunk)
+        .order('project_id', { ascending: true })
+        .order('sort_order', { ascending: true })
+        .order('created_at', { ascending: true });
+      if (!isResultLike<unknown[]>(tasksResUnknown)) {
+        return internal('tasks query returned an invalid response');
+      }
+      if (tasksResUnknown.error) return internal(tasksResUnknown.error.message);
+      tasks = tasks.concat(tasksResUnknown.data ?? []);
+    }
   }
 
   return json({ projects, tasks });
@@ -179,31 +202,38 @@ async function handleUpdateTaskProgress(
 }
 
 Deno.serve(async (req) => {
-  if (req.method === 'OPTIONS') {
-    return new Response(null, { status: 204, headers: CORS_HEADERS });
+  try {
+    if (req.method === 'OPTIONS') {
+      return new Response(null, { status: 204, headers: CORS_HEADERS });
+    }
+
+    const auth = await authenticateToken(admin, req);
+    if (!auth) return unauthorized();
+
+    const url = new URL(req.url);
+    const path = routePath(url);
+
+    if (path === '/whoami') {
+      if (req.method !== 'GET') return methodNotAllowed();
+      return handleWhoami(auth.userId);
+    }
+
+    if (path === '/projects') {
+      if (req.method !== 'GET') return methodNotAllowed();
+      return handleListProjects(auth.userId);
+    }
+
+    const progressMatch = path.match(/^\/tasks\/([^/]+)\/progress$/);
+    if (progressMatch) {
+      if (req.method !== 'PATCH') return methodNotAllowed();
+      return handleUpdateTaskProgress(auth.userId, progressMatch[1], req);
+    }
+
+    return notFound();
+  } catch (error) {
+    const message =
+      error instanceof Error ? error.message : String(error ?? 'Unknown function error');
+    console.error('sync function uncaught error:', message);
+    return internal(message);
   }
-
-  const auth = await authenticateToken(admin, req);
-  if (!auth) return unauthorized();
-
-  const url = new URL(req.url);
-  const path = routePath(url);
-
-  if (path === '/whoami') {
-    if (req.method !== 'GET') return methodNotAllowed();
-    return handleWhoami(auth.userId);
-  }
-
-  if (path === '/projects') {
-    if (req.method !== 'GET') return methodNotAllowed();
-    return handleListProjects(auth.userId);
-  }
-
-  const progressMatch = path.match(/^\/tasks\/([^/]+)\/progress$/);
-  if (progressMatch) {
-    if (req.method !== 'PATCH') return methodNotAllowed();
-    return handleUpdateTaskProgress(auth.userId, progressMatch[1], req);
-  }
-
-  return notFound();
 });

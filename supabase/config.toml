@@ -1,0 +1,9 @@
+## Supabase project config — only fields used by this repo are listed.
+## Other settings are managed through the Supabase dashboard.
+
+[functions.sync]
+# The `sync` Edge Function is consumed by external apps (censaySplit) using
+# our own `cnsy_prime_*` bearer tokens. We must opt OUT of Supabase's
+# built-in JWT verification, otherwise the gateway rejects requests before
+# our function ever sees them.
+verify_jwt = false
