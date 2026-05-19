@@ -93,3 +93,13 @@ export type ProjectTemplateInput = Pick<
 >;
 
 export type TemplateTaskInput = Omit<TemplateTask, 'id' | 'created_at'>;
+
+export interface IntegrationToken {
+  id: string;
+  user_id: string;
+  name: string;
+  token_prefix: string;
+  created_at: string;
+  last_used_at: string | null;
+  revoked_at: string | null;
+}

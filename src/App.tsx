@@ -18,6 +18,7 @@ import GoalDetailLong from './pages/GoalDetailLong';
 import GoalDetailDaily from './pages/GoalDetailDaily';
 import Whiteboards from './pages/Whiteboards';
 import Whiteboard from './pages/Whiteboard';
+import SettingsIntegrations from './pages/SettingsIntegrations';
 import { RequireAuth } from './components/RequireAuth';
 import Layout from './components/Layout';
 
@@ -103,6 +104,7 @@ export default function App() {
           <Route path="/whiteboards/:boardId" element={<Whiteboard />} />
           <Route path="/projects/:id" element={<ProjectDetail />} />
           <Route path="/projects/:id/timer" element={<Timer />} />
+          <Route path="/settings/integrations" element={<SettingsIntegrations />} />
         </Route>
         <Route path="*" element={<Navigate to="/projects" replace />} />
       </Routes>

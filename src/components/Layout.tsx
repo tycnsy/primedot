@@ -220,6 +220,12 @@ export default function Layout() {
             collapsed={collapsed}
             icon={<WhiteboardIcon />}
           />
+          <SidebarLink
+            to="/settings/integrations"
+            label="Integrations"
+            collapsed={collapsed}
+            icon={<IntegrationsIcon />}
+          />
         </nav>
 
         <div className="mt-auto flex flex-col gap-3 border-t border-border/60 px-3 py-3">
@@ -525,6 +531,25 @@ function WhiteboardIcon() {
       <path d="M8 21h8" />
       <path d="M12 17v4" />
       <path d="M8 10l2 2 4-4" />
+    </svg>
+  );
+}
+
+function IntegrationsIcon() {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      width="16"
+      height="16"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.6"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden
+    >
+      <path d="M10 13a4 4 0 0 0 5.66 0l3-3a4 4 0 0 0-5.66-5.66l-1.5 1.5" />
+      <path d="M14 11a4 4 0 0 0-5.66 0l-3 3a4 4 0 0 0 5.66 5.66l1.5-1.5" />
     </svg>
   );
 }
