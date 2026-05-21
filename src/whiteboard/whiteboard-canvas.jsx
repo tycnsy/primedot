@@ -170,6 +170,279 @@ function measureTextRuns(runs, fontSize, manualWidth) {
   return { w: manualWidth || _wbMeasureDiv.offsetWidth, h: _wbMeasureDiv.offsetHeight };
 }
 
+// =================================================================
+// Lines model (numbered/bullet/checkbox list support)
+// =================================================================
+const LINE_KINDS = ['normal', 'bullet', 'numbered', 'checkbox'];
+
+function normalizeLineKind(kind) {
+  return LINE_KINDS.includes(kind) ? kind : 'normal';
+}
+
+function normalizeLines(lines, fallbackColor = '#1e1e1e') {
+  if (!Array.isArray(lines) || !lines.length) return [];
+  return lines.map((line) => {
+    const kind = normalizeLineKind(line?.kind);
+    const runs = normalizeTextRuns(line?.runs, fallbackColor);
+    const out = { kind, runs };
+    if (kind === 'checkbox') out.checked = !!line?.checked;
+    return out;
+  });
+}
+
+function linesFromRuns(runs, fallbackColor = '#1e1e1e') {
+  const safeRuns = normalizeTextRuns(runs, fallbackColor);
+  const lines = [];
+  let currentRuns = [];
+  for (const run of safeRuns) {
+    let text = run.text || '';
+    if (!text) continue;
+    let idx;
+    while ((idx = text.indexOf('\n')) !== -1) {
+      const head = text.slice(0, idx);
+      if (head) currentRuns.push({ text: head, color: run.color });
+      lines.push({ kind: 'normal', runs: normalizeTextRuns(currentRuns, fallbackColor) });
+      currentRuns = [];
+      text = text.slice(idx + 1);
+    }
+    if (text) currentRuns.push({ text, color: run.color });
+  }
+  lines.push({ kind: 'normal', runs: normalizeTextRuns(currentRuns, fallbackColor) });
+  return lines;
+}
+
+function runsFromLines(lines, fallbackColor = '#1e1e1e') {
+  const safeLines = normalizeLines(lines, fallbackColor);
+  if (!safeLines.length) return [];
+  const out = [];
+  safeLines.forEach((line, idx) => {
+    for (const run of line.runs) {
+      if (run.text) out.push({ text: run.text, color: run.color });
+    }
+    if (idx < safeLines.length - 1) {
+      const tailColor = line.runs[line.runs.length - 1]?.color
+        || safeLines[idx + 1].runs[0]?.color
+        || fallbackColor;
+      out.push({ text: '\n', color: tailColor });
+    }
+  });
+  return normalizeTextRuns(out, fallbackColor);
+}
+
+function textFromLines(lines) {
+  if (!Array.isArray(lines)) return '';
+  return lines.map((line) => (line.runs || []).map((r) => r.text || '').join('')).join('\n');
+}
+
+function ensureLinesFromElement(el, fallbackColor = '#1e1e1e') {
+  const stroke = el?.stroke || fallbackColor;
+  const lines = normalizeLines(el?.lines, stroke);
+  if (lines.length) return lines;
+  const runs = ensureRunsFromElement(el, fallbackColor);
+  if (!runs.length) return [{ kind: 'normal', runs: [] }];
+  return linesFromRuns(runs, stroke);
+}
+
+function computeNumberedSequence(lines) {
+  const seq = new Array(lines.length).fill(null);
+  let counter = 0;
+  for (let i = 0; i < lines.length; i++) {
+    if (lines[i].kind === 'numbered') {
+      counter += 1;
+      seq[i] = counter;
+    } else {
+      counter = 0;
+    }
+  }
+  return seq;
+}
+
+function renderLineContentHtml(runs) {
+  if (!runs.length) return '<br/>';
+  return runs.map((run) => {
+    const color = normalizeColor(run.color);
+    const htmlText = escapeHtml(run.text).replace(/\n/g, '<br/>');
+    return `<span style="color:${color}">${htmlText}</span>`;
+  }).join('');
+}
+
+function linesToEditableHtml(lines, options = {}) {
+  const safeLines = lines && lines.length ? lines : [{ kind: 'normal', runs: [] }];
+  const interactiveId = options.interactiveCheckboxElementId || null;
+  const numberedSeq = computeNumberedSequence(safeLines);
+  return safeLines.map((line, i) => {
+    const kind = line.kind || 'normal';
+    const checked = kind === 'checkbox' && line.checked ? '1' : '0';
+    const contentHtml = renderLineContentHtml(line.runs || []);
+    if (kind === 'normal') {
+      return `<div class="wb-line" data-kind="normal" data-line-index="${i}"><span class="wb-line-content">${contentHtml}</span></div>`;
+    }
+    let prefixHtml = '';
+    if (kind === 'bullet') {
+      prefixHtml = `<span class="wb-line-prefix" contenteditable="false">\u2022</span>`;
+    } else if (kind === 'numbered') {
+      prefixHtml = `<span class="wb-line-prefix" contenteditable="false">${numberedSeq[i]}.</span>`;
+    } else if (kind === 'checkbox') {
+      const dataAttr = interactiveId
+        ? ` data-wb-checkbox="${escapeHtml(String(interactiveId))}:${i}"`
+        : '';
+      prefixHtml = `<span class="wb-line-prefix wb-checkbox" contenteditable="false" data-checked="${checked}"${dataAttr}></span>`;
+    }
+    return `<div class="wb-line" data-kind="${kind}" data-line-index="${i}" data-checked="${checked}">${prefixHtml}<span class="wb-line-content">${contentHtml}</span></div>`;
+  }).join('');
+}
+
+function linesFromEditor(root, fallbackColor = '#1e1e1e') {
+  if (!root) return [{ kind: 'normal', runs: [] }];
+  const blocks = [];
+  for (const child of Array.from(root.childNodes)) {
+    if (child.nodeType === Node.ELEMENT_NODE && child.classList?.contains('wb-line')) {
+      const kind = normalizeLineKind(child.dataset.kind);
+      const contentNode = child.querySelector(':scope > .wb-line-content') || child;
+      const runs = runsFromEditor(contentNode, fallbackColor);
+      const line = { kind, runs };
+      if (kind === 'checkbox') line.checked = child.dataset.checked === '1';
+      blocks.push(line);
+    } else if (child.nodeType === Node.ELEMENT_NODE && isBlockTag(child.tagName)) {
+      const runs = runsFromEditor(child, fallbackColor);
+      blocks.push({ kind: 'normal', runs });
+    } else if (child.nodeType === Node.ELEMENT_NODE && child.tagName === 'BR') {
+      blocks.push({ kind: 'normal', runs: [] });
+    } else if (child.nodeType === Node.TEXT_NODE && (child.textContent || '').length) {
+      blocks.push({ kind: 'normal', runs: [{ text: child.textContent, color: fallbackColor }] });
+    }
+  }
+  if (!blocks.length) blocks.push({ kind: 'normal', runs: [] });
+  return normalizeLines(blocks, fallbackColor);
+}
+
+function measureTextLines(lines, fontSize, manualWidth) {
+  if (!_wbMeasureDiv) {
+    _wbMeasureDiv = document.createElement('div');
+    _wbMeasureDiv.style.cssText = 'position:absolute;visibility:hidden;left:-99999px;top:-99999px;font-family:"Excalifont","Caveat","Comic Sans MS",cursive;font-weight:400;line-height:1.15;white-space:pre-wrap;word-break:break-word;padding:0;margin:0;border:0;box-sizing:content-box;';
+    document.body.appendChild(_wbMeasureDiv);
+  }
+  _wbMeasureDiv.style.fontSize = fontSize + 'px';
+  _wbMeasureDiv.style.width = manualWidth ? manualWidth + 'px' : 'auto';
+  const hasContent = (lines || []).some((line) => (line.runs || []).some((r) => r.text));
+  _wbMeasureDiv.innerHTML = hasContent || (lines && lines.length > 1)
+    ? linesToEditableHtml(lines)
+    : ' ';
+  return { w: manualWidth || _wbMeasureDiv.offsetWidth, h: _wbMeasureDiv.offsetHeight };
+}
+
+// Autoformat: detect `1. `, `- `, `[ ] ` at the start of a normal line.
+function detectListAutoformat(lines, fallbackColor = '#1e1e1e') {
+  if (!Array.isArray(lines) || !lines.length) return null;
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    if (line.kind !== 'normal' || !line.runs.length) continue;
+    const firstText = line.runs[0].text || '';
+    let nextKind = null;
+    let prefixLen = 0;
+    if (/^\d+\.\s/.test(firstText)) {
+      nextKind = 'numbered';
+      prefixLen = firstText.indexOf('.') + 2;
+    } else if (firstText.startsWith('- ')) {
+      nextKind = 'bullet';
+      prefixLen = 2;
+    } else if (firstText.startsWith('[ ] ')) {
+      nextKind = 'checkbox';
+      prefixLen = 4;
+    }
+    if (!nextKind) continue;
+    const firstColor = line.runs[0].color;
+    const remainder = firstText.slice(prefixLen);
+    const nextRuns = remainder
+      ? [{ text: remainder, color: firstColor }, ...line.runs.slice(1)]
+      : line.runs.slice(1);
+    const newLine = { kind: nextKind, runs: normalizeTextRuns(nextRuns, fallbackColor) };
+    if (nextKind === 'checkbox') newLine.checked = false;
+    const out = lines.slice();
+    out[i] = newLine;
+    return { lines: normalizeLines(out, fallbackColor), transformedIndex: i };
+  }
+  return null;
+}
+
+function getCaretOffsetWithin(container) {
+  const sel = window.getSelection();
+  if (!sel || !sel.rangeCount) return 0;
+  const range = sel.getRangeAt(0).cloneRange();
+  range.collapse(true);
+  if (!container.contains(range.startContainer)) return 0;
+  const measure = document.createRange();
+  measure.setStart(container, 0);
+  measure.setEnd(range.startContainer, range.startOffset);
+  return measure.toString().length;
+}
+
+function findEditingLineFromSelection(root) {
+  const sel = window.getSelection();
+  if (!sel || !sel.rangeCount) return null;
+  let node = sel.anchorNode;
+  while (node && node !== root) {
+    if (node.nodeType === Node.ELEMENT_NODE && node.classList?.contains('wb-line')) {
+      const idx = parseInt(node.dataset.lineIndex || '-1', 10);
+      if (!Number.isFinite(idx) || idx < 0) return null;
+      const content = node.querySelector(':scope > .wb-line-content') || node;
+      const charOffset = getCaretOffsetWithin(content);
+      return { lineIndex: idx, charOffset, lineEl: node, contentEl: content };
+    }
+    node = node.parentNode;
+  }
+  return null;
+}
+
+function splitRunsAt(runs, charOffset) {
+  let remaining = charOffset;
+  const before = [];
+  const after = [];
+  let done = false;
+  for (const run of runs) {
+    if (done) {
+      after.push(run);
+      continue;
+    }
+    const len = (run.text || '').length;
+    if (remaining >= len) {
+      before.push(run);
+      remaining -= len;
+    } else if (remaining > 0) {
+      before.push({ text: run.text.slice(0, remaining), color: run.color });
+      after.push({ text: run.text.slice(remaining), color: run.color });
+      done = true;
+      remaining = 0;
+    } else {
+      after.push(run);
+      done = true;
+    }
+  }
+  return { before, after };
+}
+
+function placeCaretInLine(root, lineIndex, position = 'end') {
+  if (!root) return;
+  const line = root.querySelector(`.wb-line[data-line-index="${lineIndex}"]`);
+  if (!line) return;
+  const content = line.querySelector(':scope > .wb-line-content') || line;
+  const children = Array.from(content.childNodes);
+  const isEmptyPlaceholder = children.length === 1 && children[0].nodeName === 'BR';
+  const range = document.createRange();
+  if (isEmptyPlaceholder) {
+    range.setStart(content, 0);
+    range.collapse(true);
+  } else {
+    range.selectNodeContents(content);
+    range.collapse(position !== 'start');
+  }
+  const sel = window.getSelection();
+  if (sel) {
+    sel.removeAllRanges();
+    sel.addRange(range);
+  }
+}
+
 // Map an alignment + measured width back to a left-edge x, given the anchor
 // point the text should grow around (click point for new, original-anchor for edits).
 function xFromAnchor(anchorX, w, align) {
@@ -315,13 +588,13 @@ function scaleElementFromPivot(el, pivotX, pivotY, scaleX, scaleY) {
 
   if (el.type === 'text') {
     const align = el.textAlign || 'center';
-    const runs = ensureRunsFromElement(el, el.stroke || '#1e1e1e');
+    const lines = ensureLinesFromElement(el, el.stroke || '#1e1e1e');
     const fontScale = Math.sqrt(scaleX * scaleY);
     const fontSize = Math.max(8, (el.fontSize || 22) * fontScale);
     const manualWidth = typeof el.manualWidth === 'number'
       ? Math.max(20, el.manualWidth * scaleX)
       : el.manualWidth;
-    const measured = measureTextRuns(runs, fontSize, manualWidth);
+    const measured = measureTextLines(lines, fontSize, manualWidth);
     const nextAnchor = scaleFromPivot(anchorOf(el), pivotX, scaleX);
     const x = xFromAnchor(nextAnchor, measured.w, align);
     const y = scaleFromPivot(el.y, pivotY, scaleY);
@@ -383,10 +656,11 @@ function Canvas({
       const fallbackColor = editingTextRef.current.stroke || '#1e1e1e';
       document.execCommand('styleWithCSS', false, true);
       document.execCommand('foreColor', false, color);
-      const runs = runsFromEditor(textEditorRef.current, fallbackColor);
-      const text = textFromRuns(runs);
+      const lines = linesFromEditor(textEditorRef.current, fallbackColor);
+      const runs = runsFromLines(lines, fallbackColor);
+      const text = textFromLines(lines);
       setEditingText((prev) => prev
-        ? { ...prev, stroke: hasSelectionRange ? prev.stroke : color, textRuns: runs, text }
+        ? { ...prev, stroke: hasSelectionRange ? prev.stroke : color, lines, textRuns: runs, text }
         : prev);
       return true;
     },
@@ -515,37 +789,53 @@ function Canvas({
   useEffect(() => {
     if (onEditingTextStateChange) onEditingTextStateChange(Boolean(editingText));
   }, [editingText, onEditingTextStateChange]);
+  const pendingCaretRef = useRef(null);
+  const isReseedingEditorRef = useRef(false);
   useEffect(() => {
     if (!editingText || !textEditorRef.current) return;
-    textEditorRef.current.innerHTML = runsToEditableHtml(editingText.textRuns || []);
-    textEditorRef.current.focus();
-    const selection = window.getSelection();
-    if (!selection) return;
-    const range = document.createRange();
-    range.selectNodeContents(textEditorRef.current);
-    range.collapse(false);
-    selection.removeAllRanges();
-    selection.addRange(range);
-  }, [editingText?.id, editingText?.editingId]);
+    const root = textEditorRef.current;
+    const lines = editingText.lines && editingText.lines.length
+      ? editingText.lines
+      : [{ kind: 'normal', runs: [] }];
+    isReseedingEditorRef.current = true;
+    try {
+      root.innerHTML = linesToEditableHtml(lines);
+      root.focus();
+      const pending = pendingCaretRef.current;
+      pendingCaretRef.current = null;
+      if (pending && pending.lineIndex != null) {
+        placeCaretInLine(root, pending.lineIndex, pending.position || 'end');
+      } else {
+        placeCaretInLine(root, lines.length - 1, 'end');
+      }
+    } finally {
+      isReseedingEditorRef.current = false;
+    }
+  }, [editingText?.id, editingText?.editingId, editingText?.editorVersion]);
 
   const commitTextValue = (et) => {
     if (!et) return;
-    if ((et.text || '').trim()) {
-      const fontSize = et.fontSize;
-      const textRuns = normalizeTextRuns(et.textRuns, et.stroke);
-      const text = textFromRuns(textRuns);
-      const primaryColor = textRuns[0]?.color || et.stroke || '#1e1e1e';
-      const { w, h } = measureTextRuns(textRuns, fontSize, et.manualWidth);
+    const fontSize = et.fontSize;
+    const fallbackColor = et.stroke || '#1e1e1e';
+    const lines = et.lines && et.lines.length
+      ? normalizeLines(et.lines, fallbackColor)
+      : linesFromRuns(normalizeTextRuns(et.textRuns, fallbackColor), fallbackColor);
+    const textRuns = runsFromLines(lines, fallbackColor);
+    const text = textFromLines(lines);
+    const hasText = text.trim().length > 0;
+    const hasListStructure = lines.some((line) => line.kind !== 'normal');
+    if (hasText || hasListStructure) {
+      const primaryColor = textRuns[0]?.color || fallbackColor;
+      const { w, h } = measureTextLines(lines, fontSize, et.manualWidth);
       const align = et.textAlign || 'center';
       const x = et.anchorX != null ? xFromAnchor(et.anchorX, w, align) : et.x;
       const y = et.y;
       if (et.editingId) {
-        // editing existing element
         setElements(prev => prev.map(el => el.id === et.editingId
-          ? { ...el, text, textRuns, w, h, x, y, fontSize, stroke: primaryColor, textAlign: align, manualWidth: et.manualWidth, _editing: false }
+          ? { ...el, text, textRuns, lines, w, h, x, y, fontSize, stroke: primaryColor, textAlign: align, manualWidth: et.manualWidth, _editing: false }
           : el));
       } else {
-        const el = { id: et.id, type: 'text', x, y, w, h, text, textRuns, fontSize, stroke: primaryColor, textAlign: align, manualWidth: et.manualWidth, seed: newSeed() };
+        const el = { id: et.id, type: 'text', x, y, w, h, text, textRuns, lines, fontSize, stroke: primaryColor, textAlign: align, manualWidth: et.manualWidth, seed: newSeed() };
         setElements(prev => [...prev, el]);
         setSelectedIds([el.id]);
         setTool('select');
@@ -556,8 +846,10 @@ function Canvas({
 
   const startEditingExistingText = (el, screenX, screenY) => {
     commitTextValue(editingTextRef.current);
-    const textRuns = ensureRunsFromElement(el, el.stroke || style.stroke || '#1e1e1e');
-    const text = textFromRuns(textRuns);
+    const fallbackColor = el.stroke || style.stroke || '#1e1e1e';
+    const lines = ensureLinesFromElement(el, fallbackColor);
+    const textRuns = runsFromLines(lines, fallbackColor);
+    const text = textFromLines(lines);
     setSelectedIds([]);
     setEditingText({
       id: el.id,
@@ -567,16 +859,22 @@ function Canvas({
       screenX, screenY,
       text,
       textRuns,
+      lines,
+      editorVersion: 0,
       fontSize: el.fontSize || 22,
-      stroke: textRuns[0]?.color || el.stroke || style.stroke || '#1e1e1e',
+      stroke: textRuns[0]?.color || fallbackColor,
       textAlign: el.textAlign || 'center',
       manualWidth: el.manualWidth,
     });
-    // hide the original while editing
     setElements(prev => prev.map(e => e.id === el.id ? { ...e, _editing: true } : e));
   };
 
   const onDoubleClick = (e) => {
+    const targetEl = e.target instanceof Element ? e.target : null;
+    if (targetEl?.closest?.('[data-wb-checkbox]')) {
+      e.preventDefault();
+      return;
+    }
     const rect = svgRef.current.getBoundingClientRect();
     const sx = e.clientX - rect.left, sy = e.clientY - rect.top;
     const w = toWorld(sx, sy);
@@ -595,14 +893,48 @@ function Canvas({
       screenX: sx, screenY: sy,
       text: '',
       textRuns: [],
+      lines: [{ kind: 'normal', runs: [] }],
+      editorVersion: 0,
       fontSize: 22,
       stroke: style.stroke,
       textAlign: style.textAlign || 'center',
     });
   };
 
+  const toggleLineChecked = (elementId, lineIndex) => {
+    setElements((prev) => prev.map((el) => {
+      if (el.id !== elementId || el.type !== 'text') return el;
+      const lines = ensureLinesFromElement(el, el.stroke || '#1e1e1e');
+      if (lineIndex < 0 || lineIndex >= lines.length) return el;
+      const target = lines[lineIndex];
+      if (target.kind !== 'checkbox') return el;
+      const nextLines = lines.slice();
+      nextLines[lineIndex] = { ...target, checked: !target.checked };
+      const fallbackColor = el.stroke || '#1e1e1e';
+      const nextRuns = runsFromLines(nextLines, fallbackColor);
+      return { ...el, lines: nextLines, textRuns: nextRuns, text: textFromLines(nextLines) };
+    }));
+    pushHistory();
+  };
+
   // Pointer / wheel handlers
   const onPointerDown = (e) => {
+    const targetEl = e.target instanceof Element ? e.target : null;
+    const checkboxNode = targetEl?.closest?.('[data-wb-checkbox]');
+    if (checkboxNode && e.button === 0) {
+      const raw = checkboxNode.getAttribute('data-wb-checkbox') || '';
+      const sep = raw.lastIndexOf(':');
+      if (sep > 0) {
+        const elementId = raw.slice(0, sep);
+        const lineIndex = parseInt(raw.slice(sep + 1), 10);
+        if (Number.isFinite(lineIndex)) {
+          e.preventDefault();
+          e.stopPropagation();
+          toggleLineChecked(elementId, lineIndex);
+          return;
+        }
+      }
+    }
     if (e.button === 1 || (e.button === 0 && (spaceDown || tool === 'hand'))) {
       setActiveEmbedId(null);
       setPanning(true);
@@ -638,6 +970,8 @@ function Canvas({
           screenX: sx, screenY: sy,
           text: '',
           textRuns: [],
+          lines: [{ kind: 'normal', runs: [] }],
+          editorVersion: 0,
           fontSize: 22,
           stroke: style.stroke,
           textAlign: style.textAlign || 'center',
@@ -864,20 +1198,22 @@ function Canvas({
   const commitText = () => {
     let et = editingTextRef.current;
     if (et && textEditorRef.current) {
-      const liveRuns = runsFromEditor(textEditorRef.current, et.stroke || style.stroke || '#1e1e1e');
-      et = { ...et, textRuns: liveRuns, text: textFromRuns(liveRuns) };
+      const fallbackColor = et.stroke || style.stroke || '#1e1e1e';
+      const liveLines = linesFromEditor(textEditorRef.current, fallbackColor);
+      const liveRuns = runsFromLines(liveLines, fallbackColor);
+      et = { ...et, lines: liveLines, textRuns: liveRuns, text: textFromLines(liveLines) };
     }
     commitTextValue(et);
-    // if editing existing, restore _editing flag off
     if (et && et.editingId) {
+      const etLines = Array.isArray(et.lines) ? et.lines : [];
+      const isEmpty = !et.text.trim() && !etLines.some((line) => line.kind !== 'normal');
       setElements(prev => prev.map(e => {
         if (e.id !== et.editingId) return e;
         const { _editing, ...rest } = e;
-        // if text was cleared, remove the element
-        if (!et.text.trim()) return null;
+        if (isEmpty) return null;
         return rest;
       }).filter(Boolean));
-      if (!et.text.trim()) pushHistory();
+      if (isEmpty) pushHistory();
     }
     setEditingText(null);
   };
@@ -1082,7 +1418,10 @@ function Canvas({
 
       {editingText ? (() => {
         const fs = editingText.fontSize;
-        const m = measureTextRuns(editingText.textRuns || [], fs, editingText.manualWidth);
+        const editingLines = editingText.lines && editingText.lines.length
+          ? editingText.lines
+          : [{ kind: 'normal', runs: [] }];
+        const m = measureTextLines(editingLines, fs, editingText.manualWidth);
         const w = Math.max(m.w, fs * 0.6) * view.scale;
         const h = Math.max(m.h, fs * 1.15) * view.scale;
         const align = editingText.textAlign || 'center';
@@ -1090,6 +1429,23 @@ function Canvas({
           ? xFromAnchor(editingText.anchorX, Math.max(m.w, fs * 0.6), align)
           : editingText.x;
         const yWorld = editingText.y;
+        const fallbackColor = editingText.stroke || style.stroke || '#1e1e1e';
+        const syncFromDom = (root) => {
+          const lines = linesFromEditor(root, fallbackColor);
+          const runs = runsFromLines(lines, fallbackColor);
+          const text = textFromLines(lines);
+          setEditingText((prev) => prev ? { ...prev, lines, textRuns: runs, text } : prev);
+          return { lines, runs, text };
+        };
+        const applyLinesUpdate = (nextLines, caret) => {
+          const lines = normalizeLines(nextLines, fallbackColor);
+          const runs = runsFromLines(lines, fallbackColor);
+          const text = textFromLines(lines);
+          pendingCaretRef.current = caret || null;
+          setEditingText((prev) => prev
+            ? { ...prev, lines, textRuns: runs, text, editorVersion: (prev.editorVersion || 0) + 1 }
+            : prev);
+        };
         return (
           <div
             ref={textEditorRef}
@@ -1098,20 +1454,91 @@ function Canvas({
             suppressContentEditableWarning
             spellCheck={false}
             onInput={(e) => {
-              const runs = runsFromEditor(e.currentTarget, editingText.stroke || style.stroke);
-              const text = textFromRuns(runs);
-              setEditingText((prev) => prev ? { ...prev, textRuns: runs, text } : prev);
+              const root = e.currentTarget;
+              const lines = linesFromEditor(root, fallbackColor);
+              const auto = detectListAutoformat(lines, fallbackColor);
+              if (auto) {
+                applyLinesUpdate(auto.lines, { lineIndex: auto.transformedIndex, position: 'start' });
+                return;
+              }
+              const runs = runsFromLines(lines, fallbackColor);
+              const text = textFromLines(lines);
+              setEditingText((prev) => prev ? { ...prev, lines, textRuns: runs, text } : prev);
             }}
-            onBlur={commitText}
+            onMouseDown={(e) => {
+              const target = e.target instanceof Element ? e.target : null;
+              const checkbox = target?.closest('[data-wb-checkbox]');
+              if (!checkbox) return;
+              e.preventDefault();
+              const lineEl = checkbox.closest('.wb-line');
+              const idx = lineEl ? parseInt(lineEl.dataset.lineIndex || '-1', 10) : -1;
+              if (!Number.isFinite(idx) || idx < 0) return;
+              const currentLines = linesFromEditor(e.currentTarget, fallbackColor);
+              const nextLines = currentLines.map((line, i) => i === idx && line.kind === 'checkbox'
+                ? { ...line, checked: !line.checked }
+                : line);
+              applyLinesUpdate(nextLines, { lineIndex: idx, position: 'end' });
+            }}
+            onBlur={() => {
+              if (isReseedingEditorRef.current) return;
+              commitText();
+            }}
             onKeyDown={(e) => {
-              if (e.key === 'Escape') { setEditingText(null); }
-              if (e.key === 'Enter' && e.metaKey) { e.preventDefault(); commitText(); }
-              if (e.key === 'Enter' && !e.metaKey) {
+              if (e.key === 'Escape') { setEditingText(null); return; }
+              if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); commitText(); return; }
+              if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault();
+                const root = e.currentTarget;
+                const lines = linesFromEditor(root, fallbackColor);
+                const caret = findEditingLineFromSelection(root);
+                if (!caret) {
+                  const nextLines = [...lines, { kind: 'normal', runs: [] }];
+                  applyLinesUpdate(nextLines, { lineIndex: nextLines.length - 1, position: 'start' });
+                  return;
+                }
+                const current = lines[caret.lineIndex];
+                if (!current) return;
+                const isListLine = current.kind !== 'normal';
+                const lineText = (current.runs || []).map((r) => r.text || '').join('');
+                if (isListLine && lineText.length === 0) {
+                  const nextLines = lines.slice();
+                  nextLines[caret.lineIndex] = { kind: 'normal', runs: [] };
+                  applyLinesUpdate(nextLines, { lineIndex: caret.lineIndex, position: 'start' });
+                  return;
+                }
+                const { before, after } = splitRunsAt(current.runs || [], caret.charOffset);
+                const headLine = { ...current, runs: normalizeTextRuns(before, fallbackColor) };
+                const tailLine = current.kind === 'checkbox'
+                  ? { kind: 'checkbox', checked: false, runs: normalizeTextRuns(after, fallbackColor) }
+                  : { kind: current.kind, runs: normalizeTextRuns(after, fallbackColor) };
+                const nextLines = [
+                  ...lines.slice(0, caret.lineIndex),
+                  headLine,
+                  tailLine,
+                  ...lines.slice(caret.lineIndex + 1),
+                ];
+                applyLinesUpdate(nextLines, { lineIndex: caret.lineIndex + 1, position: 'start' });
+                return;
+              }
+              if (e.key === 'Enter' && e.shiftKey) {
                 e.preventDefault();
                 insertEditorLineBreak(e.currentTarget);
-                const runs = runsFromEditor(e.currentTarget, editingText.stroke || style.stroke);
-                const text = textFromRuns(runs);
-                setEditingText((prev) => (prev ? { ...prev, textRuns: runs, text } : prev));
+                syncFromDom(e.currentTarget);
+                return;
+              }
+              if (e.key === 'Backspace') {
+                const root = e.currentTarget;
+                const caret = findEditingLineFromSelection(root);
+                if (!caret || caret.charOffset !== 0) return;
+                const sel = window.getSelection();
+                if (sel && !sel.isCollapsed) return;
+                const currentLines = linesFromEditor(root, fallbackColor);
+                const current = currentLines[caret.lineIndex];
+                if (!current || current.kind === 'normal') return;
+                e.preventDefault();
+                const nextLines = currentLines.slice();
+                nextLines[caret.lineIndex] = { kind: 'normal', runs: current.runs };
+                applyLinesUpdate(nextLines, { lineIndex: caret.lineIndex, position: 'start' });
               }
             }}
             style={{
@@ -1189,7 +1616,7 @@ function renderElement(rc, el, options = {}) {
     if (el._editing) return null;
     const fs = el.fontSize || 22;
     const align = el.textAlign || 'center';
-    const runs = ensureRunsFromElement(el, el.stroke || '#1e1e1e');
+    const lines = ensureLinesFromElement(el, el.stroke || '#1e1e1e');
     const fo = document.createElementNS('http://www.w3.org/2000/svg', 'foreignObject');
     fo.setAttribute('x', el.x);
     fo.setAttribute('y', el.y);
@@ -1198,7 +1625,7 @@ function renderElement(rc, el, options = {}) {
     fo.style.overflow = 'visible';
     const div = document.createElementNS('http://www.w3.org/1999/xhtml', 'div');
     div.style.cssText = `font-family:'Excalifont','Caveat','Comic Sans MS',cursive;font-weight:400;font-size:${fs}px;line-height:1.15;white-space:pre-wrap;word-break:break-word;text-align:${align};width:${el.manualWidth ? el.manualWidth + 'px' : 'max-content'};user-select:none;pointer-events:none;`;
-    div.innerHTML = runsToEditableHtml(runs);
+    div.innerHTML = linesToEditableHtml(lines, { interactiveCheckboxElementId: el.id });
     fo.appendChild(div);
     return fo;
   }
