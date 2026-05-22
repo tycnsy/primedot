@@ -83,13 +83,20 @@ The component fills its container — give the parent a fixed height (or `100vh`
 
 ## Persistence hooks
 
-The component already persists three things to `localStorage`:
+The integrated app persists whiteboard preferences to `localStorage` with board-scoped keys:
 
 | Key | Value |
 |---|---|
-| `wb-stroke-palette` | JSON array of hex strings |
-| `wb-fill-palette` | JSON array (`'transparent'` allowed) |
-| `wb-bg-color` | Hex string for the board background |
+| `wb-stroke-palette` | JSON array of stroke hex strings (account-scoped) |
+| `wb-board-${boardKey}-fill-palette` | JSON array (`'transparent'` allowed) |
+| `wb-board-${boardKey}-bg-color` | Hex string for the board background |
+| `wb-board-${boardKey}-view` | JSON object: `{ x: number, y: number, scale: number }` |
+
+`boardKey` resolves to the persisted board row id when available (falls back to `boardId`).
+
+Default stroke behavior now follows board background selection:
+- Light backgrounds default stroke to `#1e1e1e`.
+- The dark preset background (`#1e1e1e`) defaults stroke to `#ffffff`.
 
 Element data is **not** persisted yet. To add persistence, hook into `setElements` in `whiteboard-app.jsx` (search for `useState(() => makeStarterElements())`) and serialize/deserialize against your backend. Each element is a plain JSON-safe object with this shape:
 

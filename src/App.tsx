@@ -6,6 +6,7 @@ import Login from './pages/Login';
 import Projects from './pages/Projects';
 import ProjectDetail from './pages/ProjectDetail';
 import ProjectsPace from './pages/ProjectsPace';
+import Calendar from './pages/Calendar';
 import Timer from './pages/Timer';
 import Templates from './pages/Templates';
 import HabitsToday from './pages/HabitsToday';
@@ -90,6 +91,7 @@ export default function App() {
         >
           <Route path="/timer" element={<Timer />} />
           <Route path="/projects" element={<Projects />} />
+          <Route path="/calendar" element={<Calendar />} />
           <Route path="/projects/pace" element={<ProjectsPace />} />
           <Route path="/templates" element={<Templates />} />
           <Route path="/habits/today" element={<HabitsToday />} />

@@ -17,7 +17,7 @@ import {
   TweakToggle,
   TweakSlider,
 } from './tweaks-panel';
-import { useBoardElements, useBoardPalettes } from './useBoardPersistence';
+import { useBoardElements, useBoardPalettes, useBoardViewport } from './useBoardPersistence';
 import { useAuth } from '../contexts/AuthContext';
 import { parseYouTubeUrl, uploadBoardImage } from './whiteboardMedia';
 
@@ -29,6 +29,17 @@ const TWEAK_DEFAULTS = /*EDITMODE-BEGIN*/{
   "showGrid": true,
   "showLibrary": true
 }/*EDITMODE-END*/;
+const DARK_BOARD_PRESET = '#1e1e1e';
+const DEFAULT_STROKE_LIGHT_BG = '#1e1e1e';
+const DEFAULT_STROKE_DARK_BG = '#ffffff';
+
+function normalizeHexColor(color) {
+  return typeof color === 'string' ? color.trim().toLowerCase() : '';
+}
+
+function getDefaultStrokeForBackground(color) {
+  return normalizeHexColor(color) === DARK_BOARD_PRESET ? DEFAULT_STROKE_DARK_BG : DEFAULT_STROKE_LIGHT_BG;
+}
 
 function applyTweaks(t) {
   const root = document.documentElement;
@@ -180,7 +191,8 @@ export function Whiteboard({ boardId, onCanonicalSlugResolved, openBackgroundOnL
     canonicalSlug,
   } = useBoardElements(boardId, makeStarterElements);
   const [selectedIds, setSelectedIds] = useState([]);
-  const [view, setView] = useState({ x: 220, y: 80, scale: 1 });
+  const { initialView, saveView } = useBoardViewport(boardId, boardRowId);
+  const [view, setView] = useState(initialView);
   const canvasRef = useRef(null);
   const imageInputRef = useRef(null);
   const [isEditingText, setIsEditingText] = useState(false);
@@ -190,7 +202,7 @@ export function Whiteboard({ boardId, onCanonicalSlugResolved, openBackgroundOnL
   const [mediaBusy, setMediaBusy] = useState(false);
 
   const [style, setStyle] = useState({
-    stroke: '#ffffff',
+    stroke: DEFAULT_STROKE_LIGHT_BG,
     fill: 'transparent',
     fillStyle: 'hachure',
     strokeWidth: 2,
@@ -220,8 +232,18 @@ export function Whiteboard({ boardId, onCanonicalSlugResolved, openBackgroundOnL
   const showBgPicker = bgPickerOpen;
   const commitBgColor = (c) => {
     commitBgColorRaw(c);
+    setStyle((s) => ({ ...s, stroke: getDefaultStrokeForBackground(c) }));
     setBgPickerOpen(false);
   };
+  useEffect(() => {
+    setView(initialView);
+  }, [initialView]);
+  useEffect(() => {
+    saveView(view);
+  }, [saveView, view]);
+  useEffect(() => {
+    setStyle((s) => ({ ...s, stroke: getDefaultStrokeForBackground(bgColor) }));
+  }, [bgColor, boardId]);
   useEffect(() => {
     setBgPickerOpen(openBackgroundOnLoad);
   }, [openBackgroundOnLoad, boardId]);

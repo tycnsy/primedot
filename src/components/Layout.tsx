@@ -4,6 +4,7 @@ import { useAuth } from '../contexts/AuthContext';
 import PaceWidgetSync from './PaceWidgetSync';
 import ThemeToggle from './ThemeToggle';
 import RightPaceSidebar from './RightPaceSidebar';
+import RightPinnedWhiteboards from './RightPinnedWhiteboards';
 import { useHiddenPaceCards } from '../hooks/useHiddenPaceCards';
 
 const LEFT_STORAGE_KEY = 'prime:sidebar-collapsed';
@@ -73,9 +74,10 @@ export default function Layout() {
   const isTimerWide =
     location.pathname === '/timer' ||
     /^\/projects\/[^/]+\/timer$/.test(location.pathname);
+  const isCalendarWide = location.pathname === '/calendar';
   const contentClass = isFullBleed
     ? 'h-full w-full'
-    : isTimerWide
+    : isTimerWide || isCalendarWide
       ? 'w-full px-4 py-8 sm:px-6'
       : 'mx-auto max-w-5xl px-4 py-8 sm:px-6';
 
@@ -197,6 +199,12 @@ export default function Layout() {
             icon={<TemplatesIcon />}
           />
           <SidebarLink
+            to="/calendar"
+            label="Calendar"
+            collapsed={collapsed}
+            icon={<CalendarIcon />}
+          />
+          <SidebarLink
             to="/timer"
             label="Timer"
             collapsed={collapsed}
@@ -315,6 +323,7 @@ export default function Layout() {
                 {isHideMode ? 'Confirm hidden cards' : 'Hide cards'}
               </button>
             </div>
+            <RightPinnedWhiteboards />
           </div>
         )}
       </aside>
@@ -447,6 +456,30 @@ function TimerIcon() {
       <path d="M12 13l3 2" />
       <path d="M9 3h6" />
       <path d="M15 6l1.5-1.5" />
+    </svg>
+  );
+}
+
+function CalendarIcon() {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      width="16"
+      height="16"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.6"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden
+    >
+      <rect x="3" y="5" width="18" height="16" rx="1.8" />
+      <path d="M8 3v4" />
+      <path d="M16 3v4" />
+      <path d="M3 10h18" />
+      <path d="M8 14h3" />
+      <path d="M13 14h3" />
+      <path d="M8 18h3" />
     </svg>
   );
 }

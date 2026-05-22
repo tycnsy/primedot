@@ -1,0 +1,117 @@
+import { describe, expect, it } from 'vitest';
+import { buildRebalanceOutcome } from './pace';
+import { currentPace } from './calc';
+import type { Project, Task } from './types';
+
+const baseProject: Project = {
+  id: 'p1',
+  user_id: 'u1',
+  name: 'project',
+  video_length: 1200,
+  due_date: null,
+  buffer_modifier: 2,
+  tag: null,
+  sort_order: 0,
+  created_at: '2026-01-01T00:00:00Z',
+};
+
+const baseTask: Task = {
+  id: 't1',
+  project_id: 'p1',
+  name: 'task',
+  status: 'in_progress',
+  type: 'manual',
+  current_progress: 0,
+  scaling_modifier: null,
+  scripting_modifier: null,
+  script_length: null,
+  unit_count: null,
+  unit_length: null,
+  manual_length: 7200,
+  sort_order: 0,
+  created_at: '2026-01-01T00:00:00Z',
+};
+
+describe('buildRebalanceOutcome', () => {
+  it('computes rounded buffer and sets target so current pace matches modal offset', () => {
+    const now = new Date('2026-05-22T09:00:00.000Z');
+    const project = {
+      ...baseProject,
+      due_date: '2026-05-22T19:00:00.000Z',
+    };
+
+    const outcome = buildRebalanceOutcome([baseTask], project, 2 * 3600, now);
+    expect(outcome.ok).toBe(true);
+    if (!outcome.ok) return;
+
+    expect(outcome.result.targetDeadlineIso).toBe('2026-05-22T19:00:00.000Z');
+    expect(outcome.result.currentPaceSeconds).toBe(7200);
+    expect(outcome.result.hourDifferenceHours).toBe(8);
+    expect(outcome.result.remainingHoursUnbuffered).toBe(2);
+    expect(outcome.result.bufferModifier).toBe(4);
+
+    const rebalancedProject: Project = { ...project, buffer_modifier: outcome.result.bufferModifier };
+    const simulatedPace = {
+      id: 'pace1',
+      project_id: project.id,
+      target_deadline: outcome.result.targetDeadlineIso,
+      true_deadline: outcome.result.targetDeadlineIso,
+    };
+    expect(currentPace([baseTask], rebalancedProject, simulatedPace, now)).toBe(7200);
+  });
+
+  it('rounds buffer modifier to nearest tenth', () => {
+    const now = new Date('2026-05-22T09:00:00.000Z');
+    const project = {
+      ...baseProject,
+      due_date: '2026-05-22T12:30:00.000Z',
+    };
+
+    const outcome = buildRebalanceOutcome([baseTask], project, 3600, now);
+    expect(outcome.ok).toBe(true);
+    if (!outcome.ok) return;
+
+    expect(outcome.result.hourDifferenceHours).toBe(2.5);
+    expect(outcome.result.bufferModifier).toBe(1.3);
+    expect(outcome.result.targetDeadlineIso).toBe('2026-05-22T12:36:00.000Z');
+  });
+
+  it('fails when due date is missing', () => {
+    const outcome = buildRebalanceOutcome([baseTask], baseProject, 3600);
+    expect(outcome).toMatchObject({
+      ok: false,
+      reason: 'missing_due_date',
+    });
+  });
+
+  it('fails when remaining unbuffered hours are not positive', () => {
+    const project = {
+      ...baseProject,
+      due_date: '2026-05-22T19:00:00.000Z',
+    };
+    const completeTask: Task = {
+      ...baseTask,
+      current_progress: 7200,
+    };
+
+    const outcome = buildRebalanceOutcome([completeTask], project, 3600);
+    expect(outcome).toMatchObject({
+      ok: false,
+      reason: 'invalid_remaining_hours',
+    });
+  });
+
+  it('fails when computed buffer modifier is not positive', () => {
+    const now = new Date('2026-05-22T09:00:00.000Z');
+    const project = {
+      ...baseProject,
+      due_date: '2026-05-22T09:15:00.000Z',
+    };
+
+    const outcome = buildRebalanceOutcome([baseTask], project, 2 * 3600, now);
+    expect(outcome).toMatchObject({
+      ok: false,
+      reason: 'invalid_buffer_modifier',
+    });
+  });
+});

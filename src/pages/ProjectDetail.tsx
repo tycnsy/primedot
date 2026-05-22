@@ -26,6 +26,7 @@ import TaskForm from '../components/TaskForm';
 import TaskRow from '../components/TaskRow';
 import PaceDisplay from '../components/PaceDisplay';
 import PaceSettingsForm from '../components/PaceSettingsForm';
+import RebalanceModal from '../components/RebalanceModal';
 import {
   deriveTaskStatus,
   projectProgress,
@@ -88,6 +89,7 @@ export default function ProjectDetail() {
   const [templateError, setTemplateError] = useState<string | null>(null);
   const [orderedTasks, setOrderedTasks] = useState<Task[]>([]);
   const [draggingTaskId, setDraggingTaskId] = useState<string | null>(null);
+  const [showRebalanceModal, setShowRebalanceModal] = useState(false);
   const allTasks = tasks.data ?? [];
 
   useEffect(() => {
@@ -174,6 +176,13 @@ export default function ProjectDetail() {
             className="btn-ghost"
           >
             {showTemplateForm ? 'Close template form' : 'Save as template'}
+          </button>
+          <button
+            type="button"
+            onClick={() => setShowRebalanceModal(true)}
+            className="btn-ghost"
+          >
+            Rebalance
           </button>
           <button
             onClick={async () => {
@@ -452,6 +461,13 @@ export default function ProjectDetail() {
           />
         </div>
       )}
+      <RebalanceModal
+        open={showRebalanceModal}
+        project={p}
+        tasks={allTasks}
+        pace={pace.data ?? null}
+        onClose={() => setShowRebalanceModal(false)}
+      />
     </div>
   );
 }

@@ -12,10 +12,23 @@ function defaultFillPalette() {
   return ['transparent', '#ffffff', '#ffd9d9', '#d0e7ff', '#d3f0d9', '#ffe5b8', '#ead8ff'];
 }
 
+function defaultView() {
+  return { x: 220, y: 80, scale: 1 };
+}
+
 function normalizePalette(value, fallback) {
   if (!Array.isArray(value)) return fallback;
   const filtered = value.filter((entry) => typeof entry === 'string' && entry.trim().length > 0);
   return filtered.length ? filtered : fallback;
+}
+
+function normalizeView(value, fallback) {
+  if (!value || typeof value !== 'object') return fallback;
+  const x = Number(value.x);
+  const y = Number(value.y);
+  const scale = Number(value.scale);
+  if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(scale) || scale <= 0) return fallback;
+  return { x, y, scale };
 }
 
 function safeReadJSON(key, fallback) {
@@ -236,6 +249,74 @@ export function useBoardElements(boardId, makeStarterElements) {
   }, [flushSave]);
 
   return { elements, setElements, ready, boardRowId, canonicalSlug };
+}
+
+// useBoardViewport — board-scoped pan/zoom persistence in localStorage.
+// Returns { initialView, saveView } where saveView is debounced.
+export function useBoardViewport(boardId, boardStorageId) {
+  const scopedKey = boardStorageId || boardId || 'default';
+  const viewKey = `wb-board-${scopedKey}-view`;
+  const legacyViewKey = boardId ? `wb-${boardId}-view` : null;
+  const [initialView, setInitialView] = useState(() => defaultView());
+  const saveTimerRef = useRef(null);
+  const pendingViewRef = useRef(null);
+  const persistedRef = useRef(JSON.stringify(defaultView()));
+
+  useEffect(() => {
+    const primary = safeReadJSON(viewKey, null);
+    const legacy = legacyViewKey ? safeReadJSON(legacyViewKey, null) : null;
+    const resolved = normalizeView(primary ?? legacy, defaultView());
+    setInitialView(resolved);
+    persistedRef.current = JSON.stringify(resolved);
+
+    if (primary == null && legacy != null) {
+      safeWriteJSON(viewKey, resolved);
+      if (legacyViewKey) safeRemove(legacyViewKey);
+    }
+  }, [legacyViewKey, viewKey]);
+
+  const saveView = useCallback(
+    (nextView) => {
+      const normalized = normalizeView(nextView, defaultView());
+      const serialized = JSON.stringify(normalized);
+      if (serialized === persistedRef.current) {
+        if (saveTimerRef.current) {
+          clearTimeout(saveTimerRef.current);
+          saveTimerRef.current = null;
+        }
+        pendingViewRef.current = null;
+        return;
+      }
+
+      if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
+      pendingViewRef.current = normalized;
+      saveTimerRef.current = setTimeout(() => {
+        saveTimerRef.current = null;
+        const pending = pendingViewRef.current || normalized;
+        pendingViewRef.current = null;
+        safeWriteJSON(viewKey, pending);
+        persistedRef.current = JSON.stringify(pending);
+      }, SAVE_DEBOUNCE_MS);
+    },
+    [viewKey],
+  );
+
+  useEffect(() => {
+    return () => {
+      if (saveTimerRef.current) {
+        clearTimeout(saveTimerRef.current);
+        const pending = pendingViewRef.current;
+        saveTimerRef.current = null;
+        pendingViewRef.current = null;
+        if (pending) {
+          safeWriteJSON(viewKey, pending);
+          persistedRef.current = JSON.stringify(pending);
+        }
+      }
+    };
+  }, [viewKey]);
+
+  return { initialView, saveView };
 }
 
 // useBoardPalettes — account-level stroke palette + board-scoped fill/background.

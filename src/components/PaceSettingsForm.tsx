@@ -134,6 +134,20 @@ export default function PaceSettingsForm({ project, tasks, pace }: Props) {
     }
   };
 
+  const handleCopyDueDateToTrueDeadline = async () => {
+    setError(null);
+    if (!project.due_date) return setError('Set a project due date first.');
+    try {
+      await upsert.mutateAsync({
+        true_deadline: project.due_date,
+        target_deadline: pace?.target_deadline ?? project.due_date,
+      });
+      setTrueLocal(toLocalInput(project.due_date));
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Failed to copy due date.');
+    }
+  };
+
   const handleCopyTrueDeadlineToTarget = async () => {
     setError(null);
     if (!trueLocal) return setError('Pick a true deadline first.');
@@ -243,6 +257,12 @@ export default function PaceSettingsForm({ project, tasks, pace }: Props) {
             className="btn-ghost whitespace-nowrap"
           >
             Copy target
+          </button>
+          <button
+            onClick={handleCopyDueDateToTrueDeadline}
+            className="btn-ghost whitespace-nowrap"
+          >
+            Copy due date
           </button>
         </div>
       </div>

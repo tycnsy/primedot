@@ -18,6 +18,7 @@ export default function WhiteboardPage() {
   return (
     <div className="h-[calc(100vh-env(safe-area-inset-top,0px))] min-h-screen w-full">
       <Whiteboard
+        key={id}
         boardId={id}
         onCanonicalSlugResolved={handleCanonicalSlug}
         openBackgroundOnLoad={openBackgroundOnLoad}
