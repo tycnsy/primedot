@@ -1,4 +1,7 @@
-import React, { useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
+import { useAuth } from '../contexts/AuthContext';
+import { supabase } from '../lib/supabase';
 import { STROKE_PALETTE, FILL_PALETTE } from './whiteboard-canvas';
 
 // SVG icons
@@ -247,24 +250,111 @@ function SketchPreview({ level }) {
   return <svg viewBox="0 0 16 16" width="16" height="16">{paths[level]}</svg>;
 }
 
-// ============= Library shelf =============
-function Library({ onInsert }) {
-  const items = [
-    { id: 'sticky', label: 'Sticky note', icon: <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" strokeWidth="1.5"><path d="M4 5h12l4 4v10a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1z"/><path d="M16 5v4h4"/></svg> },
-    { id: 'flow', label: 'Flow node', icon: <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" strokeWidth="1.5"><rect x="3" y="9" width="8" height="6" rx="1"/><rect x="13" y="9" width="8" height="6" rx="1"/><path d="M11 12h2"/></svg> },
-    { id: 'vote', label: 'Dot vote', icon: <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" strokeWidth="1.5"><circle cx="7" cy="12" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="17" cy="12" r="2"/></svg> },
-    { id: 'frame', label: 'Frame', icon: <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" strokeWidth="1.5"><path d="M5 3v18M19 3v18M3 5h18M3 19h18"/></svg> },
-    { id: 'arrow-grid', label: '2x2 matrix', icon: <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" strokeWidth="1.5"><path d="M4 12h16M12 4v16"/></svg> },
-    { id: 'cluster', label: 'Cluster', icon: <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" strokeWidth="1.5"><circle cx="8" cy="9" r="2.5"/><circle cx="16" cy="9" r="2.5"/><circle cx="12" cy="16" r="2.5"/></svg> },
-  ];
+function formatUpdatedAt(value) {
+  const time = new Date(value).getTime();
+  if (!Number.isFinite(time)) return 'updated recently';
+  const deltaMs = Date.now() - time;
+  if (deltaMs < 60 * 1000) return 'updated just now';
+  const deltaMin = Math.floor(deltaMs / (60 * 1000));
+  if (deltaMin < 60) return `updated ${deltaMin}m ago`;
+  const deltaHr = Math.floor(deltaMin / 60);
+  if (deltaHr < 24) return `updated ${deltaHr}h ago`;
+  const deltaDay = Math.floor(deltaHr / 24);
+  if (deltaDay < 7) return `updated ${deltaDay}d ago`;
+  return `updated ${new Date(value).toLocaleDateString()}`;
+}
+
+// ============= Board switcher (bottom center) =============
+function BoardSwitcher({ currentBoardId }) {
+  const { user } = useAuth();
+  const navigate = useNavigate();
+  const [open, setOpen] = useState(false);
+  const [boards, setBoards] = useState([]);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+
+  useEffect(() => {
+    if (!user) {
+      setBoards([]);
+      setLoading(false);
+      setError('');
+      return;
+    }
+    let alive = true;
+    setLoading(true);
+    setError('');
+    void supabase
+      .from('whiteboards')
+      .select('id, slug, name, updated_at, created_at')
+      .eq('user_id', user.id)
+      .order('updated_at', { ascending: false })
+      .then(({ data, error: fetchError }) => {
+        if (!alive) return;
+        if (fetchError) {
+          setError(fetchError.message || 'Unable to load boards.');
+          setBoards([]);
+          setLoading(false);
+          return;
+        }
+        setBoards(Array.isArray(data) ? data : []);
+        setLoading(false);
+      });
+    return () => {
+      alive = false;
+    };
+  }, [user]);
+
+  const otherBoards = useMemo(
+    () => boards.filter((board) => board.slug && board.slug !== currentBoardId),
+    [boards, currentBoardId],
+  );
+
+  const goToBoard = (slug) => {
+    if (!slug) return;
+    navigate(`/whiteboards/${slug}`);
+    setOpen(false);
+  };
+
   return (
-    <div className="wb-library">
-      <div className="wb-library-label">Library</div>
-      {items.map(it => (
-        <button key={it.id} className="wb-library-item" title={it.label} onClick={() => onInsert(it.id)}>
-          {it.icon}
-        </button>
-      ))}
+    <div className={`wb-board-switcher${open ? ' is-open' : ''}`}>
+      <button
+        type="button"
+        className="wb-board-switcher-toggle"
+        aria-expanded={open}
+        onClick={() => setOpen((prev) => !prev)}
+      >
+        <span className="wb-board-switcher-label">Boards</span>
+        <span className="wb-board-switcher-count">{otherBoards.length}</span>
+        <span className="wb-board-switcher-chevron" aria-hidden="true">
+          {open ? '▾' : '▸'}
+        </span>
+      </button>
+      {open ? (
+        <div className="wb-board-switcher-panel">
+          {loading ? <p className="wb-board-switcher-status">Loading boards...</p> : null}
+          {!loading && error ? <p className="wb-board-switcher-status">{error}</p> : null}
+          {!loading && !error && otherBoards.length === 0 ? (
+            <p className="wb-board-switcher-status">No other boards yet.</p>
+          ) : null}
+          {!loading && !error && otherBoards.length > 0 ? (
+            <ul className="wb-board-switcher-list">
+              {otherBoards.map((board) => (
+                <li key={board.id}>
+                  <button
+                    type="button"
+                    className="wb-board-switcher-item"
+                    title={board.name || board.slug}
+                    onClick={() => goToBoard(board.slug)}
+                  >
+                    <span className="wb-board-switcher-item-name">{board.name || board.slug}</span>
+                    <span className="wb-board-switcher-item-meta">{formatUpdatedAt(board.updated_at)}</span>
+                  </button>
+                </li>
+              ))}
+            </ul>
+          ) : null}
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -350,7 +440,7 @@ function Hint() {
 export {
   Toolbar,
   PropsPanel,
-  Library,
+  BoardSwitcher,
   ZoomControls,
   HistoryControls,
   BrandChip,

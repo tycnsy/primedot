@@ -3,7 +3,7 @@ import { WBCanvas, newSeed, newId } from './whiteboard-canvas';
 import {
   Toolbar as WBToolbar,
   PropsPanel as WBPropsPanel,
-  Library as WBLibrary,
+  BoardSwitcher as WBBoardSwitcher,
   HistoryControls as WBHistoryControls,
   BrandChip as WBBrandChip,
   Hint as WBHint,
@@ -336,45 +336,6 @@ export function Whiteboard({ boardId, onCanonicalSlugResolved, openBackgroundOnL
     setHistoryTick(t => t + 1);
   };
 
-  // Library insert
-  const insertLibraryItem = (kind) => {
-    const { x: cx, y: cy } = getViewportCenter();
-    const newEls = [];
-    const seed = () => newSeed();
-    if (kind === 'sticky') {
-      newEls.push({ id: newId(), type: 'rectangle', x: cx - 60, y: cy - 60, w: 120, h: 120,
-        stroke: '#1e1e1e', fill: '#ffe5b8', fillStyle: 'solid', strokeWidth: 1.6, roughness: 1, edge: 'sharp', seed: seed() });
-      newEls.push({ id: newId(), type: 'text', x: cx - 50, y: cy - 40, w: 100, h: 40,
-        text: 'note', fontSize: 22, stroke: '#1e1e1e', seed: seed() });
-    } else if (kind === 'flow') {
-      newEls.push({ id: newId(), type: 'rectangle', x: cx - 130, y: cy - 30, w: 100, h: 60,
-        stroke: '#1e1e1e', fill: '#d0e7ff', fillStyle: 'hachure', strokeWidth: 1.6, roughness: 1, edge: 'round', seed: seed() });
-      newEls.push({ id: newId(), type: 'rectangle', x: cx + 30, y: cy - 30, w: 100, h: 60,
-        stroke: '#1e1e1e', fill: '#d0e7ff', fillStyle: 'hachure', strokeWidth: 1.6, roughness: 1, edge: 'round', seed: seed() });
-      newEls.push({ id: newId(), type: 'arrow', x: cx - 30, y: cy, w: 60, h: 0,
-        stroke: '#1e1e1e', strokeWidth: 1.6, roughness: 1, fill: 'transparent', seed: seed() });
-    } else if (kind === 'vote') {
-      for (let i = 0; i < 3; i++) {
-        newEls.push({ id: newId(), type: 'ellipse', x: cx - 50 + i * 35, y: cy - 10, w: 20, h: 20,
-          stroke: '#e03131', fill: '#e03131', fillStyle: 'solid', strokeWidth: 1.6, roughness: 1, seed: seed() });
-      }
-    } else if (kind === 'frame') {
-      newEls.push({ id: newId(), type: 'rectangle', x: cx - 200, y: cy - 130, w: 400, h: 260,
-        stroke: '#1e1e1e', fill: 'transparent', strokeWidth: 2, roughness: 0.5, edge: 'sharp', seed: seed() });
-    } else if (kind === 'arrow-grid') {
-      newEls.push({ id: newId(), type: 'line', x: cx - 100, y: cy, w: 200, h: 0, stroke: '#1e1e1e', strokeWidth: 1.6, roughness: 0.5, fill: 'transparent', seed: seed() });
-      newEls.push({ id: newId(), type: 'line', x: cx, y: cy - 100, w: 0, h: 200, stroke: '#1e1e1e', strokeWidth: 1.6, roughness: 0.5, fill: 'transparent', seed: seed() });
-    } else if (kind === 'cluster') {
-      const colors = ['#ffd9d9','#d0e7ff','#d3f0d9'];
-      for (let i = 0; i < 3; i++) {
-        newEls.push({ id: newId(), type: 'ellipse', x: cx - 80 + i * 50, y: cy - 40 + (i % 2) * 30, w: 80, h: 80,
-          stroke: '#1e1e1e', fill: colors[i], fillStyle: 'hachure', strokeWidth: 1.6, roughness: 1.5, seed: seed() });
-      }
-    }
-    setElements(prev => [...prev, ...newEls]);
-    pushHistory();
-  };
-
   const insertImageFromFile = useCallback(async (file) => {
     if (!file) return;
     if (!user || !boardRowId) {
@@ -621,7 +582,7 @@ export function Whiteboard({ boardId, onCanonicalSlugResolved, openBackgroundOnL
           onRemoveFillColor={removeFillColor}
         />
         <WBHistoryControls canUndo={canUndo} canRedo={canRedo} onUndo={undo} onRedo={redo}/>
-        {tweaks.showLibrary ? <WBLibrary onInsert={insertLibraryItem}/> : null}
+        {tweaks.showLibrary ? <WBBoardSwitcher currentBoardId={boardId}/> : null}
         <WBHint/>
         {showBgPicker ? (
           <BgPickerModal
@@ -677,7 +638,7 @@ export function Whiteboard({ boardId, onCanonicalSlugResolved, openBackgroundOnL
         <TweakSection title="Canvas">
           <TweakToggle label="Dot grid" value={tweaks.showGrid}
             onChange={(v) => setTweak('showGrid', v)}/>
-          <TweakToggle label="Library shelf" value={tweaks.showLibrary}
+          <TweakToggle label="Board switcher" value={tweaks.showLibrary}
             onChange={(v) => setTweak('showLibrary', v)}/>
         </TweakSection>
       </TweaksPanel>
