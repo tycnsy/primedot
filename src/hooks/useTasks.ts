@@ -1,4 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { paceRefreshQueryOptions } from './paceRefresh';
 import { supabase } from '../lib/supabase';
 import type { Task, TaskInput } from '../lib/types';
 
@@ -89,6 +90,7 @@ export function useTasks(projectId: string | undefined) {
   return useQuery({
     queryKey: tasksKey(projectId),
     enabled: !!projectId,
+    ...paceRefreshQueryOptions,
     queryFn: async (): Promise<Task[]> => {
       const { data, error } = await supabase
         .from('tasks')
@@ -118,6 +120,7 @@ export function useTasksForProjects(projectIds: string[]) {
   return useQuery({
     queryKey: tasksManyKey(projectIds),
     enabled: projectIds.length > 0,
+    ...paceRefreshQueryOptions,
     queryFn: async (): Promise<Task[]> => {
       const rows: Task[] = [];
 

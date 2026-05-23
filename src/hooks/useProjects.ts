@@ -1,4 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { paceRefreshQueryOptions } from './paceRefresh';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../contexts/AuthContext';
 import type { Project, ProjectInput, ProjectTag } from '../lib/types';
@@ -37,6 +38,7 @@ export function useProjects() {
   return useQuery({
     queryKey: projectsKey(user?.id),
     enabled: !!user,
+    ...paceRefreshQueryOptions,
     queryFn: async (): Promise<Project[]> => {
       const { data, error } = await supabase
         .from('projects')
@@ -66,6 +68,7 @@ export function useProject(id: string | undefined) {
   return useQuery({
     queryKey: projectKey(id ?? ''),
     enabled: !!id,
+    ...paceRefreshQueryOptions,
     queryFn: async (): Promise<Project | null> => {
       const { data, error } = await supabase
         .from('projects')

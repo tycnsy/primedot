@@ -1,4 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { paceRefreshQueryOptions } from './paceRefresh';
 import { supabase } from '../lib/supabase';
 import type { PaceSettings } from '../lib/types';
 
@@ -12,6 +13,7 @@ export function usePaceSettings(projectId: string | undefined) {
   return useQuery({
     queryKey: paceKey(projectId),
     enabled: !!projectId,
+    ...paceRefreshQueryOptions,
     queryFn: async (): Promise<PaceSettings | null> => {
       const { data, error } = await supabase
         .from('pace_settings')
@@ -28,6 +30,7 @@ export function usePaceSettingsForProjects(projectIds: string[]) {
   return useQuery({
     queryKey: paceManyKey(projectIds),
     enabled: projectIds.length > 0,
+    ...paceRefreshQueryOptions,
     queryFn: async (): Promise<Record<string, PaceSettings>> => {
       const rows: PaceSettings[] = [];
       for (let i = 0; i < projectIds.length; i += PROJECT_IDS_CHUNK_SIZE) {
