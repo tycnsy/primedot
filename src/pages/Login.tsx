@@ -1,8 +1,9 @@
-import { Navigate } from 'react-router-dom';
+import { Navigate, useLocation } from 'react-router-dom';
 import { FormEvent, useState } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 
 export default function Login() {
+  const location = useLocation();
   const {
     user,
     loading,
@@ -10,6 +11,14 @@ export default function Login() {
     signInWithPassword,
     signUpWithPassword,
   } = useAuth();
+  const nextPath =
+    typeof location.state === 'object' &&
+    location.state !== null &&
+    'from' in location.state &&
+    typeof location.state.from === 'string' &&
+    location.state.from.startsWith('/')
+      ? location.state.from
+      : '/projects';
   const [mode, setMode] = useState<'signin' | 'signup'>('signin');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -28,7 +37,7 @@ export default function Login() {
   }
 
   if (user) {
-    return <Navigate to="/projects" replace />;
+    return <Navigate to={nextPath} replace />;
   }
 
   const onGoogleClick = async () => {
