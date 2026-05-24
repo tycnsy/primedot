@@ -1,7 +1,8 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import type { PaceSettings, Project, Task } from '../lib/types';
 import { buildPacePatchFromBufferSeconds } from '../lib/pace';
 import { useClearPaceSettings, useUpsertPaceSettings } from '../hooks/usePaceSettings';
+import { useUpdateProject } from '../hooks/useProjects';
 
 interface Props {
   project: Project;
@@ -35,6 +36,7 @@ function tomorrowAtEightPmLocal(): string {
 export default function PaceSettingsForm({ project, tasks, pace }: Props) {
   const upsert = useUpsertPaceSettings(project.id);
   const clear = useClearPaceSettings(project.id);
+  const updateProject = useUpdateProject();
 
   // "Set pace" — number + unit toggle
   const [paceAmount, setPaceAmount] = useState('2');
@@ -49,8 +51,23 @@ export default function PaceSettingsForm({ project, tasks, pace }: Props) {
   const [trueLocal, setTrueLocal] = useState<string>(
     pace ? toLocalInput(pace.true_deadline) : '',
   );
+  const [hasManualLocalEdit, setHasManualLocalEdit] = useState(false);
 
   const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    setTargetLocal('');
+    setTrueLocal('');
+    setHasManualLocalEdit(false);
+  }, [project.id]);
+
+  useEffect(() => {
+    if (!pace || hasManualLocalEdit) return;
+    const nextTargetLocal = toLocalInput(pace.target_deadline);
+    const nextTrueLocal = toLocalInput(pace.true_deadline);
+    setTargetLocal(nextTargetLocal);
+    setTrueLocal(nextTrueLocal);
+  }, [project.id, pace, hasManualLocalEdit]);
 
   const handleSetPace = async () => {
     setError(null);
@@ -176,6 +193,26 @@ export default function PaceSettingsForm({ project, tasks, pace }: Props) {
     }
   };
 
+  const handleToggleSyncDueDate = async () => {
+    setError(null);
+    const next = !project.sync_true_deadline_with_due_date;
+    try {
+      await updateProject.mutateAsync({
+        id: project.id,
+        patch: next
+          ? {
+              sync_true_deadline_with_due_date: true,
+              due_date: project.due_date,
+            }
+          : {
+              sync_true_deadline_with_due_date: false,
+            },
+      });
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Failed to update deadline sync.');
+    }
+  };
+
   return (
     <div className="card space-y-4">
       <h2 className="text-lg font-semibold text-fg">Pace settings</h2>
@@ -217,7 +254,10 @@ export default function PaceSettingsForm({ project, tasks, pace }: Props) {
             type="datetime-local"
             className="input flex-1"
             value={targetLocal}
-            onChange={(e) => setTargetLocal(e.target.value)}
+            onChange={(e) => {
+              setHasManualLocalEdit(true);
+              setTargetLocal(e.target.value);
+            }}
           />
           <button onClick={handleSetTarget} className="btn-secondary whitespace-nowrap">
             Set target
@@ -244,7 +284,10 @@ export default function PaceSettingsForm({ project, tasks, pace }: Props) {
             type="datetime-local"
             className="input flex-1"
             value={trueLocal}
-            onChange={(e) => setTrueLocal(e.target.value)}
+            onChange={(e) => {
+              setHasManualLocalEdit(true);
+              setTrueLocal(e.target.value);
+            }}
           />
           <button
             onClick={handleSetTrueDeadline}
@@ -267,7 +310,34 @@ export default function PaceSettingsForm({ project, tasks, pace }: Props) {
         </div>
       </div>
 
-      <div className="flex justify-end">
+      <div className="flex items-center justify-between">
+        <button
+          type="button"
+          onClick={handleToggleSyncDueDate}
+          disabled={updateProject.isPending}
+          aria-label="Sync True Deadline with Due Date"
+          aria-pressed={project.sync_true_deadline_with_due_date}
+          title="Sync True Deadline with Due Date"
+          className="group inline-flex items-center rounded-full focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-border disabled:cursor-not-allowed disabled:opacity-60"
+        >
+          <span className="sr-only">Sync True Deadline with Due Date</span>
+          <span
+            className={`relative inline-flex h-6 w-11 items-center rounded-full border transition-colors ${
+              project.sync_true_deadline_with_due_date
+                ? 'border-border bg-fg/15'
+                : 'border-border/70 bg-surface2/60'
+            }`}
+          >
+            <span
+              className={`inline-block h-4 w-4 transform rounded-full bg-fg transition-transform ${
+                project.sync_true_deadline_with_due_date
+                  ? 'translate-x-6'
+                  : 'translate-x-1'
+              }`}
+            />
+          </span>
+        </button>
+
         <button
           type="button"
           onClick={handleResetPace}

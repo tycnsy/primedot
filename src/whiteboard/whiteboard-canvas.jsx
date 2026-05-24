@@ -273,6 +273,9 @@ function linesToEditableHtml(lines, options = {}) {
   return safeLines.map((line, i) => {
     const kind = line.kind || 'normal';
     const checked = kind === 'checkbox' && line.checked ? '1' : '0';
+    const checkboxDataAttr = interactiveId
+      ? ` data-wb-checkbox="${escapeHtml(String(interactiveId))}:${i}"`
+      : '';
     const contentHtml = renderLineContentHtml(line.runs || []);
     if (kind === 'normal') {
       return `<div class="wb-line" data-kind="normal" data-line-index="${i}"><span class="wb-line-content">${contentHtml}</span></div>`;
@@ -283,10 +286,7 @@ function linesToEditableHtml(lines, options = {}) {
     } else if (kind === 'numbered') {
       prefixHtml = `<span class="wb-line-prefix" contenteditable="false">${numberedSeq[i]}.</span>`;
     } else if (kind === 'checkbox') {
-      const dataAttr = interactiveId
-        ? ` data-wb-checkbox="${escapeHtml(String(interactiveId))}:${i}"`
-        : '';
-      prefixHtml = `<span class="wb-line-prefix wb-checkbox" contenteditable="false" data-checked="${checked}"${dataAttr}></span>`;
+      prefixHtml = `<span class="wb-line-prefix wb-checkbox" contenteditable="false" data-checked="${checked}"${checkboxDataAttr}></span>`;
     }
     return `<div class="wb-line" data-kind="${kind}" data-line-index="${i}" data-checked="${checked}">${prefixHtml}<span class="wb-line-content">${contentHtml}</span></div>`;
   }).join('');
@@ -799,7 +799,9 @@ function Canvas({
       : [{ kind: 'normal', runs: [] }];
     isReseedingEditorRef.current = true;
     try {
-      root.innerHTML = linesToEditableHtml(lines);
+      root.innerHTML = linesToEditableHtml(lines, {
+        interactiveCheckboxElementId: editingText.editingId || editingText.id,
+      });
       root.focus();
       const pending = pendingCaretRef.current;
       pendingCaretRef.current = null;
@@ -920,6 +922,7 @@ function Canvas({
   // Pointer / wheel handlers
   const onPointerDown = (e) => {
     const targetEl = e.target instanceof Element ? e.target : null;
+    let checkboxTarget = null;
     const checkboxNode = targetEl?.closest?.('[data-wb-checkbox]');
     if (checkboxNode && e.button === 0) {
       const raw = checkboxNode.getAttribute('data-wb-checkbox') || '';
@@ -927,13 +930,28 @@ function Canvas({
       if (sep > 0) {
         const elementId = raw.slice(0, sep);
         const lineIndex = parseInt(raw.slice(sep + 1), 10);
-        if (Number.isFinite(lineIndex)) {
-          e.preventDefault();
-          e.stopPropagation();
-          toggleLineChecked(elementId, lineIndex);
-          return;
+        if (Number.isFinite(lineIndex)) checkboxTarget = { elementId, lineIndex, source: 'direct-attr' };
+      }
+    }
+    if (!checkboxTarget && e.button === 0) {
+      const lineEl = targetEl?.closest?.('.wb-line[data-kind="checkbox"]');
+      const lineIndex = lineEl ? parseInt(lineEl.dataset.lineIndex || '-1', 10) : -1;
+      if (lineEl && Number.isFinite(lineIndex) && lineIndex >= 0) {
+        const contentEl = lineEl.querySelector(':scope > .wb-line-content');
+        const contentRect = contentEl?.getBoundingClientRect?.();
+        const clickedPrefix = contentRect ? e.clientX < contentRect.left : false;
+        if (clickedPrefix) {
+          const foreignObjectNode = lineEl.closest('foreignObject');
+          const elementId = foreignObjectNode?.dataset?.elId || null;
+          if (elementId) checkboxTarget = { elementId, lineIndex, source: 'line-prefix-fallback' };
         }
       }
+    }
+    if (checkboxTarget && e.button === 0) {
+      e.preventDefault();
+      e.stopPropagation();
+      toggleLineChecked(checkboxTarget.elementId, checkboxTarget.lineIndex);
+      return;
     }
     if (e.button === 1 || (e.button === 0 && (spaceDown || tool === 'hand'))) {
       setActiveEmbedId(null);
@@ -1468,9 +1486,16 @@ function Canvas({
             onMouseDown={(e) => {
               const target = e.target instanceof Element ? e.target : null;
               const checkbox = target?.closest('[data-wb-checkbox]');
-              if (!checkbox) return;
+              const lineEl = checkbox?.closest('.wb-line[data-kind="checkbox"]')
+                || target?.closest('.wb-line[data-kind="checkbox"]')
+                || null;
+              const contentEl = lineEl?.querySelector(':scope > .wb-line-content') || null;
+              const contentRect = contentEl?.getBoundingClientRect?.() || null;
+              const clickedPrefix = checkbox
+                ? true
+                : (lineEl && contentRect ? e.clientX < contentRect.left : false);
+              if (!lineEl || !clickedPrefix) return;
               e.preventDefault();
-              const lineEl = checkbox.closest('.wb-line');
               const idx = lineEl ? parseInt(lineEl.dataset.lineIndex || '-1', 10) : -1;
               if (!Number.isFinite(idx) || idx < 0) return;
               const currentLines = linesFromEditor(e.currentTarget, fallbackColor);
@@ -1624,7 +1649,7 @@ function renderElement(rc, el, options = {}) {
     fo.setAttribute('height', (el.h || 0) + 4);
     fo.style.overflow = 'visible';
     const div = document.createElementNS('http://www.w3.org/1999/xhtml', 'div');
-    div.style.cssText = `font-family:'Excalifont','Caveat','Comic Sans MS',cursive;font-weight:400;font-size:${fs}px;line-height:1.15;white-space:pre-wrap;word-break:break-word;text-align:${align};width:${el.manualWidth ? el.manualWidth + 'px' : 'max-content'};user-select:none;pointer-events:none;`;
+    div.style.cssText = `font-family:'Excalifont','Caveat','Comic Sans MS',cursive;font-weight:400;font-size:${fs}px;line-height:1.15;white-space:pre-wrap;word-break:break-word;text-align:${align};width:${el.manualWidth ? el.manualWidth + 'px' : 'max-content'};color:${normalizeColor(el.stroke || '#1e1e1e')};user-select:none;pointer-events:auto;`;
     div.innerHTML = linesToEditableHtml(lines, { interactiveCheckboxElementId: el.id });
     fo.appendChild(div);
     return fo;

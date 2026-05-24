@@ -9,6 +9,7 @@ const baseProject: Project = {
   name: 'project',
   video_length: 1200,
   due_date: null,
+  sync_true_deadline_with_due_date: false,
   buffer_modifier: 2,
   tag: null,
   sort_order: 0,

@@ -85,8 +85,8 @@ export default function RightPaceSidebar({
       <div className="flex-1 space-y-2 overflow-y-auto p-2">
         {isHideMode ? (
           <div className="rounded-md border border-border/70 bg-surface2/40 px-2.5 py-2 text-[11px] text-muted">
-            Select cards to hide from this Pace sidebar and the Timer page, then
-            confirm below.
+            Select cards to hide from Pace Grid, this sidebar, and the Timer page,
+            then confirm below.
           </div>
         ) : null}
 

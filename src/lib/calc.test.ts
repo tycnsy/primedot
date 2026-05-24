@@ -22,6 +22,7 @@ const baseProject: Project = {
   name: 'demo',
   video_length: 1200,
   due_date: null,
+  sync_true_deadline_with_due_date: false,
   buffer_modifier: 3,
   tag: null,
   sort_order: 0,

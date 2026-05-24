@@ -2,13 +2,21 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { paceRefreshQueryOptions } from './paceRefresh';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../contexts/AuthContext';
-import type { Project, ProjectInput, ProjectTag } from '../lib/types';
+import type {
+  PaceSettings,
+  Project,
+  ProjectInput,
+  ProjectTag,
+  ProjectUpdateInput,
+} from '../lib/types';
 
 const projectsKey = (userId: string | undefined) =>
   ['projects', userId] as const;
 const projectKey = (id: string) => ['project', id] as const;
 const projectTagsKey = (userId: string | undefined) =>
   ['project_tags', userId] as const;
+const paceKey = (projectId: string | undefined) =>
+  ['pace_settings', projectId] as const;
 
 function isMissingSortOrderColumn(error: unknown): boolean {
   if (!error || typeof error !== 'object') return false;
@@ -31,6 +39,52 @@ async function ensureProjectTag(userId: string, tag: string | null): Promise<voi
     .from('project_tags')
     .upsert({ user_id: userId, name: tag }, { onConflict: 'user_id,name' });
   if (error) throw error;
+}
+
+async function getPaceSettings(projectId: string): Promise<PaceSettings | null> {
+  const { data, error } = await supabase
+    .from('pace_settings')
+    .select('*')
+    .eq('project_id', projectId)
+    .maybeSingle();
+  if (error) throw error;
+  return (data ?? null) as PaceSettings | null;
+}
+
+async function syncTrueDeadlineWithDueDate(
+  projectId: string,
+  dueDate: string | null,
+): Promise<PaceSettings | null> {
+  const existing = await getPaceSettings(projectId);
+  if (!dueDate) {
+    if (!existing) return null;
+    const { error } = await supabase.from('pace_settings').delete().eq('id', existing.id);
+    if (error) throw error;
+    return null;
+  }
+
+  if (existing) {
+    const { data, error } = await supabase
+      .from('pace_settings')
+      .update({ true_deadline: dueDate })
+      .eq('id', existing.id)
+      .select('*')
+      .single();
+    if (error) throw error;
+    return data as PaceSettings;
+  }
+
+  const { data, error } = await supabase
+    .from('pace_settings')
+    .insert({
+      project_id: projectId,
+      target_deadline: dueDate,
+      true_deadline: dueDate,
+    })
+    .select('*')
+    .single();
+  if (error) throw error;
+  return data as PaceSettings;
 }
 
 export function useProjects() {
@@ -144,7 +198,7 @@ export function useUpdateProject() {
       patch,
     }: {
       id: string;
-      patch: Partial<ProjectInput>;
+      patch: ProjectUpdateInput;
     }) => {
       const normalizedPatch =
         patch.tag === undefined ? patch : { ...patch, tag: normalizeTag(patch.tag) };
@@ -157,12 +211,42 @@ export function useUpdateProject() {
         .select()
         .single();
       if (error) throw error;
-      return data as Project;
+      const project = data as Project;
+      const dueDateProvided = Object.prototype.hasOwnProperty.call(
+        normalizedPatch,
+        'due_date',
+      );
+      const syncToggleEnabled = normalizedPatch.sync_true_deadline_with_due_date === true;
+      const shouldSyncTrueDeadline =
+        project.sync_true_deadline_with_due_date && (dueDateProvided || syncToggleEnabled);
+      const syncedPace = shouldSyncTrueDeadline
+        ? await syncTrueDeadlineWithDueDate(project.id, project.due_date)
+        : undefined;
+      return { project, syncedPace };
     },
-    onSuccess: (project) => {
+    onSuccess: ({ project, syncedPace }) => {
       qc.invalidateQueries({ queryKey: projectsKey(user?.id) });
       qc.invalidateQueries({ queryKey: projectKey(project.id) });
       qc.invalidateQueries({ queryKey: projectTagsKey(user?.id) });
+      if (syncedPace === undefined) return;
+      if (syncedPace) {
+        qc.setQueryData<PaceSettings | null>(paceKey(project.id), syncedPace);
+        qc.setQueriesData<Record<string, PaceSettings>>(
+          { queryKey: ['pace_settings', 'many'] },
+          (prev) => ({ ...(prev ?? {}), [project.id]: syncedPace }),
+        );
+        return;
+      }
+      qc.setQueryData<PaceSettings | null>(paceKey(project.id), null);
+      qc.setQueriesData<Record<string, PaceSettings>>(
+        { queryKey: ['pace_settings', 'many'] },
+        (prev) => {
+          if (!prev || !prev[project.id]) return prev ?? {};
+          const next = { ...prev };
+          delete next[project.id];
+          return next;
+        },
+      );
     },
   });
 }

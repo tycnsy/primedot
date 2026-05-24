@@ -7,6 +7,7 @@ export interface Project {
   name: string;
   video_length: number;
   due_date: string | null;
+  sync_true_deadline_with_due_date: boolean;
   buffer_modifier: number;
   tag: string | null;
   sort_order: number;
@@ -73,6 +74,18 @@ export interface TemplateTask {
 export type ProjectInput = Pick<
   Project,
   'name' | 'video_length' | 'due_date' | 'buffer_modifier' | 'tag'
+>;
+
+export type ProjectUpdateInput = Partial<
+  Pick<
+    Project,
+    | 'name'
+    | 'video_length'
+    | 'due_date'
+    | 'buffer_modifier'
+    | 'tag'
+    | 'sync_true_deadline_with_due_date'
+  >
 >;
 
 export type TaskInput = Omit<Task, 'id' | 'created_at' | 'sort_order'>;
