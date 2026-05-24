@@ -5,8 +5,6 @@ import { buildRebalanceOutcome } from '../lib/pace';
 import type { PaceSettings, Project, Task } from '../lib/types';
 import ModalShell from './goals/ModalShell';
 
-const WEEK_IN_MS = 7 * 86_400_000;
-
 interface RebalanceModalProps {
   open: boolean;
   project: Project;
@@ -65,7 +63,8 @@ export default function RebalanceModal({
       return;
     }
 
-    const { bufferModifier, targetDeadlineIso, targetDeadline } = outcome.result;
+    const { bufferModifier, targetDeadlineIso } = outcome.result;
+    const syncedDeadlineIso = pace?.true_deadline ?? targetDeadlineIso;
 
     try {
       await updateProject.mutateAsync({
@@ -74,9 +73,8 @@ export default function RebalanceModal({
       });
 
       await upsertPace.mutateAsync({
-        target_deadline: targetDeadlineIso,
-        true_deadline:
-          pace?.true_deadline ?? new Date(targetDeadline.getTime() + WEEK_IN_MS).toISOString(),
+        target_deadline: syncedDeadlineIso,
+        true_deadline: syncedDeadlineIso,
       });
 
       setError(null);
@@ -151,7 +149,7 @@ export default function RebalanceModal({
             </p>
             <p>
               New buffer modifier:{' '}
-              <span className="font-medium">×{outcome.result.bufferModifier.toFixed(1)}</span>
+              <span className="font-medium">×{outcome.result.bufferModifier.toFixed(2)}</span>
             </p>
           </div>
         ) : (

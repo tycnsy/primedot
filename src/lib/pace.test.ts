@@ -60,7 +60,7 @@ describe('buildRebalanceOutcome', () => {
     expect(currentPace([baseTask], rebalancedProject, simulatedPace, now)).toBe(7200);
   });
 
-  it('rounds buffer modifier to nearest tenth', () => {
+  it('rounds buffer modifier to nearest hundredth', () => {
     const now = new Date('2026-05-22T09:00:00.000Z');
     const project = {
       ...baseProject,
@@ -72,8 +72,8 @@ describe('buildRebalanceOutcome', () => {
     if (!outcome.ok) return;
 
     expect(outcome.result.hourDifferenceHours).toBe(2.5);
-    expect(outcome.result.bufferModifier).toBe(1.3);
-    expect(outcome.result.targetDeadlineIso).toBe('2026-05-22T12:36:00.000Z');
+    expect(outcome.result.bufferModifier).toBe(1.25);
+    expect(outcome.result.targetDeadlineIso).toBe('2026-05-22T12:30:00.000Z');
   });
 
   it('fails when due date is missing', () => {

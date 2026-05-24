@@ -100,7 +100,7 @@ export function buildRebalanceOutcome(
   }
 
   const rawBufferModifier = hourDifferenceHours / remainingHoursUnbuffered;
-  const bufferModifier = Math.round(rawBufferModifier * 10) / 10;
+  const bufferModifier = Math.round(rawBufferModifier * 100) / 100;
   if (!Number.isFinite(bufferModifier) || bufferModifier <= 0) {
     return {
       ok: false,
