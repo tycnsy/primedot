@@ -32,11 +32,15 @@ type TaskStatusDraft = Pick<
 
 function isMissingTaskSortOrderColumn(error: unknown): boolean {
   if (!error || typeof error !== 'object') return false;
+  const code = 'code' in error ? String(error.code ?? '') : '';
   const message = 'message' in error ? String(error.message ?? '') : '';
   const details = 'details' in error ? String(error.details ?? '') : '';
   const hint = 'hint' in error ? String(error.hint ?? '') : '';
   const combined = `${message} ${details} ${hint}`.toLowerCase();
-  return combined.includes('sort_order') && combined.includes('column');
+  const mentionsSortOrder = combined.includes('sort_order');
+  const hasUndefinedColumnSignal =
+    code === '42703' || (combined.includes('column') && combined.includes('does not exist'));
+  return mentionsSortOrder && hasUndefinedColumnSignal;
 }
 
 function upsertTask(tasks: Task[] | undefined, task: Task): Task[] {
@@ -46,6 +50,23 @@ function upsertTask(tasks: Task[] | undefined, task: Task): Task[] {
   const next = [...tasks];
   next[idx] = task;
   return next;
+}
+
+function applyProjectTaskOrder(tasks: Task[], taskIds: string[], projectId: string): Task[] {
+  const orderById = new Map(taskIds.map((id, index) => [id, index]));
+  return [...tasks]
+    .map((task) => {
+      if (task.project_id !== projectId) return task;
+      const nextOrder = orderById.get(task.id);
+      if (typeof nextOrder !== 'number') return task;
+      return { ...task, sort_order: nextOrder };
+    })
+    .sort((a, b) => {
+      if (a.project_id !== b.project_id) return a.project_id.localeCompare(b.project_id);
+      if (a.project_id !== projectId) return 0;
+      if (a.sort_order !== b.sort_order) return a.sort_order - b.sort_order;
+      return a.created_at.localeCompare(b.created_at);
+    });
 }
 
 async function fetchProjectVideoLength(projectId: string): Promise<number> {
@@ -178,22 +199,29 @@ export function useCreateTask(projectId: string) {
     mutationFn: async (input: TaskInput) => {
       const projectVideoLength = await fetchProjectVideoLength(projectId);
       const nextStatus = deriveStatusFromDraft(input, projectVideoLength);
-      const { data: lastTask, error: lastTaskError } = await supabase
+      const { data: existingSortOrders, error: sortOrderError } = await supabase
         .from('tasks')
         .select('sort_order')
-        .eq('project_id', projectId)
-        .order('sort_order', { ascending: false })
-        .limit(1)
-        .maybeSingle();
-      const isLegacyDb = isMissingTaskSortOrderColumn(lastTaskError);
-      if (lastTaskError && !isLegacyDb) throw lastTaskError;
+        .eq('project_id', projectId);
+      const isLegacyDb = isMissingTaskSortOrderColumn(sortOrderError);
+      if (sortOrderError && !isLegacyDb) throw sortOrderError;
+
+      const nextSortOrder = isLegacyDb
+        ? undefined
+        : ((existingSortOrders ?? []) as { sort_order: number | null }[]).reduce(
+            (max, row) =>
+              typeof row.sort_order === 'number' && Number.isFinite(row.sort_order)
+                ? Math.max(max, row.sort_order)
+                : max,
+            -1,
+          ) + 1;
 
       const { data, error } = await supabase
         .from('tasks')
         .insert({
           ...input,
           status: nextStatus,
-          ...(isLegacyDb ? {} : { sort_order: (lastTask?.sort_order ?? -1) + 1 }),
+          ...(typeof nextSortOrder === 'number' ? { sort_order: nextSortOrder } : {}),
         })
         .select()
         .single();
@@ -643,6 +671,7 @@ export function useReorderTasks(projectId: string) {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: async (taskIds: string[]) => {
+      if (taskIds.length === 0) return taskIds;
       const updates = await Promise.all(
         taskIds.map((id, index) =>
           supabase
@@ -655,31 +684,30 @@ export function useReorderTasks(projectId: string) {
       );
 
       const firstError = updates.find((result) => result.error)?.error;
-      if (firstError && isMissingTaskSortOrderColumn(firstError)) return taskIds;
       if (firstError) throw firstError;
       return taskIds;
     },
     onMutate: async (taskIds) => {
       await qc.cancelQueries({ queryKey: tasksKey(projectId) });
       const previous = qc.getQueryData<Task[]>(tasksKey(projectId));
+      const previousMany = qc.getQueriesData<Task[]>({ queryKey: ['tasks', 'many'] });
 
       if (previous) {
-        const byId = new Map(previous.map((task) => [task.id, task]));
-        const next = taskIds
-          .map((id, index) => {
-            const task = byId.get(id);
-            if (!task) return null;
-            return { ...task, sort_order: index };
-          })
-          .filter((task): task is Task => !!task);
+        const next = applyProjectTaskOrder(previous, taskIds, projectId);
         qc.setQueryData(tasksKey(projectId), next);
       }
+      qc.setQueriesData<Task[]>({ queryKey: ['tasks', 'many'] }, (prev) =>
+        prev ? applyProjectTaskOrder(prev, taskIds, projectId) : prev,
+      );
 
-      return { previous };
+      return { previous, previousMany };
     },
     onError: (_err, _taskIds, context) => {
       if (context?.previous) {
         qc.setQueryData(tasksKey(projectId), context.previous);
+      }
+      for (const [queryKey, data] of context?.previousMany ?? []) {
+        qc.setQueryData(queryKey, data);
       }
     },
     onSettled: () => {

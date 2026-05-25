@@ -70,6 +70,14 @@ function reorderTasks(tasks: Task[], sourceId: string, targetId: string): Task[]
   return next;
 }
 
+function hasSameTaskIds(a: Task[], b: Task[]): boolean {
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i += 1) {
+    if (a[i].id !== b[i].id) return false;
+  }
+  return true;
+}
+
 export default function ProjectDetail() {
   const { id } = useParams();
   const [searchParams, setSearchParams] = useSearchParams();
@@ -99,6 +107,7 @@ export default function ProjectDetail() {
   const [templateError, setTemplateError] = useState<string | null>(null);
   const [orderedTasks, setOrderedTasks] = useState<Task[]>([]);
   const [draggingTaskId, setDraggingTaskId] = useState<string | null>(null);
+  const [reorderError, setReorderError] = useState<string | null>(null);
   const [showRebalanceModal, setShowRebalanceModal] = useState(false);
   const [complexSettingsFor, setComplexSettingsFor] = useState<{
     parent: Task;
@@ -146,8 +155,16 @@ export default function ProjectDetail() {
       const subs = subtasksByParent.get(top.id);
       if (subs) merged.push(...subs);
     }
+    if (hasSameTaskIds(merged, orderedTasks)) return;
     setOrderedTasks(merged);
-    reorderTasksMutation.mutate(nextTop.map((t) => t.id));
+    setReorderError(null);
+    reorderTasksMutation.mutate(merged.map((t) => t.id), {
+      onError: (error) => {
+        setReorderError(
+          error instanceof Error ? error.message : 'Failed to reorder tasks.',
+        );
+      },
+    });
   };
 
   const handleDropOnSubtask = (targetId: string) => {
@@ -173,8 +190,16 @@ export default function ProjectDetail() {
         if (subs) merged.push(...subs);
       }
     }
+    if (hasSameTaskIds(merged, orderedTasks)) return;
     setOrderedTasks(merged);
-    reorderTasksMutation.mutate(nextSiblings.map((t) => t.id));
+    setReorderError(null);
+    reorderTasksMutation.mutate(merged.map((t) => t.id), {
+      onError: (error) => {
+        setReorderError(
+          error instanceof Error ? error.message : 'Failed to reorder tasks.',
+        );
+      },
+    });
   };
 
   const attemptCompress = (parent: Task) => {
@@ -502,6 +527,9 @@ export default function ProjectDetail() {
                   <p className="text-xs text-muted">
                     Drag tasks to reorder them.
                   </p>
+                ) : null}
+                {reorderError ? (
+                  <p className="text-xs text-danger">{reorderError}</p>
                 ) : null}
                 <div className="space-y-2">
                   {topLevelTasks.map((t) => {

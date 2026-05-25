@@ -71,14 +71,32 @@ Local dev reads them from `.env.local`. Vercel reads them from the project's Env
 
 ## Supabase setup (one-time)
 
-### 1. Run the migration
+### 1. Run the migrations
 
 Open your Supabase project → **SQL editor** and run:
 
+Run all SQL files in `supabase/migrations` in numeric order (`001` -> latest).
+For a manual setup, run at least:
+
 1. `[supabase/migrations/001_init.sql](supabase/migrations/001_init.sql)`
 2. `[supabase/migrations/002_templates.sql](supabase/migrations/002_templates.sql)`
+3. `[supabase/migrations/003_project_sort_order.sql](supabase/migrations/003_project_sort_order.sql)`
+4. `[supabase/migrations/004_task_sort_order.sql](supabase/migrations/004_task_sort_order.sql)`
+5. `[supabase/migrations/005_project_tags.sql](supabase/migrations/005_project_tags.sql)`
+6. `[supabase/migrations/006_habits.sql](supabase/migrations/006_habits.sql)`
+7. `[supabase/migrations/007_goals.sql](supabase/migrations/007_goals.sql)`
+8. `[supabase/migrations/008_whiteboards.sql](supabase/migrations/008_whiteboards.sql)`
+9. `[supabase/migrations/009_goals_long_sort_order.sql](supabase/migrations/009_goals_long_sort_order.sql)`
+10. `[supabase/migrations/010_whiteboard_preferences.sql](supabase/migrations/010_whiteboard_preferences.sql)`
+11. `[supabase/migrations/011_whiteboard_folders_and_slug_aliases.sql](supabase/migrations/011_whiteboard_folders_and_slug_aliases.sql)`
+12. `[supabase/migrations/012_whiteboard_media.sql](supabase/migrations/012_whiteboard_media.sql)`
+13. `[supabase/migrations/013_projects_due_date_timestamptz.sql](supabase/migrations/013_projects_due_date_timestamptz.sql)`
+14. `[supabase/migrations/014_integration_tokens.sql](supabase/migrations/014_integration_tokens.sql)`
+15. `[supabase/migrations/015_projects_sync_true_deadline_with_due_date.sql](supabase/migrations/015_projects_sync_true_deadline_with_due_date.sql)`
+16. `[supabase/migrations/016_complex_tasks.sql](supabase/migrations/016_complex_tasks.sql)`
+17. `[supabase/migrations/017_task_sort_order_backfill.sql](supabase/migrations/017_task_sort_order_backfill.sql)`
 
-This creates `projects`, `tasks`, `pace_settings`, `project_templates`, `template_tasks`, the type-specific check constraints, indexes, and the RLS policies that scope every row to `auth.uid()`.
+This creates core tables, ordering fields (including task `sort_order` backfill), indexes, and RLS policies that scope every row to `auth.uid()`.
 
 ### 2. Configure authentication providers
 

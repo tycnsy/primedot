@@ -172,7 +172,7 @@ export function useCreateProjectFromTemplate() {
       if (readTemplateTasksError) throw readTemplateTasksError;
 
       if ((templateTasks ?? []).length > 0) {
-        const tasksToInsert = (templateTasks as TemplateTask[]).map((task) => ({
+        const tasksToInsert = (templateTasks as TemplateTask[]).map((task, index) => ({
           project_id: projectId,
           name: task.name,
           status: 'not_started',
@@ -184,6 +184,7 @@ export function useCreateProjectFromTemplate() {
           unit_count: task.unit_count,
           unit_length: task.unit_length,
           manual_length: task.manual_length,
+          sort_order: index,
         }));
         const { error: tasksInsertError } = await supabase
           .from('tasks')
