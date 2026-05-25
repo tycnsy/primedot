@@ -50,6 +50,10 @@ function badRequest(message: string): Response {
   return json({ error: 'bad_request', message }, 400);
 }
 
+function conflict(message: string): Response {
+  return json({ error: 'conflict', message }, 409);
+}
+
 function methodNotAllowed(): Response {
   return json({ error: 'method_not_allowed' }, 405);
 }
@@ -102,7 +106,26 @@ async function handleListProjects(userId: string): Promise<Response> {
   const projects = projectsRes.data ?? [];
   const projectIds = projects.map((p: { id: string }) => p.id);
 
-  let tasks: unknown[] = [];
+  type RawTask = {
+    id: string;
+    project_id: string;
+    name: string;
+    status: string;
+    type: string;
+    current_progress: number;
+    scaling_modifier: number | null;
+    scripting_modifier: number | null;
+    script_length: number | null;
+    unit_count: number | null;
+    unit_length: number | null;
+    manual_length: number | null;
+    sort_order: number;
+    parent_id: string | null;
+    complex_mode: 'compressed' | 'expanded' | null;
+    created_at: string;
+  };
+
+  let allTasks: RawTask[] = [];
   if (projectIds.length > 0) {
     const CHUNK_SIZE = 100;
     for (let i = 0; i < projectIds.length; i += CHUNK_SIZE) {
@@ -110,19 +133,32 @@ async function handleListProjects(userId: string): Promise<Response> {
       const tasksResUnknown = await admin
         .from('tasks')
         .select(
-          'id,project_id,name,status,type,current_progress,scaling_modifier,scripting_modifier,script_length,unit_count,unit_length,manual_length,sort_order,created_at',
+          'id,project_id,name,status,type,current_progress,scaling_modifier,scripting_modifier,script_length,unit_count,unit_length,manual_length,sort_order,parent_id,complex_mode,created_at',
         )
         .in('project_id', chunk)
         .order('project_id', { ascending: true })
         .order('sort_order', { ascending: true })
         .order('created_at', { ascending: true });
-      if (!isResultLike<unknown[]>(tasksResUnknown)) {
+      if (!isResultLike<RawTask[]>(tasksResUnknown)) {
         return internal('tasks query returned an invalid response');
       }
       if (tasksResUnknown.error) return internal(tasksResUnknown.error.message);
-      tasks = tasks.concat(tasksResUnknown.data ?? []);
+      allTasks = allTasks.concat(tasksResUnknown.data ?? []);
     }
   }
+
+  // Mirror the active complex_mode in the sync API:
+  //   * Expanded parents are UI-only headers — hide them from sync.
+  //   * Subtasks whose parent is compressed are represented by the parent.
+  const tasksById = new Map(allTasks.map((t) => [t.id, t]));
+  const tasks = allTasks.filter((t) => {
+    if (t.complex_mode === 'expanded') return false;
+    if (t.parent_id) {
+      const parent = tasksById.get(t.parent_id);
+      if (parent && parent.complex_mode === 'compressed') return false;
+    }
+    return true;
+  });
 
   return json({ projects, tasks });
 }
@@ -151,7 +187,7 @@ async function handleUpdateTaskProgress(
   const taskRes = await admin
     .from('tasks')
     .select(
-      'id,project_id,type,current_progress,scaling_modifier,scripting_modifier,script_length,unit_count,unit_length,manual_length',
+      'id,project_id,type,current_progress,scaling_modifier,scripting_modifier,script_length,unit_count,unit_length,manual_length,parent_id,complex_mode',
     )
     .eq('id', taskId)
     .maybeSingle();
@@ -169,6 +205,31 @@ async function handleUpdateTaskProgress(
     return notFound();
   }
 
+  const projectVideoLength =
+    typeof projectRes.data.video_length === 'number'
+      ? projectRes.data.video_length
+      : 0;
+
+  // Reject writes to tasks hidden from the mirror view.
+  if (taskRes.data.complex_mode === 'expanded') {
+    return conflict(
+      'task is a complex parent in expanded mode; patch its subtasks instead',
+    );
+  }
+  if (taskRes.data.parent_id) {
+    const parentRes = await admin
+      .from('tasks')
+      .select('complex_mode')
+      .eq('id', taskRes.data.parent_id)
+      .maybeSingle();
+    if (parentRes.error) return internal(parentRes.error.message);
+    if (parentRes.data?.complex_mode === 'compressed') {
+      return conflict(
+        'task is a subtask of a compressed complex parent; patch the parent instead',
+      );
+    }
+  }
+
   const draft: TaskStatusDraft = {
     type: taskRes.data.type,
     current_progress: currentProgress,
@@ -179,12 +240,7 @@ async function handleUpdateTaskProgress(
     unit_length: taskRes.data.unit_length ?? null,
     manual_length: taskRes.data.manual_length ?? null,
   };
-  const nextStatus = deriveStatusFromDraft(
-    draft,
-    typeof projectRes.data.video_length === 'number'
-      ? projectRes.data.video_length
-      : 0,
-  );
+  const nextStatus = deriveStatusFromDraft(draft, projectVideoLength);
 
   const updateRes = await admin
     .from('tasks')
@@ -193,6 +249,47 @@ async function handleUpdateTaskProgress(
     .select('id,current_progress,status')
     .single();
   if (updateRes.error) return internal(updateRes.error.message);
+
+  // For a compressed complex parent, propagate the same progress value
+  // (and recomputed status per subtask) to every subtask so re-expanding
+  // starts the subtasks at the same value the parent now shows.
+  if (taskRes.data.complex_mode === 'compressed') {
+    const subsRes = await admin
+      .from('tasks')
+      .select(
+        'id,type,scaling_modifier,scripting_modifier,script_length,unit_count,unit_length,manual_length',
+      )
+      .eq('parent_id', taskId);
+    if (subsRes.error) return internal(subsRes.error.message);
+
+    for (const sub of (subsRes.data ?? []) as Array<{
+      id: string;
+      type: TaskStatusDraft['type'];
+      scaling_modifier: number | null;
+      scripting_modifier: number | null;
+      script_length: number | null;
+      unit_count: number | null;
+      unit_length: number | null;
+      manual_length: number | null;
+    }>) {
+      const subDraft: TaskStatusDraft = {
+        type: sub.type,
+        current_progress: currentProgress,
+        scaling_modifier: sub.scaling_modifier ?? null,
+        scripting_modifier: sub.scripting_modifier ?? null,
+        script_length: sub.script_length ?? null,
+        unit_count: sub.unit_count ?? null,
+        unit_length: sub.unit_length ?? null,
+        manual_length: sub.manual_length ?? null,
+      };
+      const subStatus = deriveStatusFromDraft(subDraft, projectVideoLength);
+      const subUpdate = await admin
+        .from('tasks')
+        .update({ current_progress: currentProgress, status: subStatus })
+        .eq('id', sub.id);
+      if (subUpdate.error) return internal(subUpdate.error.message);
+    }
+  }
 
   return json({
     id: updateRes.data.id,

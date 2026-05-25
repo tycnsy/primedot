@@ -43,6 +43,8 @@ const baseTask = (overrides: Partial<Task>): Task => ({
   unit_length: null,
   manual_length: null,
   sort_order: 0,
+  parent_id: null,
+  complex_mode: null,
   created_at: '2026-01-01T00:00:00Z',
   ...overrides,
 });

@@ -1,4 +1,4 @@
-import type { PaceSettings, Project, Task, TaskStatus } from './types';
+import type { ComplexMode, PaceSettings, Project, Task, TaskStatus } from './types';
 
 const safeNum = (v: number | null | undefined, fallback = 0): number =>
   typeof v === 'number' && Number.isFinite(v) ? v : fallback;
@@ -14,7 +14,64 @@ type TaskProgressSource = Pick<
   | 'unit_count'
   | 'unit_length'
   | 'manual_length'
->;
+> & {
+  id?: string;
+  parent_id?: string | null;
+  complex_mode?: ComplexMode | null;
+};
+
+// ---------- Complex task helpers ----------
+
+/** Subtasks of a complex parent, ordered by sort_order. */
+export function getSubtasks(parentId: string, allTasks: Task[]): Task[] {
+  return allTasks
+    .filter((t) => t.parent_id === parentId)
+    .sort((a, b) => a.sort_order - b.sort_order);
+}
+
+/**
+ * Rolled-up scaling_modifier for a complex parent — sum of subtask modifiers.
+ * Falls back to the parent's own stored modifier if there are no subtasks
+ * (used as a defensive default during edge cases).
+ */
+export function complexParentEffectiveModifier(parent: Task, allTasks: Task[]): number {
+  const subs = getSubtasks(parent.id, allTasks);
+  if (subs.length === 0) return safeNum(parent.scaling_modifier);
+  return subs.reduce((acc, s) => acc + safeNum(s.scaling_modifier), 0);
+}
+
+/**
+ * True if any two subtasks have different `current_progress` values.
+ * Used to decide whether the collapse conflict modal needs to open.
+ */
+export function subtasksHaveProgressMismatch(parent: Task, allTasks: Task[]): boolean {
+  const subs = getSubtasks(parent.id, allTasks);
+  if (subs.length < 2) return false;
+  const first = subs[0].current_progress;
+  return subs.some((s) => s.current_progress !== first);
+}
+
+/**
+ * The `current_progress` value to display on a compressed parent row.
+ * Returns the common subtask value when all subtasks agree;
+ * otherwise falls back to the parent's stored value.
+ */
+export function complexParentEffectiveProgress(parent: Task, allTasks: Task[]): number {
+  const subs = getSubtasks(parent.id, allTasks);
+  if (subs.length === 0) return safeNum(parent.current_progress);
+  if (subtasksHaveProgressMismatch(parent, allTasks)) return safeNum(parent.current_progress);
+  return subs[0].current_progress;
+}
+
+/** True when this task is a complex parent (has a complex_mode set). */
+export function isComplexParent(task: TaskProgressSource): boolean {
+  return task.complex_mode === 'compressed' || task.complex_mode === 'expanded';
+}
+
+/** True when this task is a subtask (has a parent_id set). */
+export function isSubtask(task: TaskProgressSource): boolean {
+  return !!task.parent_id;
+}
 
 /**
  * `task_length` (seconds) — total real time the task is expected to take, buffered.
@@ -23,9 +80,24 @@ type TaskProgressSource = Pick<
  * scripting:  script_length         * scripting_modifier * buffer_modifier
  * custom:     unit_count * unit_length * buffer_modifier
  * manual:     manual_length * buffer_modifier
+ *
+ * Complex-task overrides (when `allTasks` is supplied):
+ *   - expanded parent → 0 (parent itself contributes nothing; subtasks count individually)
+ *   - compressed parent → uses the rolled-up modifier (sum of subtask modifiers)
  */
-export function taskLength(task: TaskProgressSource, project: Project): number {
+export function taskLength(
+  task: TaskProgressSource,
+  project: Project,
+  allTasks?: Task[],
+): number {
   const buffer = safeNum(project.buffer_modifier, 1);
+
+  if (task.complex_mode === 'expanded') return 0;
+  if (task.complex_mode === 'compressed' && task.id && allTasks) {
+    const modifier = complexParentEffectiveModifier(task as Task, allTasks);
+    return safeNum(project.video_length) * modifier * buffer;
+  }
+
   switch (task.type) {
     case 'scaling':
       return (
@@ -54,9 +126,30 @@ export function taskLength(task: TaskProgressSource, project: Project): number {
  *
  * For complete tasks (derived from progress), treat progress as fully-done
  * regardless of the stored value.
+ *
+ * Complex-task overrides (when `allTasks` is supplied):
+ *   - expanded parent → 0 (subtasks contribute individually)
+ *   - compressed parent → uses rolled-up modifier and effective subtask progress
  */
-export function calculatedProgress(task: TaskProgressSource, project: Project): number {
-  if (deriveTaskStatus(task, project) === 'complete') return taskLength(task, project);
+export function calculatedProgress(
+  task: TaskProgressSource,
+  project: Project,
+  allTasks?: Task[],
+): number {
+  if (task.complex_mode === 'expanded') return 0;
+  if (task.complex_mode === 'compressed' && task.id && allTasks) {
+    if (deriveTaskStatus(task, project, allTasks) === 'complete') {
+      return taskLength(task, project, allTasks);
+    }
+    const buffer = safeNum(project.buffer_modifier, 1);
+    const modifier = complexParentEffectiveModifier(task as Task, allTasks);
+    const cp = complexParentEffectiveProgress(task as Task, allTasks);
+    return cp * modifier * buffer;
+  }
+
+  if (deriveTaskStatus(task, project, allTasks) === 'complete') {
+    return taskLength(task, project, allTasks);
+  }
   const buffer = safeNum(project.buffer_modifier, 1);
   const cp = safeNum(task.current_progress);
   switch (task.type) {
@@ -99,10 +192,22 @@ export function progressTarget(task: TaskProgressSource, project: Project): numb
 /**
  * Progress percentage derived from current_progress vs task target.
  * Can exceed 100 when progress is beyond target.
+ *
+ * For compressed complex parents (with `allTasks` supplied), uses the rolled-up
+ * progress (subtask common value when synced, else parent's stored value).
  */
-export function taskProgressPercent(task: TaskProgressSource, project: Project): number {
-  const current = safeNum(task.current_progress);
+export function taskProgressPercent(
+  task: TaskProgressSource,
+  project: Project,
+  allTasks?: Task[],
+): number {
   const target = progressTarget(task, project);
+  let current: number;
+  if (task.complex_mode === 'compressed' && task.id && allTasks) {
+    current = complexParentEffectiveProgress(task as Task, allTasks);
+  } else {
+    current = safeNum(task.current_progress);
+  }
   if (target <= 0) return current <= 0 ? 0 : 100;
   return (current / target) * 100;
 }
@@ -114,19 +219,40 @@ export function taskProgressPercent(task: TaskProgressSource, project: Project):
 export function deriveTaskStatus(
   task: TaskProgressSource,
   project: Project,
+  allTasks?: Task[],
 ): TaskStatus {
-  const percent = taskProgressPercent(task, project);
+  const percent = taskProgressPercent(task, project, allTasks);
   if (percent <= 0) return 'not_started';
   if (percent >= 100) return 'complete';
   return 'in_progress';
 }
 
+/**
+ * Determine whether a task should be counted in project-level aggregations.
+ * Skip expanded parents (counted via subtasks) and subtasks under compressed
+ * parents (counted via the parent rollup).
+ */
+function shouldCountInAggregate(task: Task, allTasks: Task[]): boolean {
+  if (task.complex_mode === 'expanded') return false;
+  if (task.parent_id) {
+    const parent = allTasks.find((t) => t.id === task.parent_id);
+    if (parent && parent.complex_mode === 'compressed') return false;
+  }
+  return true;
+}
+
 export function totalTaskLength(tasks: Task[], project: Project): number {
-  return tasks.reduce((acc, t) => acc + taskLength(t, project), 0);
+  return tasks.reduce((acc, t) => {
+    if (!shouldCountInAggregate(t, tasks)) return acc;
+    return acc + taskLength(t, project, tasks);
+  }, 0);
 }
 
 export function projectProgress(tasks: Task[], project: Project): number {
-  return tasks.reduce((acc, t) => acc + calculatedProgress(t, project), 0);
+  return tasks.reduce((acc, t) => {
+    if (!shouldCountInAggregate(t, tasks)) return acc;
+    return acc + calculatedProgress(t, project, tasks);
+  }, 0);
 }
 
 export function remainingProgress(tasks: Task[], project: Project): number {
@@ -150,10 +276,18 @@ export function progressDelta(
   project: Project,
   timerDurationSeconds: number,
   paceModifier = 1,
+  allTasks?: Task[],
 ): number {
   const buffer = safeNum(project.buffer_modifier, 1);
   const t = Math.max(0, timerDurationSeconds);
   const modifier = normalizePaceModifier(paceModifier);
+
+  if (task.complex_mode === 'compressed' && task.id && allTasks) {
+    const m = complexParentEffectiveModifier(task as Task, allTasks);
+    const denom = m * buffer;
+    return (denom > 0 ? t / denom : 0) * modifier;
+  }
+
   switch (task.type) {
     case 'scaling': {
       const denom = safeNum(task.scaling_modifier) * buffer;
@@ -184,8 +318,9 @@ export function goalProgress(
   startCurrentProgress: number,
   timerDurationSeconds: number,
   paceModifier = 1,
+  allTasks?: Task[],
 ): number {
-  const delta = progressDelta(task, project, timerDurationSeconds, paceModifier);
+  const delta = progressDelta(task, project, timerDurationSeconds, paceModifier, allTasks);
   if (task.type === 'custom') {
     return Math.floor(startCurrentProgress) + Math.floor(delta);
   }

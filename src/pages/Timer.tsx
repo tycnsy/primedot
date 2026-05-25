@@ -6,7 +6,14 @@ import { useTasksForProjects, useUpdateAnyTask } from '../hooks/useTasks';
 import { useTimer } from '../hooks/useTimer';
 import { useHiddenPaceCards } from '../hooks/useHiddenPaceCards';
 import TimerDisplay from '../components/TimerDisplay';
-import { deriveTaskStatus, goalProgress, progressTarget } from '../lib/calc';
+import {
+  complexParentEffectiveModifier,
+  complexParentEffectiveProgress,
+  deriveTaskStatus,
+  goalProgress,
+  progressTarget,
+  taskLength,
+} from '../lib/calc';
 import { buildPacePatchFromBufferSeconds } from '../lib/pace';
 import { formatHMS, parseHMS, parseHMSWithOptionalFrames } from '../lib/time';
 import { playPasteChime } from '../lib/chime';
@@ -109,20 +116,27 @@ export default function Timer() {
     const startedAtMs = timer.startedAt.getTime();
     if (lastGoalSnapshotStartedAt.current === startedAtMs) return;
 
+    const allTasks = tasksQ.data;
     const nextGoalSnapshotByTaskId: Record<string, GoalSnapshot> = {};
-    for (const task of tasksQ.data) {
+    for (const task of allTasks) {
       const project = projectMap.get(task.project_id);
       if (!project) continue;
-      if (deriveTaskStatus(task, project) === 'complete') continue;
+      if (task.complex_mode === 'expanded') continue;
+      if (deriveTaskStatus(task, project, allTasks) === 'complete') continue;
+      const startProgress =
+        task.complex_mode === 'compressed'
+          ? complexParentEffectiveProgress(task, allTasks)
+          : task.current_progress;
       nextGoalSnapshotByTaskId[task.id] = {
         projectedGoal: goalProgress(
           task,
           project,
-          task.current_progress,
+          startProgress,
           timer.durationSeconds,
           paceModifier,
+          allTasks,
         ),
-        startProgress: task.current_progress,
+        startProgress,
       };
     }
 
@@ -130,18 +144,33 @@ export default function Timer() {
     lastGoalSnapshotStartedAt.current = startedAtMs;
   }, [paceModifier, projectMap, tasksQ.data, timer.durationSeconds, timer.startedAt]);
 
+  const allTasks = tasksQ.data ?? [];
+
   const remainingByProject = useMemo(() => {
     const byProject: Record<string, Task[]> = {};
     for (const projectId of projectIds) byProject[projectId] = [];
-    for (const task of tasksQ.data ?? []) {
+    for (const task of allTasks) {
       const project = projectMap.get(task.project_id);
       if (!project) continue;
-      if (deriveTaskStatus(task, project) === 'complete') continue;
+      // Skip expanded parents (they are headers only).
+      if (task.complex_mode === 'expanded') {
+        // Still allow the parent to be rendered as a non-editable header by
+        // including it; ProjectTimerColumn will render headers separately.
+        if (!byProject[task.project_id]) byProject[task.project_id] = [];
+        byProject[task.project_id].push(task);
+        continue;
+      }
+      // Skip subtasks whose parent is currently compressed (parent represents them).
+      if (task.parent_id) {
+        const parent = allTasks.find((t) => t.id === task.parent_id);
+        if (parent && parent.complex_mode === 'compressed') continue;
+      }
+      if (deriveTaskStatus(task, project, allTasks) === 'complete') continue;
       if (!byProject[task.project_id]) byProject[task.project_id] = [];
       byProject[task.project_id].push(task);
     }
     return byProject;
-  }, [projectIds, projectMap, tasksQ.data]);
+  }, [projectIds, projectMap, allTasks]);
 
   const modeLabel = useMemo(() => {
     if (mode === 'bulk') return 'Bulk Session: All Projects';
@@ -279,6 +308,7 @@ export default function Timer() {
             key={project.id}
             project={project}
             tasks={remainingByProject[project.id] ?? []}
+            allTasks={allTasks}
             goalSnapshotByTaskId={goalSnapshotByTaskId}
             timerDurationSeconds={timer.durationSeconds}
             paceModifier={paceModifier}
@@ -299,6 +329,7 @@ export default function Timer() {
 interface ProjectTimerColumnProps {
   project: Project;
   tasks: Task[];
+  allTasks: Task[];
   goalSnapshotByTaskId: Record<string, GoalSnapshot>;
   timerDurationSeconds: number;
   paceModifier: number;
@@ -312,6 +343,7 @@ interface ProjectTimerColumnProps {
 function ProjectTimerColumn({
   project,
   tasks,
+  allTasks,
   goalSnapshotByTaskId,
   timerDurationSeconds,
   paceModifier,
@@ -368,21 +400,59 @@ function ProjectTimerColumn({
         </div>
       ) : (
         <div className="space-y-2">
-          {tasks.map((task) => (
-            <TaskProgressRow
-              key={task.id}
-              task={task}
-              project={project}
-              predictedGoal={goalSnapshotByTaskId[task.id]?.projectedGoal}
-              predictedStartProgress={goalSnapshotByTaskId[task.id]?.startProgress}
-              timerDurationSeconds={timerDurationSeconds}
-              paceModifier={paceModifier}
-              showGoalDelta={showGoalDelta}
-              updateTask={updateTask}
-            />
-          ))}
+          {tasks.map((task) => {
+            if (task.complex_mode === 'expanded') {
+              return (
+                <ComplexParentHeader
+                  key={task.id}
+                  task={task}
+                  project={project}
+                  allTasks={allTasks}
+                />
+              );
+            }
+            return (
+              <TaskProgressRow
+                key={task.id}
+                task={task}
+                project={project}
+                allTasks={allTasks}
+                predictedGoal={goalSnapshotByTaskId[task.id]?.projectedGoal}
+                predictedStartProgress={goalSnapshotByTaskId[task.id]?.startProgress}
+                timerDurationSeconds={timerDurationSeconds}
+                paceModifier={paceModifier}
+                showGoalDelta={showGoalDelta}
+                updateTask={updateTask}
+              />
+            );
+          })}
         </div>
       )}
+    </div>
+  );
+}
+
+function ComplexParentHeader({
+  task,
+  project,
+  allTasks,
+}: {
+  task: Task;
+  project: Project;
+  allTasks: Task[];
+}) {
+  const modifier = complexParentEffectiveModifier(task, allTasks);
+  const length = taskLength(task, project, allTasks);
+  return (
+    <div className="rounded-md border border-dashed border-border/70 bg-surface2/40 px-3 py-2">
+      <div className="flex items-center justify-between gap-2">
+        <div className="min-w-0">
+          <p className="truncate text-sm font-medium text-fg">{task.name}</p>
+          <p className="mt-0.5 text-[11px] text-muted">
+            complex · ×{modifier.toFixed(2)} · {formatHMS(length)}
+          </p>
+        </div>
+      </div>
     </div>
   );
 }
@@ -390,6 +460,7 @@ function ProjectTimerColumn({
 function TaskProgressRow({
   task,
   project,
+  allTasks,
   predictedGoal,
   predictedStartProgress,
   timerDurationSeconds,
@@ -399,6 +470,7 @@ function TaskProgressRow({
 }: {
   task: Task;
   project: Project;
+  allTasks: Task[];
   predictedGoal?: number;
   predictedStartProgress?: number;
   timerDurationSeconds: number;
@@ -407,18 +479,23 @@ function TaskProgressRow({
   updateTask: (id: string, patch: Partial<Task>) => Promise<void>;
 }) {
   const isCustom = task.type === 'custom';
+  const isCompressedParent = task.complex_mode === 'compressed';
+  const isSubtask = !!task.parent_id;
+
+  const effectiveProgress = isCompressedParent
+    ? complexParentEffectiveProgress(task, allTasks)
+    : task.current_progress;
+
   const [draft, setDraft] = useState(
-    isCustom ? String(task.current_progress) : formatHMS(task.current_progress),
+    isCustom ? String(effectiveProgress) : formatHMS(effectiveProgress),
   );
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     setDraft(
-      isCustom
-        ? String(task.current_progress)
-        : formatHMS(task.current_progress),
+      isCustom ? String(effectiveProgress) : formatHMS(effectiveProgress),
     );
-  }, [task.current_progress, isCustom]);
+  }, [effectiveProgress, isCustom]);
 
   const commit = async () => {
     setError(null);
@@ -438,10 +515,14 @@ function TaskProgressRow({
       }
       next = value;
     }
-    if (next === task.current_progress) return;
+    if (next === effectiveProgress) return;
     await updateTask(task.id, {
       current_progress: next,
-      status: deriveTaskStatus({ ...task, current_progress: next }, project),
+      status: deriveTaskStatus(
+        { ...task, current_progress: next },
+        project,
+        allTasks,
+      ),
     });
   };
 
@@ -471,10 +552,14 @@ function TaskProgressRow({
       next = value;
     }
     try {
-      if (next !== task.current_progress) {
+      if (next !== effectiveProgress) {
         await updateTask(task.id, {
           current_progress: next,
-          status: deriveTaskStatus({ ...task, current_progress: next }, project),
+          status: deriveTaskStatus(
+            { ...task, current_progress: next },
+            project,
+            allTasks,
+          ),
         });
       }
       setDraft(isCustom ? String(next) : formatHMS(next));
@@ -486,8 +571,8 @@ function TaskProgressRow({
 
   const total = progressTarget(task, project);
   const progressLabel = isCustom
-    ? `${task.current_progress} / ${total > 0 ? total : '?'}`
-    : `${formatHMS(task.current_progress)} / ${
+    ? `${effectiveProgress} / ${total > 0 ? total : '?'}`
+    : `${formatHMS(effectiveProgress)} / ${
         total > 0 ? formatHMS(total) : '?'
       }`;
   const displayedGoal =
@@ -495,9 +580,10 @@ function TaskProgressRow({
     goalProgress(
       task,
       project,
-      task.current_progress,
+      effectiveProgress,
       timerDurationSeconds,
       paceModifier,
+      allTasks,
     );
   const normalizedGoal = isCustom
     ? Math.floor(displayedGoal)
@@ -505,7 +591,7 @@ function TaskProgressRow({
   const baselineProgress =
     typeof predictedStartProgress === 'number'
       ? predictedStartProgress
-      : task.current_progress;
+      : effectiveProgress;
   const goalDelta = normalizedGoal - baselineProgress;
   const deltaLabel = isCustom
     ? `${goalDelta >= 0 ? '+' : '-'}${Math.abs(goalDelta)}`
@@ -516,11 +602,13 @@ function TaskProgressRow({
       ? `goal: ${normalizedGoal}`
       : `goal: ${formatHMS(normalizedGoal)}`;
   const isPredictedDone =
-    typeof predictedGoal === 'number' && task.current_progress >= predictedGoal;
+    typeof predictedGoal === 'number' && effectiveProgress >= predictedGoal;
 
   return (
     <div
       className={`rounded-md border px-3 py-2 ${
+        isSubtask ? 'ml-4 border-l-2 border-l-accent/30' : ''
+      } ${
         isPredictedDone
           ? 'border-success/50 bg-success/10 ring-1 ring-inset ring-success/30'
           : 'border-border/70 bg-surface2/40'
@@ -528,7 +616,13 @@ function TaskProgressRow({
     >
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
-          <p className="truncate text-sm font-medium text-fg">{task.name}</p>
+          <p className="truncate text-sm font-medium text-fg">
+            {isSubtask ? <span className="pill mr-1">subtask</span> : null}
+            {isCompressedParent ? (
+              <span className="pill mr-1">complex</span>
+            ) : null}
+            {task.name}
+          </p>
           <p className="mt-0.5 text-xs font-sans tabular-nums text-subtle">
             {progressLabel}
           </p>

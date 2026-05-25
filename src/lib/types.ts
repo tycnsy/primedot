@@ -1,5 +1,6 @@
 export type TaskStatus = 'not_started' | 'in_progress' | 'complete';
 export type TaskType = 'scaling' | 'scripting' | 'custom' | 'manual';
+export type ComplexMode = 'compressed' | 'expanded';
 
 export interface Project {
   id: string;
@@ -35,8 +36,17 @@ export interface Task {
   unit_length: number | null;
   manual_length: number | null;
   sort_order: number;
+  parent_id: string | null;
+  complex_mode: ComplexMode | null;
   created_at: string;
 }
+
+/** A scaling task that is the parent of one or more subtasks. */
+export type ComplexParent = Task & {
+  type: 'scaling';
+  parent_id: null;
+  complex_mode: ComplexMode;
+};
 
 export interface PaceSettings {
   id: string;

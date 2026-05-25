@@ -1,7 +1,9 @@
 import { useEffect, useState } from 'react';
-import type { Project, Task } from '../lib/types';
+import type { ComplexMode, Project, Task } from '../lib/types';
 import {
   calculatedProgress,
+  complexParentEffectiveModifier,
+  complexParentEffectiveProgress,
   deriveTaskStatus,
   progressTarget,
   taskLength,
@@ -11,10 +13,19 @@ import { formatHMS, parseHMSWithOptionalFrames } from '../lib/time';
 interface Props {
   task: Task;
   project: Project;
+  allTasks?: Task[];
   onUpdateProgress?: (taskId: string, nextProgress: number) => Promise<void>;
   progressInputDisabled?: boolean;
   onEdit?: () => void;
   onDone?: () => void;
+  /** Open the Complex Task settings modal (parent only). */
+  onOpenComplexSettings?: () => void;
+  /** Toggle the parent between compressed/expanded modes (parent only). */
+  onToggleComplexMode?: (next: ComplexMode) => void;
+  /** Collapse this subtask back into the parent (subtask only). */
+  onCompressFromSubtask?: () => void;
+  /** Visually indent / mark this row as a subtask. */
+  isSubtask?: boolean;
 }
 
 const statusStyles: Record<Task['status'], string> = {
@@ -34,29 +45,53 @@ const statusLabels: Record<Task['status'], string> = {
 export default function TaskRow({
   task,
   project,
+  allTasks,
   onUpdateProgress,
   progressInputDisabled,
   onEdit,
   onDone,
+  onOpenComplexSettings,
+  onToggleComplexMode,
+  onCompressFromSubtask,
+  isSubtask,
 }: Props) {
-  const tLen = taskLength(task, project);
-  const cProg = calculatedProgress(task, project);
-  const status = deriveTaskStatus(task, project);
+  const isExpandedHeader = task.complex_mode === 'expanded';
+  const isCompressedParent = task.complex_mode === 'compressed';
+
+  if (isExpandedHeader) {
+    return (
+      <ComplexExpandedHeader
+        task={task}
+        allTasks={allTasks}
+        onOpenComplexSettings={onOpenComplexSettings}
+        onToggleComplexMode={onToggleComplexMode}
+        onEdit={onEdit}
+      />
+    );
+  }
+
+  const tLen = taskLength(task, project, allTasks);
+  const cProg = calculatedProgress(task, project, allTasks);
+  const status = deriveTaskStatus(task, project, allTasks);
   const target = progressTarget(task, project);
   const pct = tLen > 0 ? Math.min(100, (cProg / tLen) * 100) : 0;
   const isCustom = task.type === 'custom';
+
+  const displayedProgress =
+    isCompressedParent && allTasks
+      ? complexParentEffectiveProgress(task, allTasks)
+      : task.current_progress;
+
   const [draft, setDraft] = useState(
-    isCustom ? String(task.current_progress) : formatHMS(task.current_progress),
+    isCustom ? String(displayedProgress) : formatHMS(displayedProgress),
   );
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     setDraft(
-      isCustom
-        ? String(task.current_progress)
-        : formatHMS(task.current_progress),
+      isCustom ? String(displayedProgress) : formatHMS(displayedProgress),
     );
-  }, [isCustom, task.current_progress]);
+  }, [isCustom, displayedProgress]);
 
   const commitProgress = async () => {
     if (!onUpdateProgress) return;
@@ -72,7 +107,7 @@ export default function TaskRow({
       if (sec == null) return setError('Format hh:mm:ss or hh:mm:ss:ff.');
       next = sec;
     }
-    if (next === task.current_progress) return;
+    if (next === displayedProgress) return;
     try {
       await onUpdateProgress(task.id, next);
       setDraft(isCustom ? String(next) : formatHMS(next));
@@ -85,15 +120,24 @@ export default function TaskRow({
   const remainingSeconds = Math.max(0, tLen - cProg);
 
   const progressLabel = isCustom
-    ? `${task.current_progress} / ${target > 0 ? target : '?'}`
-    : `${formatHMS(task.current_progress)} / ${
+    ? `${displayedProgress} / ${target > 0 ? target : '?'}`
+    : `${formatHMS(displayedProgress)} / ${
         target > 0 ? formatHMS(target) : '?'
       }`;
 
+  const rolledUpModifier =
+    isCompressedParent && allTasks
+      ? complexParentEffectiveModifier(task, allTasks)
+      : null;
+
   return (
-    <div className="card transition-[box-shadow,border-color] duration-150 hover:shadow-elev1 hover:border-border/80 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+    <div
+      className={`card transition-[box-shadow,border-color] duration-150 hover:shadow-elev1 hover:border-border/80 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between ${
+        isSubtask ? 'ml-0 sm:ml-6 border-l-2 border-l-accent/30' : ''
+      }`}
+    >
       <div className="flex-1 space-y-2">
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 flex-wrap">
           <span
             className={`inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-medium ${statusStyles[status]}`}
             aria-label={status}
@@ -101,6 +145,8 @@ export default function TaskRow({
             {statusLabels[status]}
           </span>
           <span className="pill">{task.type}</span>
+          {isSubtask ? <span className="pill">subtask</span> : null}
+          {isCompressedParent ? <span className="pill">complex</span> : null}
           <h3 className="text-sm font-medium text-fg">{task.name}</h3>
         </div>
 
@@ -112,6 +158,14 @@ export default function TaskRow({
           <span className="font-sans tabular-nums">
             {progressLabel}
           </span>
+          {rolledUpModifier != null ? (
+            <>
+              <span className="text-subtle" aria-hidden>•</span>
+              <span className="font-sans tabular-nums">
+                ×{rolledUpModifier.toFixed(2)}
+              </span>
+            </>
+          ) : null}
         </div>
 
         <div className="progress-track !h-1.5">
@@ -123,9 +177,41 @@ export default function TaskRow({
         </div>
       </div>
 
-      {(onUpdateProgress || onEdit || onDone) && (
+      {(onUpdateProgress ||
+        onEdit ||
+        onDone ||
+        isCompressedParent ||
+        isSubtask) && (
         <div className="flex flex-col items-end gap-1">
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 flex-wrap justify-end">
+            {isCompressedParent && onToggleComplexMode ? (
+              <ComplexModeToggle
+                mode="compressed"
+                onChange={onToggleComplexMode}
+              />
+            ) : null}
+            {isCompressedParent && onOpenComplexSettings ? (
+              <button
+                type="button"
+                onClick={onOpenComplexSettings}
+                className="btn-ghost"
+                aria-label="Complex task settings"
+                title="Complex task settings"
+              >
+                Subtasks…
+              </button>
+            ) : null}
+            {isSubtask && onCompressFromSubtask ? (
+              <button
+                type="button"
+                onClick={onCompressFromSubtask}
+                className="btn-ghost"
+                aria-label="Compress into one task"
+                title="Compress into one task"
+              >
+                Compress
+              </button>
+            ) : null}
             {onUpdateProgress ? (
               <input
                 className={`input h-9 w-44 ${isCustom ? '' : 'font-sans tabular-nums'}`}
@@ -162,6 +248,101 @@ export default function TaskRow({
           {error ? <span className="text-xs text-danger">{error}</span> : null}
         </div>
       )}
+    </div>
+  );
+}
+
+interface ExpandedHeaderProps {
+  task: Task;
+  allTasks?: Task[];
+  onOpenComplexSettings?: () => void;
+  onToggleComplexMode?: (next: ComplexMode) => void;
+  onEdit?: () => void;
+}
+
+function ComplexExpandedHeader({
+  task,
+  allTasks,
+  onOpenComplexSettings,
+  onToggleComplexMode,
+  onEdit,
+}: ExpandedHeaderProps) {
+  const modifier =
+    allTasks ? complexParentEffectiveModifier(task, allTasks) : null;
+
+  return (
+    <div className="card flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between border-dashed">
+      <div className="flex flex-1 items-center gap-2 flex-wrap">
+        <span className="pill">complex</span>
+        <h3 className="text-sm font-medium text-fg">{task.name}</h3>
+        {modifier != null ? (
+          <span className="text-xs text-muted font-sans tabular-nums">
+            ×{modifier.toFixed(2)} (rolled up)
+          </span>
+        ) : null}
+      </div>
+      <div className="flex items-center gap-2 flex-wrap justify-end">
+        {onToggleComplexMode ? (
+          <ComplexModeToggle mode="expanded" onChange={onToggleComplexMode} />
+        ) : null}
+        {onOpenComplexSettings ? (
+          <button
+            type="button"
+            onClick={onOpenComplexSettings}
+            className="btn-ghost"
+            title="Complex task settings"
+          >
+            Subtasks…
+          </button>
+        ) : null}
+        {onEdit ? (
+          <button onClick={onEdit} className="btn-ghost">
+            Edit
+          </button>
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
+interface ComplexModeToggleProps {
+  mode: ComplexMode;
+  onChange: (next: ComplexMode) => void;
+}
+
+function ComplexModeToggle({ mode, onChange }: ComplexModeToggleProps) {
+  return (
+    <div
+      role="radiogroup"
+      aria-label="Complex task mode"
+      className="inline-flex items-center rounded-full border border-border bg-surface2 p-0.5 text-[11px] font-medium"
+    >
+      <button
+        type="button"
+        role="radio"
+        aria-checked={mode === 'compressed'}
+        onClick={() => mode !== 'compressed' && onChange('compressed')}
+        className={`px-2 py-0.5 rounded-full transition-colors ${
+          mode === 'compressed'
+            ? 'bg-accent/15 text-accent'
+            : 'text-muted hover:text-fg'
+        }`}
+      >
+        Compressed
+      </button>
+      <button
+        type="button"
+        role="radio"
+        aria-checked={mode === 'expanded'}
+        onClick={() => mode !== 'expanded' && onChange('expanded')}
+        className={`px-2 py-0.5 rounded-full transition-colors ${
+          mode === 'expanded'
+            ? 'bg-accent/15 text-accent'
+            : 'text-muted hover:text-fg'
+        }`}
+      >
+        Expanded
+      </button>
     </div>
   );
 }

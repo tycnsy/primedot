@@ -13,10 +13,13 @@ import {
   useUpdateProject,
 } from '../hooks/useProjects';
 import {
+  useConvertToComplex,
   useCreateTask,
   useDeleteTask,
   useReorderTasks,
+  useSaveComplexSettings,
   useTasks,
+  useToggleComplexMode,
   useUpdateTask,
 } from '../hooks/useTasks';
 import { usePaceSettings } from '../hooks/usePaceSettings';
@@ -27,15 +30,19 @@ import TaskRow from '../components/TaskRow';
 import PaceDisplay from '../components/PaceDisplay';
 import PaceSettingsForm from '../components/PaceSettingsForm';
 import RebalanceModal from '../components/RebalanceModal';
+import ComplexTaskSettingsModal from '../components/ComplexTaskSettingsModal';
+import ComplexCollapseConflictModal from '../components/ComplexCollapseConflictModal';
 import {
   deriveTaskStatus,
+  getSubtasks,
   projectProgress,
   progressTarget,
   remainingProgress,
+  subtasksHaveProgressMismatch,
   totalTaskLength,
 } from '../lib/calc';
 import { formatHMS } from '../lib/time';
-import type { Task } from '../lib/types';
+import type { ComplexMode, Task } from '../lib/types';
 
 function formatDueDateTime(iso: string | null): string | null {
   if (!iso) return null;
@@ -78,6 +85,9 @@ export default function ProjectDetail() {
   const updateTask = useUpdateTask(id ?? '');
   const deleteTask = useDeleteTask(id ?? '');
   const reorderTasksMutation = useReorderTasks(id ?? '');
+  const toggleComplexMode = useToggleComplexMode(id ?? '');
+  const saveComplexSettings = useSaveComplexSettings(id ?? '');
+  const convertToComplex = useConvertToComplex(id ?? '');
   const createTemplate = useCreateTemplateFromProject();
 
   const [editingProject, setEditingProject] = useState(false);
@@ -90,6 +100,13 @@ export default function ProjectDetail() {
   const [orderedTasks, setOrderedTasks] = useState<Task[]>([]);
   const [draggingTaskId, setDraggingTaskId] = useState<string | null>(null);
   const [showRebalanceModal, setShowRebalanceModal] = useState(false);
+  const [complexSettingsFor, setComplexSettingsFor] = useState<{
+    parent: Task;
+    mode: 'convert' | 'edit';
+  } | null>(null);
+  const [collapseConflictFor, setCollapseConflictFor] = useState<Task | null>(
+    null,
+  );
   const allTasks = tasks.data ?? [];
 
   useEffect(() => {
@@ -100,13 +117,96 @@ export default function ProjectDetail() {
     setActiveTab(requestedTab === 'pace' ? 'pace' : 'overview');
   }, [id, requestedTab]);
 
-  const handleDropOnTask = (targetId: string) => {
+  const topLevelTasks = orderedTasks.filter((t) => !t.parent_id);
+  const subtasksByParent = new Map<string, Task[]>();
+  for (const t of orderedTasks) {
+    if (!t.parent_id) continue;
+    const arr = subtasksByParent.get(t.parent_id) ?? [];
+    arr.push(t);
+    subtasksByParent.set(t.parent_id, arr);
+  }
+  for (const arr of subtasksByParent.values()) {
+    arr.sort((a, b) => a.sort_order - b.sort_order);
+  }
+
+  const handleDropOnTopLevel = (targetId: string) => {
     if (!draggingTaskId) return;
-    const next = reorderTasks(orderedTasks, draggingTaskId, targetId);
+    const draggedTask = orderedTasks.find((t) => t.id === draggingTaskId);
+    const targetTask = orderedTasks.find((t) => t.id === targetId);
+    if (!draggedTask || !targetTask) return;
+    if (draggedTask.parent_id || targetTask.parent_id) return;
+
+    const nextTop = reorderTasks(topLevelTasks, draggingTaskId, targetId);
     setDraggingTaskId(null);
-    if (next === orderedTasks) return;
-    setOrderedTasks(next);
-    reorderTasksMutation.mutate(next.map((task) => task.id));
+    if (nextTop === topLevelTasks) return;
+
+    const merged: Task[] = [];
+    for (const top of nextTop) {
+      merged.push(top);
+      const subs = subtasksByParent.get(top.id);
+      if (subs) merged.push(...subs);
+    }
+    setOrderedTasks(merged);
+    reorderTasksMutation.mutate(nextTop.map((t) => t.id));
+  };
+
+  const handleDropOnSubtask = (targetId: string) => {
+    if (!draggingTaskId) return;
+    const draggedTask = orderedTasks.find((t) => t.id === draggingTaskId);
+    const targetTask = orderedTasks.find((t) => t.id === targetId);
+    if (!draggedTask || !targetTask) return;
+    if (draggedTask.parent_id !== targetTask.parent_id) return;
+    if (!draggedTask.parent_id) return;
+
+    const siblings = subtasksByParent.get(draggedTask.parent_id) ?? [];
+    const nextSiblings = reorderTasks(siblings, draggingTaskId, targetId);
+    setDraggingTaskId(null);
+    if (nextSiblings === siblings) return;
+
+    const merged: Task[] = [];
+    for (const top of topLevelTasks) {
+      merged.push(top);
+      if (top.id === draggedTask.parent_id) {
+        merged.push(...nextSiblings);
+      } else {
+        const subs = subtasksByParent.get(top.id);
+        if (subs) merged.push(...subs);
+      }
+    }
+    setOrderedTasks(merged);
+    reorderTasksMutation.mutate(nextSiblings.map((t) => t.id));
+  };
+
+  const attemptCompress = (parent: Task) => {
+    if (subtasksHaveProgressMismatch(parent, allTasks)) {
+      setCollapseConflictFor(parent);
+      return;
+    }
+    const subs = getSubtasks(parent.id, allTasks);
+    const chosen = subs[0]?.current_progress ?? parent.current_progress;
+    void toggleComplexMode.mutateAsync({
+      parentId: parent.id,
+      mode: 'compressed',
+      chosenProgress: chosen,
+    });
+  };
+
+  const handleToggleMode = (parent: Task, next: ComplexMode) => {
+    if (next === 'expanded') {
+      void toggleComplexMode.mutateAsync({
+        parentId: parent.id,
+        mode: 'expanded',
+      });
+      return;
+    }
+    attemptCompress(parent);
+  };
+
+  const handleCompressFromSubtask = (sub: Task) => {
+    if (!sub.parent_id) return;
+    const parent = allTasks.find((t) => t.id === sub.parent_id);
+    if (!parent) return;
+    attemptCompress(parent);
   };
 
   const handleTabChange = (nextTab: 'overview' | 'pace') => {
@@ -363,11 +463,28 @@ export default function ProjectDetail() {
                     await deleteTask.mutateAsync(editingTask.id);
                     setEditingTask(null);
                   }}
+                  onMakeComplex={() => {
+                    setComplexSettingsFor({
+                      parent: editingTask,
+                      mode: 'convert',
+                    });
+                    setEditingTask(null);
+                  }}
+                  onEditSubtasks={() => {
+                    setComplexSettingsFor({
+                      parent: editingTask,
+                      mode: 'edit',
+                    });
+                    setEditingTask(null);
+                  }}
                   submitLabel="Save"
                   onSubmit={async (input) => {
                     await updateTask.mutateAsync({
                       id: editingTask.id,
-                      patch: { ...input, status: deriveTaskStatus(input, p) },
+                      patch: {
+                        ...input,
+                        status: deriveTaskStatus(input, p, allTasks),
+                      },
                     });
                     setEditingTask(null);
                   }}
@@ -381,64 +498,174 @@ export default function ProjectDetail() {
               </p>
             ) : (
               <>
-                {orderedTasks.length > 1 ? (
+                {topLevelTasks.length > 1 ? (
                   <p className="text-xs text-muted">
                     Drag tasks to reorder them.
                   </p>
                 ) : null}
                 <div className="space-y-2">
-                  {orderedTasks.map((t) => (
-                    <div
-                      key={t.id}
-                      draggable
-                      onDragStart={(event) => {
-                        setDraggingTaskId(t.id);
-                        event.dataTransfer.effectAllowed = 'move';
-                      }}
-                      onDragOver={(event) => {
-                        event.preventDefault();
-                        event.dataTransfer.dropEffect = 'move';
-                      }}
-                      onDrop={(event) => {
-                        event.preventDefault();
-                        handleDropOnTask(t.id);
-                      }}
-                      onDragEnd={() => setDraggingTaskId(null)}
-                      className={`rounded-xl ${
-                        draggingTaskId === t.id ? 'opacity-60' : ''
-                      }`}
-                    >
-                      <TaskRow
-                        task={t}
-                        project={p}
-                        onUpdateProgress={async (taskId, nextProgress) => {
-                          const updatedTask = { ...t, current_progress: nextProgress };
-                          await updateTask.mutateAsync({
-                            id: taskId,
-                            patch: {
-                              current_progress: nextProgress,
-                              status: deriveTaskStatus(updatedTask, p),
-                            },
-                          });
-                        }}
-                        progressInputDisabled={updateTask.isPending}
-                        onEdit={() => setEditingTask(t)}
-                        onDone={async () => {
-                          const nextProgress = progressTarget(t, p);
-                          await updateTask.mutateAsync({
-                            id: t.id,
-                            patch: {
-                              current_progress: nextProgress,
-                              status: deriveTaskStatus(
-                                { ...t, current_progress: nextProgress },
-                                p,
-                              ),
-                            },
-                          });
-                        }}
-                      />
-                    </div>
-                  ))}
+                  {topLevelTasks.map((t) => {
+                    const isExpandedParent = t.complex_mode === 'expanded';
+                    const isCompressedParent = t.complex_mode === 'compressed';
+                    const isComplexParent = isExpandedParent || isCompressedParent;
+                    const subs = subtasksByParent.get(t.id) ?? [];
+
+                    return (
+                      <div key={t.id} className="space-y-2">
+                        <div
+                          draggable
+                          onDragStart={(event) => {
+                            setDraggingTaskId(t.id);
+                            event.dataTransfer.effectAllowed = 'move';
+                          }}
+                          onDragOver={(event) => {
+                            event.preventDefault();
+                            event.dataTransfer.dropEffect = 'move';
+                          }}
+                          onDrop={(event) => {
+                            event.preventDefault();
+                            handleDropOnTopLevel(t.id);
+                          }}
+                          onDragEnd={() => setDraggingTaskId(null)}
+                          className={`rounded-xl ${
+                            draggingTaskId === t.id ? 'opacity-60' : ''
+                          }`}
+                        >
+                          <TaskRow
+                            task={t}
+                            project={p}
+                            allTasks={allTasks}
+                            onUpdateProgress={
+                              isExpandedParent
+                                ? undefined
+                                : async (taskId, nextProgress) => {
+                                    const updatedTask = {
+                                      ...t,
+                                      current_progress: nextProgress,
+                                    };
+                                    await updateTask.mutateAsync({
+                                      id: taskId,
+                                      patch: {
+                                        current_progress: nextProgress,
+                                        status: deriveTaskStatus(
+                                          updatedTask,
+                                          p,
+                                          allTasks,
+                                        ),
+                                      },
+                                    });
+                                  }
+                            }
+                            progressInputDisabled={updateTask.isPending}
+                            onEdit={() => setEditingTask(t)}
+                            onDone={
+                              isExpandedParent
+                                ? undefined
+                                : async () => {
+                                    const nextProgress = progressTarget(t, p);
+                                    await updateTask.mutateAsync({
+                                      id: t.id,
+                                      patch: {
+                                        current_progress: nextProgress,
+                                        status: deriveTaskStatus(
+                                          { ...t, current_progress: nextProgress },
+                                          p,
+                                          allTasks,
+                                        ),
+                                      },
+                                    });
+                                  }
+                            }
+                            onOpenComplexSettings={
+                              isComplexParent
+                                ? () =>
+                                    setComplexSettingsFor({
+                                      parent: t,
+                                      mode: 'edit',
+                                    })
+                                : undefined
+                            }
+                            onToggleComplexMode={
+                              isComplexParent
+                                ? (next) => handleToggleMode(t, next)
+                                : undefined
+                            }
+                          />
+                        </div>
+
+                        {isExpandedParent
+                          ? subs.map((sub) => (
+                              <div
+                                key={sub.id}
+                                draggable
+                                onDragStart={(event) => {
+                                  setDraggingTaskId(sub.id);
+                                  event.dataTransfer.effectAllowed = 'move';
+                                }}
+                                onDragOver={(event) => {
+                                  event.preventDefault();
+                                  event.dataTransfer.dropEffect = 'move';
+                                }}
+                                onDrop={(event) => {
+                                  event.preventDefault();
+                                  handleDropOnSubtask(sub.id);
+                                }}
+                                onDragEnd={() => setDraggingTaskId(null)}
+                                className={`rounded-xl ${
+                                  draggingTaskId === sub.id ? 'opacity-60' : ''
+                                }`}
+                              >
+                                <TaskRow
+                                  task={sub}
+                                  project={p}
+                                  allTasks={allTasks}
+                                  isSubtask
+                                  onUpdateProgress={async (taskId, nextProgress) => {
+                                    const updatedTask = {
+                                      ...sub,
+                                      current_progress: nextProgress,
+                                    };
+                                    await updateTask.mutateAsync({
+                                      id: taskId,
+                                      patch: {
+                                        current_progress: nextProgress,
+                                        status: deriveTaskStatus(
+                                          updatedTask,
+                                          p,
+                                          allTasks,
+                                        ),
+                                      },
+                                    });
+                                  }}
+                                  progressInputDisabled={updateTask.isPending}
+                                  onEdit={() => setEditingTask(sub)}
+                                  onDone={async () => {
+                                    const nextProgress = progressTarget(sub, p);
+                                    await updateTask.mutateAsync({
+                                      id: sub.id,
+                                      patch: {
+                                        current_progress: nextProgress,
+                                        status: deriveTaskStatus(
+                                          {
+                                            ...sub,
+                                            current_progress: nextProgress,
+                                          },
+                                          p,
+                                          allTasks,
+                                        ),
+                                      },
+                                    });
+                                  }}
+                                  onCompressFromSubtask={() =>
+                                    handleCompressFromSubtask(sub)
+                                  }
+                                />
+                              </div>
+                            ))
+                          : null}
+                      </div>
+                    );
+                  })}
                 </div>
               </>
             )}
@@ -467,6 +694,46 @@ export default function ProjectDetail() {
         tasks={allTasks}
         pace={pace.data ?? null}
         onClose={() => setShowRebalanceModal(false)}
+      />
+      <ComplexTaskSettingsModal
+        open={!!complexSettingsFor}
+        parent={complexSettingsFor?.parent ?? null}
+        project={p}
+        existingSubtasks={
+          complexSettingsFor
+            ? getSubtasks(complexSettingsFor.parent.id, allTasks)
+            : []
+        }
+        mode={complexSettingsFor?.mode ?? 'edit'}
+        onClose={() => setComplexSettingsFor(null)}
+        onSave={async (drafts) => {
+          if (!complexSettingsFor) return;
+          const { parent, mode } = complexSettingsFor;
+          if (mode === 'convert') {
+            await convertToComplex.mutateAsync({ parent, subtasks: drafts });
+          } else {
+            await saveComplexSettings.mutateAsync({ parent, subtasks: drafts });
+          }
+        }}
+      />
+      <ComplexCollapseConflictModal
+        open={!!collapseConflictFor}
+        parent={collapseConflictFor}
+        subtasks={
+          collapseConflictFor
+            ? getSubtasks(collapseConflictFor.id, allTasks)
+            : []
+        }
+        onCancel={() => setCollapseConflictFor(null)}
+        onConfirm={async (chosen) => {
+          if (!collapseConflictFor) return;
+          await toggleComplexMode.mutateAsync({
+            parentId: collapseConflictFor.id,
+            mode: 'compressed',
+            chosenProgress: chosen,
+          });
+          setCollapseConflictFor(null);
+        }}
       />
     </div>
   );

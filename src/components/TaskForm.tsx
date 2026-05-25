@@ -10,6 +10,10 @@ interface Props {
   onSubmit: (input: TaskFormInput) => Promise<void> | void;
   onCancel?: () => void;
   onDelete?: () => Promise<void> | void;
+  /** Open the Complex Task settings modal for this scaling task. */
+  onMakeComplex?: () => void;
+  /** Open the Complex Task settings modal in edit mode. */
+  onEditSubtasks?: () => void;
   submitLabel?: string;
 }
 
@@ -46,6 +50,8 @@ export default function TaskForm({
   onSubmit,
   onCancel,
   onDelete,
+  onMakeComplex,
+  onEditSubtasks,
   submitLabel = 'Save',
 }: Props) {
   const [name, setName] = useState(initial?.name ?? '');
@@ -109,6 +115,8 @@ export default function TaskForm({
       unit_count: null,
       unit_length: null,
       manual_length: null,
+      parent_id: initial?.parent_id ?? null,
+      complex_mode: initial?.complex_mode ?? null,
     };
 
     if (type === 'scaling') {
@@ -270,7 +278,34 @@ export default function TaskForm({
       <p className="text-xs text-subtle">{helpText}</p>
       {error ? <p className="text-xs text-danger">{error}</p> : null}
 
-      <div className="flex justify-end gap-2">
+      <div className="flex flex-wrap justify-end gap-2">
+        {initial &&
+        type === 'scaling' &&
+        !initial.parent_id &&
+        !initial.complex_mode &&
+        onMakeComplex ? (
+          <button
+            type="button"
+            onClick={onMakeComplex}
+            className="btn-secondary"
+            title="Split this task into multiple scaling subtasks."
+          >
+            Make Complex…
+          </button>
+        ) : null}
+        {initial &&
+        type === 'scaling' &&
+        initial.complex_mode &&
+        onEditSubtasks ? (
+          <button
+            type="button"
+            onClick={onEditSubtasks}
+            className="btn-secondary"
+            title="Edit the subtasks for this complex task."
+          >
+            Edit Subtasks…
+          </button>
+        ) : null}
         {onCancel ? (
           <button type="button" onClick={onCancel} className="btn-ghost">
             Cancel
