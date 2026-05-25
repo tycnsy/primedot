@@ -79,6 +79,66 @@ async function fetchProjectVideoLength(projectId: string): Promise<number> {
   return typeof data?.video_length === 'number' ? data.video_length : 0;
 }
 
+type TaskOrderRow = Pick<Task, 'id' | 'project_id' | 'parent_id' | 'sort_order' | 'created_at'>;
+
+async function fetchProjectTaskOrderRows(projectId: string): Promise<TaskOrderRow[]> {
+  const { data, error } = await supabase
+    .from('tasks')
+    .select('id,project_id,parent_id,sort_order,created_at')
+    .eq('project_id', projectId)
+    .order('sort_order', { ascending: true })
+    .order('created_at', { ascending: true });
+  if (error) throw error;
+  return (data ?? []) as TaskOrderRow[];
+}
+
+async function persistTaskSortOrder(taskIds: string[]): Promise<void> {
+  if (taskIds.length === 0) return;
+  const updates = await Promise.all(
+    taskIds.map((id, index) =>
+      supabase.from('tasks').update({ sort_order: index }).eq('id', id).select('id').single(),
+    ),
+  );
+  const firstError = updates.find((result) => result.error)?.error;
+  if (firstError) throw firstError;
+}
+
+function buildGlobalOrderWithSubtasksAfterParent(
+  rows: TaskOrderRow[],
+  parentId: string,
+  orderedSubtaskIds: string[],
+): string[] {
+  const parentIndex = rows.findIndex((row) => row.id === parentId);
+  if (parentIndex < 0) {
+    throw new Error('Failed to reorder subtasks: parent task not found.');
+  }
+
+  const siblingsRemoved = rows.filter((row) => row.parent_id !== parentId);
+  const parentIndexWithoutChildren = siblingsRemoved.findIndex((row) => row.id === parentId);
+  if (parentIndexWithoutChildren < 0) {
+    throw new Error('Failed to reorder subtasks: parent position not found.');
+  }
+
+  const beforeAndParent = siblingsRemoved
+    .slice(0, parentIndexWithoutChildren + 1)
+    .map((row) => row.id);
+  const afterParent = siblingsRemoved
+    .slice(parentIndexWithoutChildren + 1)
+    .map((row) => row.id);
+
+  return [...beforeAndParent, ...orderedSubtaskIds, ...afterParent];
+}
+
+async function normalizeProjectTaskOrderWithParentSubtasks(
+  projectId: string,
+  parentId: string,
+  orderedSubtaskIds: string[],
+): Promise<void> {
+  const rows = await fetchProjectTaskOrderRows(projectId);
+  const taskIds = buildGlobalOrderWithSubtasksAfterParent(rows, parentId, orderedSubtaskIds);
+  await persistTaskSortOrder(taskIds);
+}
+
 function deriveStatusFromDraft(
   draft: TaskStatusDraft,
   projectVideoLength: number,
@@ -516,7 +576,7 @@ export function useConvertToComplex(projectId: string) {
       }
       const projectVideoLength = await fetchProjectVideoLength(projectId);
 
-      const rows = subtasks.map((sub, index) => {
+      const rows = subtasks.map((sub) => {
         const draft: TaskStatusDraft = {
           type: 'scaling',
           current_progress: parent.current_progress,
@@ -535,11 +595,15 @@ export function useConvertToComplex(projectId: string) {
           current_progress: parent.current_progress,
           scaling_modifier: sub.scaling_modifier,
           parent_id: parent.id,
-          sort_order: index,
+          sort_order: 0,
         };
       });
 
-      const { error: insertError } = await supabase.from('tasks').insert(rows);
+      const { data: insertedSubtasks, error: insertError } = await supabase
+        .from('tasks')
+        .insert(rows)
+        .select('id')
+        .returns<{ id: string }[]>();
       if (insertError) throw insertError;
 
       const { data: updated, error: updateError } = await supabase
@@ -549,6 +613,13 @@ export function useConvertToComplex(projectId: string) {
         .select()
         .single();
       if (updateError) throw updateError;
+
+      await normalizeProjectTaskOrderWithParentSubtasks(
+        projectId,
+        parent.id,
+        (insertedSubtasks ?? []).map((row) => row.id),
+      );
+
       return updated as Task;
     },
     onSuccess: () => {
@@ -606,36 +677,12 @@ export function useSaveComplexSettings(projectId: string) {
         if (deleteError) throw deleteError;
       }
 
-      await Promise.all(
-        subtasks.map(async (sub, index) => {
-          if (sub.id && existingById.has(sub.id)) {
-            const draft: TaskStatusDraft = {
-              type: 'scaling',
-              current_progress: existingById.get(sub.id)!.current_progress,
-              scaling_modifier: sub.scaling_modifier,
-              scripting_modifier: null,
-              script_length: null,
-              unit_count: null,
-              unit_length: null,
-              manual_length: null,
-            };
-            const status = deriveStatusFromDraft(draft, projectVideoLength);
-            const { error } = await supabase
-              .from('tasks')
-              .update({
-                name: sub.name,
-                scaling_modifier: sub.scaling_modifier,
-                sort_order: index,
-                status,
-              })
-              .eq('id', sub.id);
-            if (error) throw error;
-            return;
-          }
-
+      const nextSubtaskIds: string[] = [];
+      for (const sub of subtasks) {
+        if (sub.id && existingById.has(sub.id)) {
           const draft: TaskStatusDraft = {
             type: 'scaling',
-            current_progress: parent.current_progress,
+            current_progress: existingById.get(sub.id)!.current_progress,
             scaling_modifier: sub.scaling_modifier,
             scripting_modifier: null,
             script_length: null,
@@ -644,7 +691,33 @@ export function useSaveComplexSettings(projectId: string) {
             manual_length: null,
           };
           const status = deriveStatusFromDraft(draft, projectVideoLength);
-          const { error } = await supabase.from('tasks').insert({
+          const { error } = await supabase
+            .from('tasks')
+            .update({
+              name: sub.name,
+              scaling_modifier: sub.scaling_modifier,
+              status,
+            })
+            .eq('id', sub.id);
+          if (error) throw error;
+          nextSubtaskIds.push(sub.id);
+          continue;
+        }
+
+        const draft: TaskStatusDraft = {
+          type: 'scaling',
+          current_progress: parent.current_progress,
+          scaling_modifier: sub.scaling_modifier,
+          scripting_modifier: null,
+          script_length: null,
+          unit_count: null,
+          unit_length: null,
+          manual_length: null,
+        };
+        const status = deriveStatusFromDraft(draft, projectVideoLength);
+        const { data: inserted, error } = await supabase
+          .from('tasks')
+          .insert({
             project_id: projectId,
             name: sub.name,
             type: 'scaling',
@@ -652,11 +725,15 @@ export function useSaveComplexSettings(projectId: string) {
             current_progress: parent.current_progress,
             scaling_modifier: sub.scaling_modifier,
             parent_id: parent.id,
-            sort_order: index,
-          });
-          if (error) throw error;
-        }),
-      );
+            sort_order: 0,
+          })
+          .select('id')
+          .single();
+        if (error) throw error;
+        nextSubtaskIds.push((inserted as { id: string }).id);
+      }
+
+      await normalizeProjectTaskOrderWithParentSubtasks(projectId, parent.id, nextSubtaskIds);
 
       return parent.id;
     },
