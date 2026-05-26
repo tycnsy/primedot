@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { buildRebalanceOutcome } from './pace';
+import { buildRebalanceOutcome, buildRebalancePredictionOutcome } from './pace';
 import { currentPace } from './calc';
 import type { Project, Task } from './types';
 
@@ -115,6 +115,93 @@ describe('buildRebalanceOutcome', () => {
     expect(outcome).toMatchObject({
       ok: false,
       reason: 'invalid_buffer_modifier',
+    });
+  });
+});
+
+describe('buildRebalancePredictionOutcome', () => {
+  const now = new Date('2026-05-22T09:00:00.000Z');
+  const project = {
+    ...baseProject,
+    due_date: '2026-05-22T19:00:00.000Z',
+  };
+
+  it('estimates resulting buffer modifier from planned work hours', () => {
+    const outcome = buildRebalancePredictionOutcome(
+      [baseTask],
+      project,
+      2 * 3600,
+      { mode: 'hours_to_buffer', plannedWorkHours: 1 },
+      now,
+    );
+
+    expect(outcome.ok).toBe(true);
+    if (!outcome.ok) return;
+    expect(outcome.result.mode).toBe('hours_to_buffer');
+    if (outcome.result.mode !== 'hours_to_buffer') return;
+
+    expect(outcome.result.hourDifferenceHours).toBe(8);
+    expect(outcome.result.remainingHoursUnbuffered).toBe(2);
+    expect(outcome.result.currentProjectBufferModifier).toBe(2);
+    expect(outcome.result.plannedWorkHoursBuffered).toBe(1);
+    expect(outcome.result.plannedWorkHoursUnbuffered).toBe(0.5);
+    expect(outcome.result.remainingHoursAfterPlannedWork).toBe(1.5);
+    expect(outcome.result.predictedBufferModifier).toBe(5.33);
+  });
+
+  it('estimates required work from a target buffer modifier', () => {
+    const outcome = buildRebalancePredictionOutcome(
+      [baseTask],
+      project,
+      2 * 3600,
+      { mode: 'buffer_to_hours', targetBufferModifier: 8 },
+      now,
+    );
+
+    expect(outcome.ok).toBe(true);
+    if (!outcome.ok) return;
+    expect(outcome.result.mode).toBe('buffer_to_hours');
+    if (outcome.result.mode !== 'buffer_to_hours') return;
+
+    expect(outcome.result.currentProjectBufferModifier).toBe(2);
+    expect(outcome.result.requiredWorkHoursUnbuffered).toBe(1);
+    expect(outcome.result.requiredWorkHours).toBe(2);
+    expect(outcome.result.requiredWorkHoursClamped).toBe(2);
+    expect(outcome.result.clampedToZero).toBe(false);
+  });
+
+  it('clamps negative reverse estimate to zero hours', () => {
+    const outcome = buildRebalancePredictionOutcome(
+      [baseTask],
+      project,
+      2 * 3600,
+      { mode: 'buffer_to_hours', targetBufferModifier: 2 },
+      now,
+    );
+
+    expect(outcome.ok).toBe(true);
+    if (!outcome.ok) return;
+    expect(outcome.result.mode).toBe('buffer_to_hours');
+    if (outcome.result.mode !== 'buffer_to_hours') return;
+
+    expect(outcome.result.requiredWorkHoursUnbuffered).toBe(-2);
+    expect(outcome.result.requiredWorkHours).toBe(-4);
+    expect(outcome.result.requiredWorkHoursClamped).toBe(0);
+    expect(outcome.result.clampedToZero).toBe(true);
+  });
+
+  it('fails on non-positive target buffer modifier', () => {
+    const outcome = buildRebalancePredictionOutcome(
+      [baseTask],
+      project,
+      2 * 3600,
+      { mode: 'buffer_to_hours', targetBufferModifier: 0 },
+      now,
+    );
+
+    expect(outcome).toMatchObject({
+      ok: false,
+      reason: 'invalid_target_buffer',
     });
   });
 });

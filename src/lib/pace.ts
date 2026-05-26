@@ -34,6 +34,69 @@ export interface RebalanceSuccess {
 
 export type RebalanceOutcome = RebalanceSuccess | RebalanceFailure;
 
+interface RebalanceInputs {
+  currentPaceSeconds: number;
+  hourDifferenceHours: number;
+  remainingHoursUnbuffered: number;
+}
+
+export type RebalancePredictionMode = 'hours_to_buffer' | 'buffer_to_hours';
+
+export interface RebalancePredictionFromWorkInput {
+  mode: 'hours_to_buffer';
+  plannedWorkHours: number;
+}
+
+export interface RebalancePredictionFromBufferInput {
+  mode: 'buffer_to_hours';
+  targetBufferModifier: number;
+}
+
+export type RebalancePredictionInput =
+  | RebalancePredictionFromWorkInput
+  | RebalancePredictionFromBufferInput;
+
+export interface RebalancePredictionFromWorkResult extends RebalanceInputs {
+  mode: 'hours_to_buffer';
+  currentProjectBufferModifier: number;
+  plannedWorkHoursBuffered: number;
+  plannedWorkHoursUnbuffered: number;
+  remainingHoursAfterPlannedWork: number;
+  predictedBufferModifier: number;
+}
+
+export interface RebalancePredictionFromBufferResult extends RebalanceInputs {
+  mode: 'buffer_to_hours';
+  currentProjectBufferModifier: number;
+  targetBufferModifier: number;
+  requiredWorkHoursUnbuffered: number;
+  requiredWorkHours: number;
+  requiredWorkHoursClamped: number;
+  clampedToZero: boolean;
+}
+
+export type RebalancePredictionResult =
+  | RebalancePredictionFromWorkResult
+  | RebalancePredictionFromBufferResult;
+
+export type RebalancePredictionFailureReason =
+  | RebalanceFailureReason
+  | 'invalid_planned_work'
+  | 'invalid_target_buffer';
+
+export interface RebalancePredictionFailure {
+  ok: false;
+  reason: RebalancePredictionFailureReason;
+  message: string;
+}
+
+export interface RebalancePredictionSuccess {
+  ok: true;
+  result: RebalancePredictionResult;
+}
+
+export type RebalancePredictionOutcome = RebalancePredictionSuccess | RebalancePredictionFailure;
+
 export function buildPacePatchFromBufferSeconds(
   tasks: Task[],
   project: Project,
@@ -58,6 +121,142 @@ export function buildRebalanceOutcome(
   offsetSeconds: number,
   now: Date = new Date(),
 ): RebalanceOutcome {
+  const shared = buildRebalanceInputs(tasks, project, offsetSeconds, now);
+  if (!shared.ok) return shared;
+
+  const { currentPaceSeconds, hourDifferenceHours, remainingHoursUnbuffered } = shared.result;
+  const rawBufferModifier = hourDifferenceHours / remainingHoursUnbuffered;
+  const bufferModifier = Math.round(rawBufferModifier * 100) / 100;
+  if (!Number.isFinite(bufferModifier) || bufferModifier <= 0) {
+    return {
+      ok: false,
+      reason: 'invalid_buffer_modifier',
+      message: 'Computed buffer modifier is not positive. Adjust pace or due date.',
+    };
+  }
+
+  const rebalancedProject: Project = { ...project, buffer_modifier: bufferModifier };
+  const estimatedCompletionAtRebalancedBuffer = estimatedCompletion(tasks, rebalancedProject, now);
+  const targetDeadline = new Date(
+    estimatedCompletionAtRebalancedBuffer.getTime() + currentPaceSeconds * 1000,
+  );
+
+  return {
+    ok: true,
+    result: {
+      estimatedCompletion: estimatedCompletionAtRebalancedBuffer,
+      targetDeadline,
+      targetDeadlineIso: targetDeadline.toISOString(),
+      currentPaceSeconds,
+      hourDifferenceHours,
+      remainingHoursUnbuffered,
+      bufferModifier,
+    },
+  };
+}
+
+export function buildRebalancePredictionOutcome(
+  tasks: Task[],
+  project: Project,
+  offsetSeconds: number,
+  input: RebalancePredictionInput,
+  now: Date = new Date(),
+): RebalancePredictionOutcome {
+  const shared = buildRebalanceInputs(tasks, project, offsetSeconds, now);
+  if (!shared.ok) return shared;
+
+  const { currentPaceSeconds, hourDifferenceHours, remainingHoursUnbuffered } = shared.result;
+  const currentProjectBufferModifier = project.buffer_modifier;
+  if (!Number.isFinite(currentProjectBufferModifier) || currentProjectBufferModifier <= 0) {
+    return {
+      ok: false,
+      reason: 'invalid_buffer_modifier',
+      message: 'Current project buffer modifier must be positive.',
+    };
+  }
+
+  if (input.mode === 'hours_to_buffer') {
+    if (!Number.isFinite(input.plannedWorkHours) || input.plannedWorkHours < 0) {
+      return {
+        ok: false,
+        reason: 'invalid_planned_work',
+        message: 'Planned work hours must be zero or greater.',
+      };
+    }
+
+    const plannedWorkHoursBuffered = input.plannedWorkHours;
+    const plannedWorkHoursUnbuffered = plannedWorkHoursBuffered / currentProjectBufferModifier;
+    const remainingHoursAfterPlannedWork = remainingHoursUnbuffered - plannedWorkHoursUnbuffered;
+    if (!Number.isFinite(remainingHoursAfterPlannedWork) || remainingHoursAfterPlannedWork <= 0) {
+      return {
+        ok: false,
+        reason: 'invalid_remaining_hours',
+        message: 'Planned work leaves no remaining unbuffered hours.',
+      };
+    }
+
+    const rawPredictedBufferModifier = hourDifferenceHours / remainingHoursAfterPlannedWork;
+    const predictedBufferModifier = Math.round(rawPredictedBufferModifier * 100) / 100;
+    if (!Number.isFinite(predictedBufferModifier) || predictedBufferModifier <= 0) {
+      return {
+        ok: false,
+        reason: 'invalid_buffer_modifier',
+        message: 'Computed buffer modifier is not positive. Adjust pace or due date.',
+      };
+    }
+
+    return {
+      ok: true,
+      result: {
+        mode: 'hours_to_buffer',
+        currentPaceSeconds,
+        hourDifferenceHours,
+        remainingHoursUnbuffered,
+        currentProjectBufferModifier,
+        plannedWorkHoursBuffered,
+        plannedWorkHoursUnbuffered,
+        remainingHoursAfterPlannedWork,
+        predictedBufferModifier,
+      },
+    };
+  }
+
+  if (!Number.isFinite(input.targetBufferModifier) || input.targetBufferModifier <= 0) {
+    return {
+      ok: false,
+      reason: 'invalid_target_buffer',
+      message: 'Target buffer modifier must be greater than zero.',
+    };
+  }
+
+  const requiredWorkHoursUnbuffered =
+    remainingHoursUnbuffered - hourDifferenceHours / input.targetBufferModifier;
+  const requiredWorkHours = requiredWorkHoursUnbuffered * currentProjectBufferModifier;
+  const requiredWorkHoursClamped = Math.max(0, requiredWorkHours);
+
+  return {
+    ok: true,
+    result: {
+      mode: 'buffer_to_hours',
+      currentPaceSeconds,
+      hourDifferenceHours,
+      remainingHoursUnbuffered,
+      currentProjectBufferModifier,
+      targetBufferModifier: input.targetBufferModifier,
+      requiredWorkHoursUnbuffered,
+      requiredWorkHours,
+      requiredWorkHoursClamped,
+      clampedToZero: requiredWorkHours < 0,
+    },
+  };
+}
+
+function buildRebalanceInputs(
+  tasks: Task[],
+  project: Project,
+  offsetSeconds: number,
+  now: Date,
+): RebalanceFailure | { ok: true; result: RebalanceInputs } {
   if (!project.due_date) {
     return {
       ok: false,
@@ -99,32 +298,12 @@ export function buildRebalanceOutcome(
     };
   }
 
-  const rawBufferModifier = hourDifferenceHours / remainingHoursUnbuffered;
-  const bufferModifier = Math.round(rawBufferModifier * 100) / 100;
-  if (!Number.isFinite(bufferModifier) || bufferModifier <= 0) {
-    return {
-      ok: false,
-      reason: 'invalid_buffer_modifier',
-      message: 'Computed buffer modifier is not positive. Adjust pace or due date.',
-    };
-  }
-
-  const rebalancedProject: Project = { ...project, buffer_modifier: bufferModifier };
-  const estimatedCompletionAtRebalancedBuffer = estimatedCompletion(tasks, rebalancedProject, now);
-  const targetDeadline = new Date(
-    estimatedCompletionAtRebalancedBuffer.getTime() + currentPaceSeconds * 1000,
-  );
-
   return {
     ok: true,
     result: {
-      estimatedCompletion: estimatedCompletionAtRebalancedBuffer,
-      targetDeadline,
-      targetDeadlineIso: targetDeadline.toISOString(),
       currentPaceSeconds,
       hourDifferenceHours,
       remainingHoursUnbuffered,
-      bufferModifier,
     },
   };
 }
