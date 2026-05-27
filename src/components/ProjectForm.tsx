@@ -5,6 +5,7 @@ import { formatHMS, parseHMS } from '../lib/time';
 interface Props {
   initial?: Project | null;
   tagOptions?: string[];
+  seriesOptions?: string[];
   onSubmit: (input: ProjectInput) => Promise<void> | void;
   onCancel?: () => void;
   submitLabel?: string;
@@ -28,6 +29,7 @@ function fromLocalDateTimeInput(local: string): string {
 export default function ProjectForm({
   initial,
   tagOptions = [],
+  seriesOptions = [],
   onSubmit,
   onCancel,
   submitLabel = 'Save',
@@ -43,6 +45,7 @@ export default function ProjectForm({
     initial ? String(initial.buffer_modifier) : '1',
   );
   const [tag, setTag] = useState(initial?.tag ?? '');
+  const [series, setSeries] = useState(initial?.series ?? '');
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
@@ -72,6 +75,7 @@ export default function ProjectForm({
         due_date: dueDateLocal ? fromLocalDateTimeInput(dueDateLocal) : null,
         buffer_modifier: buffer,
         tag: tag.trim() || null,
+        series: series.trim() || null,
       });
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Save failed.');
@@ -148,6 +152,24 @@ export default function ProjectForm({
           />
           <datalist id="project-tag-options">
             {tagOptions.map((option) => (
+              <option key={option} value={option} />
+            ))}
+          </datalist>
+        </div>
+        <div className="space-y-1">
+          <label className="label" htmlFor="proj-series">
+            Series
+          </label>
+          <input
+            id="proj-series"
+            className="input"
+            value={series}
+            onChange={(e) => setSeries(e.target.value)}
+            placeholder="optional"
+            list="project-series-options"
+          />
+          <datalist id="project-series-options">
+            {seriesOptions.map((option) => (
               <option key={option} value={option} />
             ))}
           </datalist>

@@ -9,6 +9,7 @@ import {
 import {
   useDeleteProject,
   useProject,
+  useProjectSeries,
   useProjectTags,
   useUpdateProject,
 } from '../hooks/useProjects';
@@ -25,6 +26,7 @@ import {
 import { usePaceSettings } from '../hooks/usePaceSettings';
 import { useCreateTemplateFromProject } from '../hooks/useTemplates';
 import ProjectForm from '../components/ProjectForm';
+import TagPill from '../components/TagPill';
 import TaskForm from '../components/TaskForm';
 import TaskRow from '../components/TaskRow';
 import PaceDisplay from '../components/PaceDisplay';
@@ -85,6 +87,7 @@ export default function ProjectDetail() {
   const navigate = useNavigate();
   const project = useProject(id);
   const projectTags = useProjectTags();
+  const projectSeries = useProjectSeries();
   const tasks = useTasks(id);
   const pace = usePaceSettings(id);
   const updateProject = useUpdateProject();
@@ -117,6 +120,12 @@ export default function ProjectDetail() {
     null,
   );
   const allTasks = tasks.data ?? [];
+  const tagColorByName = new Map(
+    (projectTags.data ?? []).map((tag) => [tag.name, tag.color] as const),
+  );
+  const seriesColorByName = new Map(
+    (projectSeries.data ?? []).map((series) => [series.name, series.color] as const),
+  );
 
   useEffect(() => {
     setOrderedTasks(allTasks);
@@ -281,7 +290,10 @@ export default function ProjectDetail() {
             <span className="pill">video {formatHMS(p.video_length)}</span>
             <span className="pill">×{p.buffer_modifier} buffer</span>
             {dueLabel ? <span className="pill">due {dueLabel}</span> : null}
-            {p.tag ? <span className="pill">{p.tag}</span> : null}
+            {p.tag ? <TagPill name={p.tag} color={tagColorByName.get(p.tag)} /> : null}
+            {p.series ? (
+              <TagPill name={p.series} color={seriesColorByName.get(p.series)} />
+            ) : null}
           </div>
         </div>
         <div className="flex items-center gap-2">
@@ -391,6 +403,7 @@ export default function ProjectDetail() {
           <ProjectForm
             initial={p}
             tagOptions={(projectTags.data ?? []).map((tag) => tag.name)}
+            seriesOptions={(projectSeries.data ?? []).map((series) => series.name)}
             submitLabel="Save"
             onCancel={() => setEditingProject(false)}
             onSubmit={async (input) => {

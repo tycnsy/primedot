@@ -1,13 +1,16 @@
 import { format } from 'date-fns';
 import { Link } from 'react-router-dom';
+import PaceGridTable from '../components/PaceGridTable';
 import { usePaceSettingsForProjects } from '../hooks/usePaceSettings';
 import { useHiddenPaceCards } from '../hooks/useHiddenPaceCards';
 import { useProjects } from '../hooks/useProjects';
 import { useTasksForProjects } from '../hooks/useTasks';
 import { useTicker } from '../hooks/useTicker';
 import { currentPace, currentPaceEnd, paceMargin } from '../lib/calc';
+import { sortProjects } from '../lib/projectGrouping';
 import { formatHMS } from '../lib/time';
 import type { Task } from '../lib/types';
+import { useMemo, useState } from 'react';
 
 function formatPaceEnd(date: Date | null): string {
   if (!date) return 'No pace end';
@@ -28,6 +31,7 @@ function cardTint(seconds: number | null): string {
 }
 
 export default function ProjectsPace() {
+  const [activeTab, setActiveTab] = useState<'grid' | 'table'>('grid');
   const now = useTicker(1000);
   const {
     hiddenProjectIds,
@@ -38,7 +42,11 @@ export default function ProjectsPace() {
   } = useHiddenPaceCards();
   const { data: projects = [], isLoading: projectsLoading, error: projectsError } =
     useProjects();
-  const projectIds = projects.map((project) => project.id);
+  const sortedProjects = useMemo(
+    () => sortProjects(projects, 'due_date'),
+    [projects],
+  );
+  const projectIds = sortedProjects.map((project) => project.id);
   const {
     data: tasks = [],
     isLoading: tasksLoading,
@@ -56,8 +64,8 @@ export default function ProjectsPace() {
     return acc;
   }, {});
   const visibleProjects = isHideMode
-    ? projects
-    : projects.filter((project) => !hiddenProjectIds.has(project.id));
+    ? sortedProjects
+    : sortedProjects.filter((project) => !hiddenProjectIds.has(project.id));
 
   return (
     <div className="space-y-6">
@@ -69,14 +77,32 @@ export default function ProjectsPace() {
         </p>
       </div>
 
-      <div className="flex justify-end">
-        <button
-          type="button"
-          onClick={toggleHideMode}
-          className={isHideMode ? 'btn-primary' : 'btn-ghost'}
-        >
-          {isHideMode ? 'Confirm hidden cards' : 'Hide cards'}
-        </button>
+      <div className="flex items-center justify-between gap-3">
+        <div className="segmented">
+          <button
+            type="button"
+            data-active={activeTab === 'grid'}
+            onClick={() => setActiveTab('grid')}
+          >
+            Grid
+          </button>
+          <button
+            type="button"
+            data-active={activeTab === 'table'}
+            onClick={() => setActiveTab('table')}
+          >
+            Table
+          </button>
+        </div>
+        {activeTab === 'grid' ? (
+          <button
+            type="button"
+            onClick={toggleHideMode}
+            className={isHideMode ? 'btn-primary' : 'btn-ghost'}
+          >
+            {isHideMode ? 'Confirm hidden cards' : 'Hide cards'}
+          </button>
+        ) : null}
       </div>
 
       {projectsLoading ? <p className="text-muted">Loading pace grid...</p> : null}
@@ -87,22 +113,25 @@ export default function ProjectsPace() {
             : 'Could not load project pace right now.'}
         </p>
       ) : null}
-      {!projectsLoading && projects.length === 0 ? (
+      {!projectsLoading && sortedProjects.length === 0 ? (
         <div className="card text-sm text-muted">No projects yet.</div>
       ) : null}
-      {isHideMode ? (
+      {activeTab === 'grid' && isHideMode ? (
         <div className="card text-sm text-muted">
           Select cards to hide from the Pace Grid, Pace sidebar, and Timer page,
           then confirm hidden cards.
         </div>
       ) : null}
-      {!isHideMode && projects.length > 0 && visibleProjects.length === 0 ? (
+      {activeTab === 'grid' &&
+      !isHideMode &&
+      sortedProjects.length > 0 &&
+      visibleProjects.length === 0 ? (
         <div className="card text-sm text-muted">
           All pace cards are hidden. Use Hide cards to unhide projects.
         </div>
       ) : null}
 
-      {visibleProjects.length > 0 ? (
+      {activeTab === 'grid' && visibleProjects.length > 0 ? (
         <ul className="grid grid-cols-2 gap-3 pb-4">
           {visibleProjects.map((project) => {
             const pace = paceByProject[project.id];
@@ -207,6 +236,15 @@ export default function ProjectsPace() {
             );
           })}
         </ul>
+      ) : null}
+      {activeTab === 'table' ? (
+        <PaceGridTable
+          projects={visibleProjects}
+          tasksByProject={tasksByProject}
+          paceByProject={paceByProject}
+          now={now}
+          isLoading={tasksLoading || paceLoading}
+        />
       ) : null}
     </div>
   );

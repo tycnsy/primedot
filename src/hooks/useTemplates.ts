@@ -6,24 +6,51 @@ import type {
   ProjectInput,
   ProjectTemplate,
   ProjectTemplateInput,
+  ProjectTemplateUpdateInput,
   Task,
   TemplateTask,
+  TemplateTaskCreateInput,
+  TemplateTaskUpdateInput,
 } from '../lib/types';
 
 const templatesKey = (userId: string | undefined) =>
   ['project_templates', userId] as const;
+const templateKey = (templateId: string) => ['project_templates', templateId] as const;
 const templateTasksManyKey = (templateIds: string[]) =>
   ['template_tasks', 'many', ...templateIds] as const;
+const templateTasksKey = (templateId: string) =>
+  ['template_tasks', templateId] as const;
 const projectsKey = (userId: string | undefined) => ['projects', userId] as const;
 const tasksKey = (projectId: string) => ['tasks', projectId] as const;
 const paceKey = (projectId: string) => ['pace_settings', projectId] as const;
 const projectTagsKey = (userId: string | undefined) =>
   ['project_tags', userId] as const;
+const projectSeriesKey = (userId: string | undefined) =>
+  ['project_series', userId] as const;
 
 function normalizeTag(tag: string | null | undefined): string | null {
   if (tag == null) return null;
   const trimmed = tag.trim();
   return trimmed.length > 0 ? trimmed : null;
+}
+
+async function ensureProjectTag(userId: string, tag: string | null): Promise<void> {
+  if (!tag) return;
+  const { error } = await supabase
+    .from('project_tags')
+    .upsert({ user_id: userId, name: tag }, { onConflict: 'user_id,name' });
+  if (error) throw error;
+}
+
+async function ensureProjectSeries(
+  userId: string,
+  series: string | null,
+): Promise<void> {
+  if (!series) return;
+  const { error } = await supabase
+    .from('project_series')
+    .upsert({ user_id: userId, name: series }, { onConflict: 'user_id,name' });
+  if (error) throw error;
 }
 
 export function useTemplates() {
@@ -51,6 +78,40 @@ export function useTemplateTasksForTemplates(templateIds: string[]) {
         .from('template_tasks')
         .select('*')
         .in('template_id', templateIds)
+        .order('sort_order', { ascending: true })
+        .order('created_at', { ascending: true });
+      if (error) throw error;
+      return (data ?? []) as TemplateTask[];
+    },
+  });
+}
+
+export function useTemplate(templateId: string | undefined) {
+  return useQuery({
+    queryKey: templateKey(templateId ?? ''),
+    enabled: !!templateId,
+    queryFn: async (): Promise<ProjectTemplate | null> => {
+      const { data, error } = await supabase
+        .from('project_templates')
+        .select('*')
+        .eq('id', templateId!)
+        .maybeSingle();
+      if (error) throw error;
+      return (data ?? null) as ProjectTemplate | null;
+    },
+  });
+}
+
+export function useTemplateTasks(templateId: string | undefined) {
+  return useQuery({
+    queryKey: templateTasksKey(templateId ?? ''),
+    enabled: !!templateId,
+    queryFn: async (): Promise<TemplateTask[]> => {
+      const { data, error } = await supabase
+        .from('template_tasks')
+        .select('*')
+        .eq('template_id', templateId!)
+        .order('sort_order', { ascending: true })
         .order('created_at', { ascending: true });
       if (error) throw error;
       return (data ?? []) as TemplateTask[];
@@ -77,6 +138,7 @@ export function useCreateTemplateFromProject() {
         video_length: project.video_length,
         buffer_modifier: project.buffer_modifier,
         tag: project.tag,
+        series: project.series,
         target_deadline_offset_seconds: null,
         true_deadline_offset_seconds: null,
       };
@@ -103,6 +165,7 @@ export function useCreateTemplateFromProject() {
           unit_count: task.unit_count,
           unit_length: task.unit_length,
           manual_length: task.manual_length,
+          sort_order: task.sort_order,
         }));
         const { error: tasksError } = await supabase
           .from('template_tasks')
@@ -114,6 +177,7 @@ export function useCreateTemplateFromProject() {
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: templatesKey(user?.id) });
+      qc.invalidateQueries({ queryKey: ['template_tasks'] });
     },
   });
 }
@@ -144,17 +208,14 @@ export function useCreateProjectFromTemplate() {
           projectInput?.tag === undefined
             ? normalizeTag(template.tag)
             : normalizeTag(projectInput.tag),
+        series:
+          projectInput?.series === undefined
+            ? normalizeTag(template.series)
+            : normalizeTag(projectInput.series),
       };
 
-      if (resolvedInput.tag) {
-        const { error: tagError } = await supabase
-          .from('project_tags')
-          .upsert(
-            { user_id: user.id, name: resolvedInput.tag },
-            { onConflict: 'user_id,name' },
-          );
-        if (tagError) throw tagError;
-      }
+      await ensureProjectTag(user.id, resolvedInput.tag);
+      await ensureProjectSeries(user.id, resolvedInput.series);
 
       const { data: project, error: projectError } = await supabase
         .from('projects')
@@ -168,6 +229,7 @@ export function useCreateProjectFromTemplate() {
         .from('template_tasks')
         .select('*')
         .eq('template_id', template.id)
+        .order('sort_order', { ascending: true })
         .order('created_at', { ascending: true });
       if (readTemplateTasksError) throw readTemplateTasksError;
 
@@ -217,6 +279,7 @@ export function useCreateProjectFromTemplate() {
       qc.invalidateQueries({ queryKey: tasksKey(project.id) });
       qc.invalidateQueries({ queryKey: paceKey(project.id) });
       qc.invalidateQueries({ queryKey: projectTagsKey(user?.id) });
+      qc.invalidateQueries({ queryKey: projectSeriesKey(user?.id) });
     },
   });
 }
@@ -237,6 +300,130 @@ export function useDeleteTemplate() {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: templatesKey(user?.id) });
       qc.invalidateQueries({ queryKey: ['template_tasks'] });
+    },
+  });
+}
+
+export function useUpdateTemplate() {
+  const qc = useQueryClient();
+  const { user } = useAuth();
+  return useMutation({
+    mutationFn: async ({
+      id,
+      patch,
+    }: {
+      id: string;
+      patch: ProjectTemplateUpdateInput;
+    }) => {
+      if (!user) throw new Error('Not signed in');
+      const normalizedPatch: ProjectTemplateUpdateInput = {
+        ...patch,
+        ...(patch.tag === undefined ? {} : { tag: normalizeTag(patch.tag) }),
+        ...(patch.series === undefined ? {} : { series: normalizeTag(patch.series) }),
+      };
+      await ensureProjectTag(user.id, normalizedPatch.tag ?? null);
+      await ensureProjectSeries(user.id, normalizedPatch.series ?? null);
+
+      const { data, error } = await supabase
+        .from('project_templates')
+        .update(normalizedPatch)
+        .eq('id', id)
+        .select('*')
+        .single();
+      if (error) throw error;
+      return data as ProjectTemplate;
+    },
+    onSuccess: (template) => {
+      qc.invalidateQueries({ queryKey: templatesKey(user?.id) });
+      qc.invalidateQueries({ queryKey: templateKey(template.id) });
+      qc.invalidateQueries({ queryKey: projectTagsKey(user?.id) });
+      qc.invalidateQueries({ queryKey: projectSeriesKey(user?.id) });
+    },
+  });
+}
+
+export function useCreateTemplateTask(templateId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (input: Omit<TemplateTaskCreateInput, 'template_id'>) => {
+      const payload: TemplateTaskCreateInput = { ...input, template_id: templateId };
+      const { data, error } = await supabase
+        .from('template_tasks')
+        .insert(payload)
+        .select('*')
+        .single();
+      if (error) throw error;
+      return data as TemplateTask;
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: templateTasksKey(templateId) });
+      qc.invalidateQueries({ queryKey: ['template_tasks', 'many'] });
+    },
+  });
+}
+
+export function useUpdateTemplateTask(templateId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async ({
+      id,
+      patch,
+    }: {
+      id: string;
+      patch: TemplateTaskUpdateInput;
+    }) => {
+      const { data, error } = await supabase
+        .from('template_tasks')
+        .update(patch)
+        .eq('id', id)
+        .select('*')
+        .single();
+      if (error) throw error;
+      return data as TemplateTask;
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: templateTasksKey(templateId) });
+      qc.invalidateQueries({ queryKey: ['template_tasks', 'many'] });
+    },
+  });
+}
+
+export function useDeleteTemplateTask(templateId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (taskId: string) => {
+      const { error } = await supabase.from('template_tasks').delete().eq('id', taskId);
+      if (error) throw error;
+      return taskId;
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: templateTasksKey(templateId) });
+      qc.invalidateQueries({ queryKey: ['template_tasks', 'many'] });
+    },
+  });
+}
+
+export function useReplaceTemplateTasksOrder(templateId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (taskIds: string[]) => {
+      const updates = await Promise.all(
+        taskIds.map((id, index) =>
+          supabase
+            .from('template_tasks')
+            .update({ sort_order: index })
+            .eq('id', id)
+            .select('id')
+            .single(),
+        ),
+      );
+      const firstError = updates.find((result) => result.error)?.error;
+      if (firstError) throw firstError;
+      return taskIds;
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: templateTasksKey(templateId) });
+      qc.invalidateQueries({ queryKey: ['template_tasks', 'many'] });
     },
   });
 }

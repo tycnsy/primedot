@@ -93,7 +93,7 @@ async function handleWhoami(userId: string): Promise<Response> {
 async function handleListProjects(userId: string): Promise<Response> {
   const projectsResUnknown = await admin
     .from('projects')
-    .select('id,name,video_length,due_date,buffer_modifier,tag,sort_order,created_at')
+    .select('id,name,video_length,due_date,buffer_modifier,tag,series,sort_order,created_at')
     .eq('user_id', userId)
     .order('sort_order', { ascending: true })
     .order('created_at', { ascending: true });

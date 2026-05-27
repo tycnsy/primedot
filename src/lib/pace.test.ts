@@ -12,6 +12,7 @@ const baseProject: Project = {
   sync_true_deadline_with_due_date: false,
   buffer_modifier: 2,
   tag: null,
+  series: null,
   sort_order: 0,
   created_at: '2026-01-01T00:00:00Z',
 };

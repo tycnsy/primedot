@@ -9,6 +9,7 @@ import ProjectsPace from './pages/ProjectsPace';
 import Calendar from './pages/Calendar';
 import Timer from './pages/Timer';
 import Templates from './pages/Templates';
+import TemplateDetail from './pages/TemplateDetail';
 import HabitsToday from './pages/HabitsToday';
 import HabitsIndex from './pages/HabitsIndex';
 import HabitDetail from './pages/HabitDetail';
@@ -20,6 +21,8 @@ import GoalDetailDaily from './pages/GoalDetailDaily';
 import Whiteboards from './pages/Whiteboards';
 import Whiteboard from './pages/Whiteboard';
 import SettingsIntegrations from './pages/SettingsIntegrations';
+import SettingsSeries from './pages/SettingsSeries';
+import SettingsTags from './pages/SettingsTags';
 import { RequireAuth } from './components/RequireAuth';
 import Layout from './components/Layout';
 
@@ -94,6 +97,7 @@ export default function App() {
           <Route path="/calendar" element={<Calendar />} />
           <Route path="/projects/pace" element={<ProjectsPace />} />
           <Route path="/templates" element={<Templates />} />
+          <Route path="/templates/:templateId" element={<TemplateDetail />} />
           <Route path="/habits/today" element={<HabitsToday />} />
           <Route path="/habits" element={<HabitsIndex />} />
           <Route path="/habits/archive" element={<HabitsArchive />} />
@@ -107,6 +111,8 @@ export default function App() {
           <Route path="/projects/:id" element={<ProjectDetail />} />
           <Route path="/projects/:id/timer" element={<Timer />} />
           <Route path="/settings/integrations" element={<SettingsIntegrations />} />
+          <Route path="/settings/tags" element={<SettingsTags />} />
+          <Route path="/settings/series" element={<SettingsSeries />} />
         </Route>
         <Route path="*" element={<Navigate to="/projects" replace />} />
       </Routes>

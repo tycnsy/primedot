@@ -188,13 +188,22 @@ export default function Templates() {
                   </svg>
                 )}
               </button>
-              <button
-                type="button"
-                onClick={() => openCreateFlow(template)}
-                className="btn-ghost !px-3 !py-1.5 text-xs"
-              >
-                Use template
-              </button>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => navigate(`/templates/${template.id}`)}
+                  className="btn-ghost !px-3 !py-1.5 text-xs"
+                >
+                  Edit
+                </button>
+                <button
+                  type="button"
+                  onClick={() => openCreateFlow(template)}
+                  className="btn-ghost !px-3 !py-1.5 text-xs"
+                >
+                  Use template
+                </button>
+              </div>
             </div>
           </li>
         ))}

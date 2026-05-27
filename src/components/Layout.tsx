@@ -75,9 +75,10 @@ export default function Layout() {
     location.pathname === '/timer' ||
     /^\/projects\/[^/]+\/timer$/.test(location.pathname);
   const isCalendarWide = location.pathname === '/calendar';
+  const isProjectsWide = location.pathname === '/projects';
   const contentClass = isFullBleed
     ? 'h-full w-full'
-    : isTimerWide || isCalendarWide
+    : isTimerWide || isCalendarWide || isProjectsWide
       ? 'w-full px-4 py-8 sm:px-6'
       : 'mx-auto max-w-5xl px-4 py-8 sm:px-6';
 
@@ -233,6 +234,18 @@ export default function Layout() {
             label="Integrations"
             collapsed={collapsed}
             icon={<IntegrationsIcon />}
+          />
+          <SidebarLink
+            to="/settings/tags"
+            label="Tags"
+            collapsed={collapsed}
+            icon={<TagIcon />}
+          />
+          <SidebarLink
+            to="/settings/series"
+            label="Series"
+            collapsed={collapsed}
+            icon={<SeriesIcon />}
           />
         </nav>
 
@@ -583,6 +596,47 @@ function IntegrationsIcon() {
     >
       <path d="M10 13a4 4 0 0 0 5.66 0l3-3a4 4 0 0 0-5.66-5.66l-1.5 1.5" />
       <path d="M14 11a4 4 0 0 0-5.66 0l-3 3a4 4 0 0 0 5.66 5.66l1.5-1.5" />
+    </svg>
+  );
+}
+
+function TagIcon() {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      width="16"
+      height="16"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.6"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden
+    >
+      <path d="M20 10.5 13.5 4H5v8.5L11.5 19a2 2 0 0 0 2.8 0l5.7-5.7a2 2 0 0 0 0-2.8Z" />
+      <circle cx="8.5" cy="8.5" r="1" />
+    </svg>
+  );
+}
+
+function SeriesIcon() {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      width="16"
+      height="16"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.6"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden
+    >
+      <path d="M4 7h11" />
+      <path d="M4 12h16" />
+      <path d="M4 17h9" />
+      <circle cx="18" cy="7" r="2" />
+      <circle cx="15" cy="17" r="2" />
     </svg>
   );
 }

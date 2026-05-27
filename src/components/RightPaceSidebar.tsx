@@ -1,6 +1,8 @@
+import { useMemo } from 'react';
 import { Link } from 'react-router-dom';
 import { format } from 'date-fns';
 import { currentPace, currentPaceEnd, paceMargin } from '../lib/calc';
+import { sortProjects } from '../lib/projectGrouping';
 import { formatHMS } from '../lib/time';
 import { useProjects } from '../hooks/useProjects';
 import { usePaceSettingsForProjects } from '../hooks/usePaceSettings';
@@ -35,10 +37,14 @@ export default function RightPaceSidebar({
   const now = useTicker(1000);
   const { data: projects = [], isLoading: projectsLoading, error: projectsError } =
     useProjects();
+  const sortedProjects = useMemo(
+    () => sortProjects(projects, 'due_date'),
+    [projects],
+  );
   const { hideModeProjectIds, hiddenProjectIds, toggleProjectHidden } =
     useHiddenPaceCards();
 
-  const projectIds = projects.map((project) => project.id);
+  const projectIds = sortedProjects.map((project) => project.id);
   const {
     data: tasks = [],
     isLoading: tasksLoading,
@@ -72,13 +78,13 @@ export default function RightPaceSidebar({
     );
   }
 
-  if (projects.length === 0) {
+  if (sortedProjects.length === 0) {
     return <div className="p-3 text-xs text-muted">No projects yet.</div>;
   }
 
   const visibleProjects = isHideMode
-    ? projects
-    : projects.filter((project) => !hiddenProjectIds.has(project.id));
+    ? sortedProjects
+    : sortedProjects.filter((project) => !hiddenProjectIds.has(project.id));
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">

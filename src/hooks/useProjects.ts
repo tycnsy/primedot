@@ -6,6 +6,7 @@ import type {
   PaceSettings,
   Project,
   ProjectInput,
+  ProjectSeries,
   ProjectTag,
   ProjectUpdateInput,
 } from '../lib/types';
@@ -15,6 +16,8 @@ const projectsKey = (userId: string | undefined) =>
 const projectKey = (id: string) => ['project', id] as const;
 const projectTagsKey = (userId: string | undefined) =>
   ['project_tags', userId] as const;
+const projectSeriesKey = (userId: string | undefined) =>
+  ['project_series', userId] as const;
 const paceKey = (projectId: string | undefined) =>
   ['pace_settings', projectId] as const;
 
@@ -33,11 +36,25 @@ function normalizeTag(tag: string | null | undefined): string | null {
   return trimmed.length > 0 ? trimmed : null;
 }
 
+function normalizeSeries(series: string | null | undefined): string | null {
+  if (series == null) return null;
+  const trimmed = series.trim();
+  return trimmed.length > 0 ? trimmed : null;
+}
+
 async function ensureProjectTag(userId: string, tag: string | null): Promise<void> {
   if (!tag) return;
   const { error } = await supabase
     .from('project_tags')
     .upsert({ user_id: userId, name: tag }, { onConflict: 'user_id,name' });
+  if (error) throw error;
+}
+
+async function ensureProjectSeries(userId: string, series: string | null): Promise<void> {
+  if (!series) return;
+  const { error } = await supabase
+    .from('project_series')
+    .upsert({ user_id: userId, name: series }, { onConflict: 'user_id,name' });
   if (error) throw error;
 }
 
@@ -151,6 +168,22 @@ export function useProjectTags() {
   });
 }
 
+export function useProjectSeries() {
+  const { user } = useAuth();
+  return useQuery({
+    queryKey: projectSeriesKey(user?.id),
+    enabled: !!user,
+    queryFn: async (): Promise<ProjectSeries[]> => {
+      const { data, error } = await supabase
+        .from('project_series')
+        .select('*')
+        .order('name', { ascending: true });
+      if (error) throw error;
+      return (data ?? []) as ProjectSeries[];
+    },
+  });
+}
+
 export function useCreateProject() {
   const qc = useQueryClient();
   const { user } = useAuth();
@@ -158,7 +191,9 @@ export function useCreateProject() {
     mutationFn: async (input: ProjectInput) => {
       if (!user) throw new Error('Not signed in');
       const tag = normalizeTag(input.tag);
+      const series = normalizeSeries(input.series);
       await ensureProjectTag(user.id, tag);
+      await ensureProjectSeries(user.id, series);
       const { data: lastProject, error: lastProjectError } = await supabase
         .from('projects')
         .select('sort_order')
@@ -174,6 +209,7 @@ export function useCreateProject() {
         .insert({
           ...input,
           tag,
+          series,
           user_id: user.id,
           ...(isLegacyDb ? {} : { sort_order: (lastProject?.sort_order ?? -1) + 1 }),
         })
@@ -185,6 +221,7 @@ export function useCreateProject() {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: projectsKey(user?.id) });
       qc.invalidateQueries({ queryKey: projectTagsKey(user?.id) });
+      qc.invalidateQueries({ queryKey: projectSeriesKey(user?.id) });
     },
   });
 }
@@ -200,10 +237,16 @@ export function useUpdateProject() {
       id: string;
       patch: ProjectUpdateInput;
     }) => {
-      const normalizedPatch =
-        patch.tag === undefined ? patch : { ...patch, tag: normalizeTag(patch.tag) };
+      const normalizedPatch = {
+        ...patch,
+        ...(patch.tag === undefined ? {} : { tag: normalizeTag(patch.tag) }),
+        ...(patch.series === undefined
+          ? {}
+          : { series: normalizeSeries(patch.series) }),
+      };
       if (!user) throw new Error('Not signed in');
       await ensureProjectTag(user.id, normalizedPatch.tag ?? null);
+      await ensureProjectSeries(user.id, normalizedPatch.series ?? null);
       const { data, error } = await supabase
         .from('projects')
         .update(normalizedPatch)
@@ -228,6 +271,7 @@ export function useUpdateProject() {
       qc.invalidateQueries({ queryKey: projectsKey(user?.id) });
       qc.invalidateQueries({ queryKey: projectKey(project.id) });
       qc.invalidateQueries({ queryKey: projectTagsKey(user?.id) });
+      qc.invalidateQueries({ queryKey: projectSeriesKey(user?.id) });
       if (syncedPace === undefined) return;
       if (syncedPace) {
         qc.setQueryData<PaceSettings | null>(paceKey(project.id), syncedPace);
@@ -263,6 +307,7 @@ export function useDeleteProject() {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: projectsKey(user?.id) });
       qc.invalidateQueries({ queryKey: projectTagsKey(user?.id) });
+      qc.invalidateQueries({ queryKey: projectSeriesKey(user?.id) });
     },
   });
 }
@@ -314,6 +359,216 @@ export function useReorderProjects() {
       }
     },
     onSettled: () => {
+      qc.invalidateQueries({ queryKey: projectsKey(user?.id) });
+    },
+  });
+}
+
+export function useCreateProjectTag() {
+  const qc = useQueryClient();
+  const { user } = useAuth();
+  return useMutation({
+    mutationFn: async ({
+      name,
+      color,
+    }: {
+      name: string;
+      color: string;
+    }) => {
+      if (!user) throw new Error('Not signed in');
+      const trimmedName = name.trim();
+      if (!trimmedName) throw new Error('Name is required.');
+      const trimmedColor = color.trim();
+      if (!trimmedColor) throw new Error('Color is required.');
+      const { data, error } = await supabase
+        .from('project_tags')
+        .insert({ user_id: user.id, name: trimmedName, color: trimmedColor })
+        .select('*')
+        .single();
+      if (error) throw error;
+      return data as ProjectTag;
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: projectTagsKey(user?.id) });
+    },
+  });
+}
+
+export function useUpdateProjectTag() {
+  const qc = useQueryClient();
+  const { user } = useAuth();
+  return useMutation({
+    mutationFn: async ({
+      id,
+      oldName,
+      name,
+      color,
+    }: {
+      id: string;
+      oldName: string;
+      name: string;
+      color: string;
+    }) => {
+      if (!user) throw new Error('Not signed in');
+      const trimmedName = name.trim();
+      if (!trimmedName) throw new Error('Name is required.');
+      const trimmedColor = color.trim();
+      if (!trimmedColor) throw new Error('Color is required.');
+
+      const { data, error } = await supabase
+        .from('project_tags')
+        .update({ name: trimmedName, color: trimmedColor })
+        .eq('id', id)
+        .eq('user_id', user.id)
+        .select('*')
+        .single();
+      if (error) throw error;
+
+      if (oldName !== trimmedName) {
+        const { error: renameError } = await supabase
+          .from('projects')
+          .update({ tag: trimmedName })
+          .eq('user_id', user.id)
+          .eq('tag', oldName);
+        if (renameError) throw renameError;
+      }
+
+      return data as ProjectTag;
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: projectTagsKey(user?.id) });
+      qc.invalidateQueries({ queryKey: projectsKey(user?.id) });
+    },
+  });
+}
+
+export function useDeleteProjectTag() {
+  const qc = useQueryClient();
+  const { user } = useAuth();
+  return useMutation({
+    mutationFn: async ({ id, name }: { id: string; name: string }) => {
+      if (!user) throw new Error('Not signed in');
+      const { error: clearError } = await supabase
+        .from('projects')
+        .update({ tag: null })
+        .eq('user_id', user.id)
+        .eq('tag', name);
+      if (clearError) throw clearError;
+      const { error } = await supabase
+        .from('project_tags')
+        .delete()
+        .eq('id', id)
+        .eq('user_id', user.id);
+      if (error) throw error;
+      return id;
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: projectTagsKey(user?.id) });
+      qc.invalidateQueries({ queryKey: projectsKey(user?.id) });
+    },
+  });
+}
+
+export function useCreateProjectSeries() {
+  const qc = useQueryClient();
+  const { user } = useAuth();
+  return useMutation({
+    mutationFn: async ({
+      name,
+      color,
+    }: {
+      name: string;
+      color: string;
+    }) => {
+      if (!user) throw new Error('Not signed in');
+      const trimmedName = name.trim();
+      if (!trimmedName) throw new Error('Name is required.');
+      const trimmedColor = color.trim();
+      if (!trimmedColor) throw new Error('Color is required.');
+      const { data, error } = await supabase
+        .from('project_series')
+        .insert({ user_id: user.id, name: trimmedName, color: trimmedColor })
+        .select('*')
+        .single();
+      if (error) throw error;
+      return data as ProjectSeries;
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: projectSeriesKey(user?.id) });
+    },
+  });
+}
+
+export function useUpdateProjectSeries() {
+  const qc = useQueryClient();
+  const { user } = useAuth();
+  return useMutation({
+    mutationFn: async ({
+      id,
+      oldName,
+      name,
+      color,
+    }: {
+      id: string;
+      oldName: string;
+      name: string;
+      color: string;
+    }) => {
+      if (!user) throw new Error('Not signed in');
+      const trimmedName = name.trim();
+      if (!trimmedName) throw new Error('Name is required.');
+      const trimmedColor = color.trim();
+      if (!trimmedColor) throw new Error('Color is required.');
+
+      const { data, error } = await supabase
+        .from('project_series')
+        .update({ name: trimmedName, color: trimmedColor })
+        .eq('id', id)
+        .eq('user_id', user.id)
+        .select('*')
+        .single();
+      if (error) throw error;
+
+      if (oldName !== trimmedName) {
+        const { error: renameError } = await supabase
+          .from('projects')
+          .update({ series: trimmedName })
+          .eq('user_id', user.id)
+          .eq('series', oldName);
+        if (renameError) throw renameError;
+      }
+
+      return data as ProjectSeries;
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: projectSeriesKey(user?.id) });
+      qc.invalidateQueries({ queryKey: projectsKey(user?.id) });
+    },
+  });
+}
+
+export function useDeleteProjectSeries() {
+  const qc = useQueryClient();
+  const { user } = useAuth();
+  return useMutation({
+    mutationFn: async ({ id, name }: { id: string; name: string }) => {
+      if (!user) throw new Error('Not signed in');
+      const { error: clearError } = await supabase
+        .from('projects')
+        .update({ series: null })
+        .eq('user_id', user.id)
+        .eq('series', name);
+      if (clearError) throw clearError;
+      const { error } = await supabase
+        .from('project_series')
+        .delete()
+        .eq('id', id)
+        .eq('user_id', user.id);
+      if (error) throw error;
+      return id;
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: projectSeriesKey(user?.id) });
       qc.invalidateQueries({ queryKey: projectsKey(user?.id) });
     },
   });

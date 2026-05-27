@@ -11,6 +11,7 @@ export interface Project {
   sync_true_deadline_with_due_date: boolean;
   buffer_modifier: number;
   tag: string | null;
+  series: string | null;
   sort_order: number;
   created_at: string;
 }
@@ -19,6 +20,15 @@ export interface ProjectTag {
   id: string;
   user_id: string;
   name: string;
+  color: string;
+  created_at: string;
+}
+
+export interface ProjectSeries {
+  id: string;
+  user_id: string;
+  name: string;
+  color: string;
   created_at: string;
 }
 
@@ -62,6 +72,7 @@ export interface ProjectTemplate {
   video_length: number;
   buffer_modifier: number;
   tag: string | null;
+  series: string | null;
   target_deadline_offset_seconds: number | null;
   true_deadline_offset_seconds: number | null;
   created_at: string;
@@ -78,12 +89,13 @@ export interface TemplateTask {
   unit_count: number | null;
   unit_length: number | null;
   manual_length: number | null;
+  sort_order: number;
   created_at: string;
 }
 
 export type ProjectInput = Pick<
   Project,
-  'name' | 'video_length' | 'due_date' | 'buffer_modifier' | 'tag'
+  'name' | 'video_length' | 'due_date' | 'buffer_modifier' | 'tag' | 'series'
 >;
 
 export type ProjectUpdateInput = Partial<
@@ -94,6 +106,7 @@ export type ProjectUpdateInput = Partial<
     | 'due_date'
     | 'buffer_modifier'
     | 'tag'
+    | 'series'
     | 'sync_true_deadline_with_due_date'
   >
 >;
@@ -111,11 +124,17 @@ export type ProjectTemplateInput = Pick<
   | 'video_length'
   | 'buffer_modifier'
   | 'tag'
+  | 'series'
   | 'target_deadline_offset_seconds'
   | 'true_deadline_offset_seconds'
 >;
 
 export type TemplateTaskInput = Omit<TemplateTask, 'id' | 'created_at'>;
+export type ProjectTemplateUpdateInput = Partial<ProjectTemplateInput>;
+export type TemplateTaskCreateInput = TemplateTaskInput;
+export type TemplateTaskUpdateInput = Partial<
+  Omit<TemplateTaskInput, 'template_id'>
+>;
 
 export interface IntegrationToken {
   id: string;
