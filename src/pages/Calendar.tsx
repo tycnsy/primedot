@@ -2,7 +2,11 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { dueDateForDropTarget, localDayKeyFromDate, localDayKeyFromIso } from '../lib/calendarDueDate';
 import TagPill from '../components/TagPill';
-import { useProjectTags, useProjects, useUpdateProject } from '../hooks/useProjects';
+import {
+  useAllProjectsIncludingArchived,
+  useProjectTags,
+  useUpdateProject,
+} from '../hooks/useProjects';
 import type { Project } from '../lib/types';
 
 type CalendarCell = {
@@ -85,7 +89,7 @@ function buildProjectsByDay(projects: Project[]): Map<string, Project[]> {
 }
 
 export default function Calendar() {
-  const { data: projects = [], isLoading, error } = useProjects();
+  const { data: projects = [], isLoading, error } = useAllProjectsIncludingArchived();
   const { data: projectTags = [] } = useProjectTags();
   const updateProject = useUpdateProject();
   const [loadedStartMonth, setLoadedStartMonth] = useState<Date>(() => {
@@ -331,15 +335,24 @@ function ProjectChip({
   onDragStart: (projectId: string) => void;
   onDragEnd: () => void;
 }) {
+  const isArchived = !!project.archived_at;
   return (
     <div
-      draggable
+      draggable={!isArchived}
       onDragStart={(event) => {
+        if (isArchived) {
+          event.preventDefault();
+          return;
+        }
         onDragStart(project.id);
         event.dataTransfer.effectAllowed = 'move';
       }}
       onDragEnd={onDragEnd}
-      className={`rounded-md border border-border/80 bg-bg px-2 py-1 text-xs space-y-1 ${
+      className={`rounded-md border px-2 py-1 text-xs space-y-1 ${
+        isArchived
+          ? 'border-success/35 bg-success/15'
+          : 'border-border/80 bg-bg'
+      } ${
         draggingProjectId === project.id ? 'opacity-60' : ''
       }`}
     >
@@ -347,11 +360,18 @@ function ProjectChip({
         to={`/projects/${project.id}`}
         draggable={false}
         onDragStart={(event) => event.preventDefault()}
-        className="block truncate text-fg hover:text-accent transition-colors"
+        className={`block truncate transition-colors ${
+          isArchived ? 'text-success hover:text-success' : 'text-fg hover:text-accent'
+        }`}
         title={project.name}
       >
         {project.name}
       </Link>
+      {isArchived ? (
+        <span className="inline-flex rounded bg-success/20 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-success">
+          Archived
+        </span>
+      ) : null}
       {project.tag ? <TagPill name={project.tag} color={tagColor} /> : null}
     </div>
   );

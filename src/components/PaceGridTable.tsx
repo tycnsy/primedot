@@ -132,6 +132,8 @@ function PaceGridTableRow({
       ? ''
       : paceSeconds < 0
         ? 'bg-danger/10'
+        : paceSeconds < 3600
+          ? 'bg-warn/10'
         : 'bg-success/10';
 
   return (

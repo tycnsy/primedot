@@ -4,6 +4,7 @@ import { Capacitor, type PluginListenerHandle } from '@capacitor/core';
 import { Navigate, Route, Routes, useNavigate } from 'react-router-dom';
 import Login from './pages/Login';
 import Projects from './pages/Projects';
+import ProjectsArchive from './pages/ProjectsArchive';
 import ProjectDetail from './pages/ProjectDetail';
 import ProjectsPace from './pages/ProjectsPace';
 import Calendar from './pages/Calendar';
@@ -94,6 +95,7 @@ export default function App() {
         >
           <Route path="/timer" element={<Timer />} />
           <Route path="/projects" element={<Projects />} />
+          <Route path="/projects/archive" element={<ProjectsArchive />} />
           <Route path="/calendar" element={<Calendar />} />
           <Route path="/projects/pace" element={<ProjectsPace />} />
           <Route path="/templates" element={<Templates />} />

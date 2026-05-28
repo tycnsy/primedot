@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import {
+  useArchiveProject,
   useCreateProject,
   useProjectSeries,
   useProjectTags,
@@ -83,6 +84,7 @@ export default function Projects() {
   const { data, isLoading, error } = useProjects();
   const createProject = useCreateProject();
   const updateProject = useUpdateProject();
+  const archiveProject = useArchiveProject();
   const projectTags = useProjectTags();
   const projectSeries = useProjectSeries();
   const [showForm, setShowForm] = useState(false);
@@ -151,6 +153,11 @@ export default function Projects() {
         <button onClick={() => setShowForm((v) => !v)} className="btn-primary">
           {showForm ? 'Close' : 'New project'}
         </button>
+      </div>
+      <div className="flex justify-end">
+        <Link to="/projects/archive" className="btn-ghost">
+          View archive
+        </Link>
       </div>
       <div className="flex items-center gap-2">
         <button
@@ -245,6 +252,10 @@ export default function Projects() {
           seriesOptions={seriesOptions}
           onUpdateProject={async (id, patch) => {
             await updateProject.mutateAsync({ id, patch });
+          }}
+          onArchiveProject={async (id) => {
+            if (!confirm('Archive this project?')) return;
+            await archiveProject.mutateAsync(id);
           }}
         />
       )}

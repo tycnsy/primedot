@@ -18,6 +18,7 @@ interface ProjectsTableProps {
   tagOptions: string[];
   seriesOptions: string[];
   onUpdateProject: (id: string, patch: ProjectUpdateInput) => Promise<void>;
+  onArchiveProject?: (id: string) => Promise<void>;
 }
 
 function formatDueDateTime(iso: string | null): string {
@@ -73,6 +74,7 @@ export default function ProjectsTable({
   tagOptions,
   seriesOptions,
   onUpdateProject,
+  onArchiveProject,
 }: ProjectsTableProps) {
   const groups = buildProjectGroups(projects, groupBy, sortBy);
   const projectById = useMemo(
@@ -83,6 +85,7 @@ export default function ProjectsTable({
   const [draftValue, setDraftValue] = useState('');
   const [cellError, setCellError] = useState<string | null>(null);
   const [savingCellKey, setSavingCellKey] = useState<string | null>(null);
+  const [archivingProjectId, setArchivingProjectId] = useState<string | null>(null);
 
   const activeCellKey = editingCell
     ? `${editingCell.projectId}:${editingCell.field}`
@@ -305,11 +308,12 @@ export default function ProjectsTable({
             <table className="w-full min-w-[980px] table-fixed border-separate border-spacing-0">
               <colgroup>
                 <col className="w-[26%]" />
-                <col className="w-[14%]" />
-                <col className="w-[14%]" />
+                <col className="w-[12%]" />
                 <col className="w-[12%]" />
                 <col className="w-[10%]" />
-                <col className="w-[24%]" />
+                <col className="w-[8%]" />
+                <col className="w-[22%]" />
+                <col className="w-[10%]" />
               </colgroup>
               <thead>
                 <tr className="text-left text-xs uppercase tracking-wide text-muted">
@@ -319,6 +323,7 @@ export default function ProjectsTable({
                   <th className="border-b border-border px-2 py-2 font-semibold">Video</th>
                   <th className="border-b border-border px-2 py-2 font-semibold">Buffer</th>
                   <th className="border-b border-border px-2 py-2 font-semibold">Due</th>
+                  <th className="border-b border-border px-2 py-2 font-semibold text-right">Actions</th>
                 </tr>
               </thead>
               <tbody>
@@ -378,6 +383,27 @@ export default function ProjectsTable({
                       {renderCell(project, 'due_date', formatDueDateTime(project.due_date), {
                         type: 'datetime-local',
                       })}
+                    </td>
+                    <td className="border-b border-border/70 px-2 py-2 text-right">
+                      {onArchiveProject ? (
+                        <button
+                          type="button"
+                          className="btn-ghost !h-8 !px-2.5 text-xs"
+                          disabled={archivingProjectId === project.id}
+                          onClick={async () => {
+                            setArchivingProjectId(project.id);
+                            try {
+                              await onArchiveProject(project.id);
+                            } finally {
+                              setArchivingProjectId((prev) =>
+                                prev === project.id ? null : prev,
+                              );
+                            }
+                          }}
+                        >
+                          {archivingProjectId === project.id ? 'Archiving…' : 'Archive'}
+                        </button>
+                      ) : null}
                     </td>
                   </tr>
                 ))}

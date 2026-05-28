@@ -14,6 +14,7 @@ export interface Project {
   series: string | null;
   sort_order: number;
   created_at: string;
+  archived_at: string | null;
 }
 
 export interface ProjectTag {

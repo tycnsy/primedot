@@ -7,10 +7,12 @@ import {
   useSearchParams,
 } from 'react-router-dom';
 import {
+  useArchiveProject,
   useDeleteProject,
   useProject,
   useProjectSeries,
   useProjectTags,
+  useRestoreProject,
   useUpdateProject,
 } from '../hooks/useProjects';
 import {
@@ -91,6 +93,8 @@ export default function ProjectDetail() {
   const tasks = useTasks(id);
   const pace = usePaceSettings(id);
   const updateProject = useUpdateProject();
+  const archiveProject = useArchiveProject();
+  const restoreProject = useRestoreProject();
   const deleteProject = useDeleteProject();
   const createTask = useCreateTask(id ?? '');
   const updateTask = useUpdateTask(id ?? '');
@@ -272,6 +276,7 @@ export default function ProjectDetail() {
   const remaining = remainingProgress(allTasks, p);
   const overallPct = totalLen > 0 ? Math.min(100, (progress / totalLen) * 100) : 0;
   const dueLabel = formatDueDateTime(p.due_date);
+  const archivedLabel = formatDueDateTime(p.archived_at);
 
   return (
     <div className="space-y-8">
@@ -321,6 +326,29 @@ export default function ProjectDetail() {
           >
             Rebalance
           </button>
+          {p.archived_at ? (
+            <button
+              type="button"
+              onClick={async () => {
+                await restoreProject.mutateAsync(p.id);
+              }}
+              className="btn-ghost"
+            >
+              {restoreProject.isPending ? 'Restoring…' : 'Restore'}
+            </button>
+          ) : (
+            <button
+              type="button"
+              onClick={async () => {
+                if (!confirm('Archive this project?')) return;
+                await archiveProject.mutateAsync(p.id);
+                navigate('/projects/archive');
+              }}
+              className="btn-ghost"
+            >
+              {archiveProject.isPending ? 'Archiving…' : 'Archive'}
+            </button>
+          )}
           <button
             onClick={async () => {
               if (!confirm('Delete this project and all its tasks?')) return;
@@ -336,6 +364,13 @@ export default function ProjectDetail() {
           </Link>
         </div>
       </div>
+
+      {p.archived_at ? (
+        <div className="card border-success/35 bg-success/10 text-sm text-fg">
+          Archived{archivedLabel ? ` on ${archivedLabel}` : ''}. Restore to make this project active
+          again.
+        </div>
+      ) : null}
 
       {showTemplateForm ? (
         <div className="card animate-fade-in space-y-3">

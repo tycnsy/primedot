@@ -95,6 +95,7 @@ async function handleListProjects(userId: string): Promise<Response> {
     .from('projects')
     .select('id,name,video_length,due_date,buffer_modifier,tag,series,sort_order,created_at')
     .eq('user_id', userId)
+    .is('archived_at', null)
     .order('sort_order', { ascending: true })
     .order('created_at', { ascending: true });
   if (!isResultLike<Array<{ id: string }>>(projectsResUnknown)) {
@@ -196,13 +197,16 @@ async function handleUpdateTaskProgress(
 
   const projectRes = await admin
     .from('projects')
-    .select('id,user_id,video_length')
+    .select('id,user_id,video_length,archived_at')
     .eq('id', taskRes.data.project_id)
     .maybeSingle();
   if (projectRes.error) return internal(projectRes.error.message);
   if (!projectRes.data || projectRes.data.user_id !== userId) {
     // Don't leak existence of tasks owned by other users.
     return notFound();
+  }
+  if (projectRes.data.archived_at) {
+    return conflict('project is archived');
   }
 
   const projectVideoLength =

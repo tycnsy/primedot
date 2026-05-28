@@ -13,6 +13,10 @@ import type {
 
 const projectsKey = (userId: string | undefined) =>
   ['projects', userId] as const;
+const archivedProjectsKey = (userId: string | undefined) =>
+  ['projects', 'archived', userId] as const;
+const allProjectsKey = (userId: string | undefined) =>
+  ['projects', 'all', userId] as const;
 const projectKey = (id: string) => ['project', id] as const;
 const projectTagsKey = (userId: string | undefined) =>
   ['project_tags', userId] as const;
@@ -20,6 +24,8 @@ const projectSeriesKey = (userId: string | undefined) =>
   ['project_series', userId] as const;
 const paceKey = (projectId: string | undefined) =>
   ['pace_settings', projectId] as const;
+
+type ProjectListMode = 'active' | 'archived' | 'all';
 
 function isMissingSortOrderColumn(error: unknown): boolean {
   if (!error || typeof error !== 'object') return false;
@@ -104,34 +110,72 @@ async function syncTrueDeadlineWithDueDate(
   return data as PaceSettings;
 }
 
+async function fetchProjects(mode: ProjectListMode): Promise<Project[]> {
+  let request = supabase
+    .from('projects')
+    .select('*')
+    .order('sort_order', { ascending: true })
+    .order('created_at', { ascending: false });
+  if (mode === 'active') {
+    request = request.is('archived_at', null);
+  } else if (mode === 'archived') {
+    request = request
+      .not('archived_at', 'is', null)
+      .order('archived_at', { ascending: false });
+  }
+  const { data, error } = await request;
+
+  if (!error) return (data ?? []) as Project[];
+
+  if (!isMissingSortOrderColumn(error)) throw error;
+
+  let fallback = supabase
+    .from('projects')
+    .select('*')
+    .order('created_at', { ascending: false });
+  if (mode === 'active') {
+    fallback = fallback.is('archived_at', null);
+  } else if (mode === 'archived') {
+    fallback = fallback
+      .not('archived_at', 'is', null)
+      .order('archived_at', { ascending: false });
+  }
+  const fallbackResult = await fallback;
+  if (fallbackResult.error) throw fallbackResult.error;
+
+  return ((fallbackResult.data ?? []) as Project[]).map((project, index) => ({
+    ...project,
+    sort_order: index,
+  }));
+}
+
 export function useProjects() {
   const { user } = useAuth();
   return useQuery({
     queryKey: projectsKey(user?.id),
     enabled: !!user,
     ...paceRefreshQueryOptions,
-    queryFn: async (): Promise<Project[]> => {
-      const { data, error } = await supabase
-        .from('projects')
-        .select('*')
-        .order('sort_order', { ascending: true })
-        .order('created_at', { ascending: false });
+    queryFn: async (): Promise<Project[]> => fetchProjects('active'),
+  });
+}
 
-      if (!error) return (data ?? []) as Project[];
+export function useArchivedProjects() {
+  const { user } = useAuth();
+  return useQuery({
+    queryKey: archivedProjectsKey(user?.id),
+    enabled: !!user,
+    ...paceRefreshQueryOptions,
+    queryFn: async (): Promise<Project[]> => fetchProjects('archived'),
+  });
+}
 
-      if (!isMissingSortOrderColumn(error)) throw error;
-
-      const fallback = await supabase
-        .from('projects')
-        .select('*')
-        .order('created_at', { ascending: false });
-      if (fallback.error) throw fallback.error;
-
-      return ((fallback.data ?? []) as Project[]).map((project, index) => ({
-        ...project,
-        sort_order: index,
-      }));
-    },
+export function useAllProjectsIncludingArchived() {
+  const { user } = useAuth();
+  return useQuery({
+    queryKey: allProjectsKey(user?.id),
+    enabled: !!user,
+    ...paceRefreshQueryOptions,
+    queryFn: async (): Promise<Project[]> => fetchProjects('all'),
   });
 }
 
@@ -220,6 +264,8 @@ export function useCreateProject() {
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: projectsKey(user?.id) });
+      qc.invalidateQueries({ queryKey: archivedProjectsKey(user?.id) });
+      qc.invalidateQueries({ queryKey: allProjectsKey(user?.id) });
       qc.invalidateQueries({ queryKey: projectTagsKey(user?.id) });
       qc.invalidateQueries({ queryKey: projectSeriesKey(user?.id) });
     },
@@ -269,6 +315,8 @@ export function useUpdateProject() {
     },
     onSuccess: ({ project, syncedPace }) => {
       qc.invalidateQueries({ queryKey: projectsKey(user?.id) });
+      qc.invalidateQueries({ queryKey: archivedProjectsKey(user?.id) });
+      qc.invalidateQueries({ queryKey: allProjectsKey(user?.id) });
       qc.invalidateQueries({ queryKey: projectKey(project.id) });
       qc.invalidateQueries({ queryKey: projectTagsKey(user?.id) });
       qc.invalidateQueries({ queryKey: projectSeriesKey(user?.id) });
@@ -306,8 +354,57 @@ export function useDeleteProject() {
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: projectsKey(user?.id) });
+      qc.invalidateQueries({ queryKey: archivedProjectsKey(user?.id) });
+      qc.invalidateQueries({ queryKey: allProjectsKey(user?.id) });
       qc.invalidateQueries({ queryKey: projectTagsKey(user?.id) });
       qc.invalidateQueries({ queryKey: projectSeriesKey(user?.id) });
+    },
+  });
+}
+
+export function useArchiveProject() {
+  const qc = useQueryClient();
+  const { user } = useAuth();
+  return useMutation({
+    mutationFn: async (id: string) => {
+      const archivedAt = new Date().toISOString();
+      const { data, error } = await supabase
+        .from('projects')
+        .update({ archived_at: archivedAt })
+        .eq('id', id)
+        .select()
+        .single();
+      if (error) throw error;
+      return data as Project;
+    },
+    onSuccess: (project) => {
+      qc.invalidateQueries({ queryKey: projectsKey(user?.id) });
+      qc.invalidateQueries({ queryKey: archivedProjectsKey(user?.id) });
+      qc.invalidateQueries({ queryKey: allProjectsKey(user?.id) });
+      qc.invalidateQueries({ queryKey: projectKey(project.id) });
+    },
+  });
+}
+
+export function useRestoreProject() {
+  const qc = useQueryClient();
+  const { user } = useAuth();
+  return useMutation({
+    mutationFn: async (id: string) => {
+      const { data, error } = await supabase
+        .from('projects')
+        .update({ archived_at: null })
+        .eq('id', id)
+        .select()
+        .single();
+      if (error) throw error;
+      return data as Project;
+    },
+    onSuccess: (project) => {
+      qc.invalidateQueries({ queryKey: projectsKey(user?.id) });
+      qc.invalidateQueries({ queryKey: archivedProjectsKey(user?.id) });
+      qc.invalidateQueries({ queryKey: allProjectsKey(user?.id) });
+      qc.invalidateQueries({ queryKey: projectKey(project.id) });
     },
   });
 }
@@ -360,6 +457,8 @@ export function useReorderProjects() {
     },
     onSettled: () => {
       qc.invalidateQueries({ queryKey: projectsKey(user?.id) });
+      qc.invalidateQueries({ queryKey: archivedProjectsKey(user?.id) });
+      qc.invalidateQueries({ queryKey: allProjectsKey(user?.id) });
     },
   });
 }
@@ -438,6 +537,8 @@ export function useUpdateProjectTag() {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: projectTagsKey(user?.id) });
       qc.invalidateQueries({ queryKey: projectsKey(user?.id) });
+      qc.invalidateQueries({ queryKey: archivedProjectsKey(user?.id) });
+      qc.invalidateQueries({ queryKey: allProjectsKey(user?.id) });
     },
   });
 }
@@ -465,6 +566,8 @@ export function useDeleteProjectTag() {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: projectTagsKey(user?.id) });
       qc.invalidateQueries({ queryKey: projectsKey(user?.id) });
+      qc.invalidateQueries({ queryKey: archivedProjectsKey(user?.id) });
+      qc.invalidateQueries({ queryKey: allProjectsKey(user?.id) });
     },
   });
 }
@@ -543,6 +646,8 @@ export function useUpdateProjectSeries() {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: projectSeriesKey(user?.id) });
       qc.invalidateQueries({ queryKey: projectsKey(user?.id) });
+      qc.invalidateQueries({ queryKey: archivedProjectsKey(user?.id) });
+      qc.invalidateQueries({ queryKey: allProjectsKey(user?.id) });
     },
   });
 }
@@ -570,6 +675,8 @@ export function useDeleteProjectSeries() {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: projectSeriesKey(user?.id) });
       qc.invalidateQueries({ queryKey: projectsKey(user?.id) });
+      qc.invalidateQueries({ queryKey: archivedProjectsKey(user?.id) });
+      qc.invalidateQueries({ queryKey: allProjectsKey(user?.id) });
     },
   });
 }
