@@ -1,5 +1,5 @@
 import { format } from 'date-fns';
-import { Link } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
 import PaceGridTable from '../components/PaceGridTable';
 import { usePaceSettingsForProjects } from '../hooks/usePaceSettings';
 import { useHiddenPaceCards } from '../hooks/useHiddenPaceCards';
@@ -10,7 +10,7 @@ import { currentPace, currentPaceEnd, paceMargin } from '../lib/calc';
 import { sortProjects } from '../lib/projectGrouping';
 import { formatHMS } from '../lib/time';
 import type { Task } from '../lib/types';
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 
 function formatPaceEnd(date: Date | null): string {
   if (!date) return 'No pace end';
@@ -31,7 +31,11 @@ function cardTint(seconds: number | null): string {
 }
 
 export default function ProjectsPace() {
-  const [activeTab, setActiveTab] = useState<'grid' | 'table'>('grid');
+  const [searchParams, setSearchParams] = useSearchParams();
+  const [activeTab, setActiveTab] = useState<'grid' | 'table'>(
+    searchParams.get('tab') === 'table' ? 'table' : 'grid',
+  );
+  const tabFromUrl = searchParams.get('tab') === 'table' ? 'table' : 'grid';
   const [openColumnsSignal, setOpenColumnsSignal] = useState(0);
   const [viewAllProjects, setViewAllProjects] = useState(false);
   const now = useTicker(1000);
@@ -86,6 +90,21 @@ export default function ProjectsPace() {
     setHiddenProjectIds(hidden);
   };
 
+  const handleTabChange = (tab: 'grid' | 'table') => {
+    setActiveTab(tab);
+    const nextParams = new URLSearchParams(searchParams);
+    if (tab === 'table') {
+      nextParams.set('tab', 'table');
+    } else {
+      nextParams.delete('tab');
+    }
+    setSearchParams(nextParams, { replace: true });
+  };
+
+  useEffect(() => {
+    setActiveTab(tabFromUrl);
+  }, [tabFromUrl]);
+
   return (
     <div className="space-y-6">
       <div className="space-y-1">
@@ -101,14 +120,14 @@ export default function ProjectsPace() {
           <button
             type="button"
             data-active={activeTab === 'grid'}
-            onClick={() => setActiveTab('grid')}
+            onClick={() => handleTabChange('grid')}
           >
             Grid
           </button>
           <button
             type="button"
             data-active={activeTab === 'table'}
-            onClick={() => setActiveTab('table')}
+            onClick={() => handleTabChange('table')}
           >
             Table
           </button>

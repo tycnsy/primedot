@@ -300,9 +300,12 @@ export default function Layout() {
           }`}
         >
           {!rightCollapsed && (
-            <span className="px-1 text-xs font-semibold uppercase tracking-wide text-muted">
+            <Link
+              to="/projects/pace?tab=table"
+              className="rounded px-1 text-xs font-semibold uppercase tracking-wide text-muted transition-colors hover:text-fg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
+            >
               Pace Cards
-            </span>
+            </Link>
           )}
           <button
             type="button"
