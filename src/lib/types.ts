@@ -16,6 +16,7 @@ export interface Project {
   created_at: string;
   start_date: string;
   archived_at: string | null;
+  pace_hidden: boolean;
 }
 
 export interface ProjectTag {

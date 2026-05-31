@@ -1,127 +1,57 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useQueryClient } from '@tanstack/react-query';
+import { supabase } from '../lib/supabase';
+import { useProjects } from './useProjects';
+import type { Project } from '../lib/types';
 
-const HIDDEN_PACE_CARDS_STORAGE_KEY = 'prime:hidden-pace-project-ids';
+// Persisted visibility lives in the database on `projects.pace_hidden`, so it
+// is shared across devices/instances. The committed hidden set is derived from
+// the projects query. Only the ephemeral "hide mode" editing state (the draft
+// selection while the user is choosing which cards to hide) is kept in memory
+// and shared across components via this module-level store.
 
-type HiddenPaceCardsState = {
-  hiddenProjectIds: ReadonlySet<string>;
-  hideModeProjectIds: ReadonlySet<string>;
+type HideModeState = {
   isHideMode: boolean;
+  hideModeProjectIds: ReadonlySet<string>;
 };
 
-type Listener = (state: HiddenPaceCardsState) => void;
+type Listener = (state: HideModeState) => void;
 
 const listeners = new Set<Listener>();
 
-let initialized = false;
-let storageListenerBound = false;
-let state: HiddenPaceCardsState = {
-  hiddenProjectIds: new Set<string>(),
-  hideModeProjectIds: new Set<string>(),
+let state: HideModeState = {
   isHideMode: false,
+  hideModeProjectIds: new Set<string>(),
 };
-
-function parseHiddenProjectIds(raw: string | null): Set<string> {
-  if (!raw) return new Set<string>();
-  try {
-    const parsed = JSON.parse(raw);
-    if (!Array.isArray(parsed)) return new Set<string>();
-    const ids = parsed.filter((value): value is string => typeof value === 'string');
-    return new Set(ids);
-  } catch {
-    return new Set<string>();
-  }
-}
-
-function persistHiddenProjectIds(hiddenProjectIds: ReadonlySet<string>) {
-  if (typeof window === 'undefined') return;
-  try {
-    window.localStorage.setItem(
-      HIDDEN_PACE_CARDS_STORAGE_KEY,
-      JSON.stringify(Array.from(hiddenProjectIds)),
-    );
-  } catch {
-    // localStorage may be unavailable; ignore persistence.
-  }
-}
 
 function emit() {
   for (const listener of listeners) listener(state);
 }
 
-function ensureInitialized() {
-  if (initialized) return;
-  initialized = true;
-  if (typeof window === 'undefined') return;
-  const loaded = parseHiddenProjectIds(
-    window.localStorage.getItem(HIDDEN_PACE_CARDS_STORAGE_KEY),
-  );
-  state = {
-    ...state,
-    hiddenProjectIds: loaded,
-    hideModeProjectIds: loaded,
-  };
-}
-
-function ensureStorageListener() {
-  if (storageListenerBound || typeof window === 'undefined') return;
-  storageListenerBound = true;
-  window.addEventListener('storage', (event) => {
-    if (event.key !== HIDDEN_PACE_CARDS_STORAGE_KEY) return;
-    const loaded = parseHiddenProjectIds(event.newValue);
-    state = {
-      ...state,
-      hiddenProjectIds: loaded,
-      hideModeProjectIds: state.isHideMode ? state.hideModeProjectIds : loaded,
-    };
-    emit();
-  });
-}
-
 function subscribe(listener: Listener) {
-  ensureInitialized();
-  ensureStorageListener();
   listeners.add(listener);
   return () => {
     listeners.delete(listener);
   };
 }
 
-function toggleHideModeState() {
-  ensureInitialized();
-  if (state.isHideMode) {
-    const committed = new Set(state.hideModeProjectIds);
-    state = {
-      hiddenProjectIds: committed,
-      hideModeProjectIds: committed,
-      isHideMode: false,
-    };
-    persistHiddenProjectIds(committed);
-    emit();
-    return;
-  }
-
+function enterHideMode(seed: ReadonlySet<string>) {
   state = {
-    ...state,
     isHideMode: true,
-    hideModeProjectIds: new Set(state.hiddenProjectIds),
+    hideModeProjectIds: new Set(seed),
   };
   emit();
 }
 
-function setHiddenProjectIdsState(ids: ReadonlySet<string>) {
-  ensureInitialized();
-  const next = new Set(ids);
+function exitHideMode() {
   state = {
-    ...state,
-    hiddenProjectIds: next,
-    hideModeProjectIds: next,
+    isHideMode: false,
+    hideModeProjectIds: new Set<string>(),
   };
-  persistHiddenProjectIds(next);
   emit();
 }
 
 function toggleProjectHiddenState(projectId: string) {
-  ensureInitialized();
   if (!state.isHideMode) return;
   const next = new Set(state.hideModeProjectIds);
   if (next.has(projectId)) next.delete(projectId);
@@ -133,21 +63,99 @@ function toggleProjectHiddenState(projectId: string) {
   emit();
 }
 
-export function useHiddenPaceCards() {
-  const [snapshot, setSnapshot] = useState<HiddenPaceCardsState>(() => {
-    ensureInitialized();
-    return state;
-  });
-
-  useEffect(() => subscribe(setSnapshot), []);
-
-  return {
-    hiddenProjectIds: snapshot.hiddenProjectIds,
-    hideModeProjectIds: snapshot.hideModeProjectIds,
-    isHideMode: snapshot.isHideMode,
-    toggleHideMode: toggleHideModeState,
-    toggleProjectHidden: toggleProjectHiddenState,
-    setHiddenProjectIds: setHiddenProjectIdsState,
+function replaceDraftIfHideMode(ids: ReadonlySet<string>) {
+  if (!state.isHideMode) return;
+  state = {
+    ...state,
+    hideModeProjectIds: new Set(ids),
   };
+  emit();
 }
 
+export function useHiddenPaceCards() {
+  const qc = useQueryClient();
+  const { data: projects = [] } = useProjects();
+
+  const hiddenProjectIds = useMemo(
+    () =>
+      new Set(
+        projects.filter((project) => project.pace_hidden).map((project) => project.id),
+      ),
+    [projects],
+  );
+
+  const [snapshot, setSnapshot] = useState<HideModeState>(() => state);
+  useEffect(() => subscribe(setSnapshot), []);
+
+  const persistHidden = useCallback(
+    async (nextHidden: ReadonlySet<string>) => {
+      const toHide = projects
+        .filter((project) => !project.pace_hidden && nextHidden.has(project.id))
+        .map((project) => project.id);
+      const toShow = projects
+        .filter((project) => project.pace_hidden && !nextHidden.has(project.id))
+        .map((project) => project.id);
+
+      if (toHide.length === 0 && toShow.length === 0) return;
+
+      // Optimistically patch every cached projects list so the UI updates
+      // immediately, then reconcile with the server.
+      qc.setQueriesData<Project[]>({ queryKey: ['projects'] }, (old) => {
+        if (!old) return old;
+        return old.map((project) => {
+          const shouldHide = nextHidden.has(project.id);
+          return project.pace_hidden === shouldHide
+            ? project
+            : { ...project, pace_hidden: shouldHide };
+        });
+      });
+
+      try {
+        if (toHide.length > 0) {
+          const { error } = await supabase
+            .from('projects')
+            .update({ pace_hidden: true })
+            .in('id', toHide);
+          if (error) throw error;
+        }
+        if (toShow.length > 0) {
+          const { error } = await supabase
+            .from('projects')
+            .update({ pace_hidden: false })
+            .in('id', toShow);
+          if (error) throw error;
+        }
+      } finally {
+        qc.invalidateQueries({ queryKey: ['projects'] });
+      }
+    },
+    [projects, qc],
+  );
+
+  const toggleHideMode = useCallback(() => {
+    if (state.isHideMode) {
+      const committed = state.hideModeProjectIds;
+      exitHideMode();
+      void persistHidden(committed);
+      return;
+    }
+    enterHideMode(hiddenProjectIds);
+  }, [hiddenProjectIds, persistHidden]);
+
+  const setHiddenProjectIds = useCallback(
+    (ids: ReadonlySet<string>) => {
+      replaceDraftIfHideMode(ids);
+      void persistHidden(ids);
+    },
+    [persistHidden],
+  );
+
+  return {
+    hiddenProjectIds,
+    hideModeProjectIds: snapshot.isHideMode ? snapshot.hideModeProjectIds : hiddenProjectIds,
+    isHideMode: snapshot.isHideMode,
+    toggleHideMode,
+    toggleProjectHidden: toggleProjectHiddenState,
+    setHiddenProjectIds,
+  };
+}
