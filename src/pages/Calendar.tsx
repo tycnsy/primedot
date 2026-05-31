@@ -6,18 +6,26 @@ import {
   localDayKeyFromIso,
   startDateForDropDay,
 } from '../lib/calendarDueDate';
+import { bufferModifierGoal } from '../lib/calc';
 import TagPill from '../components/TagPill';
 import {
   useAllProjectsIncludingArchived,
   useProjectTags,
   useUpdateProject,
 } from '../hooks/useProjects';
+import { useTasksForProjects } from '../hooks/useTasks';
 import type { Project } from '../lib/types';
 
 type CalendarCell = {
   dayKey: string;
+  date: Date;
   labelDay: number;
-  inCurrentMonth: boolean;
+};
+
+type CalendarWeek = {
+  key: string;
+  monthDate: Date;
+  cells: CalendarCell[];
 };
 
 type CalendarView = 'due' | 'start';
@@ -30,10 +38,6 @@ function startOfMonth(date: Date): Date {
 
 function addMonths(date: Date, diff: number): Date {
   return new Date(date.getFullYear(), date.getMonth() + diff, 1);
-}
-
-function monthKey(date: Date): string {
-  return `${date.getFullYear()}-${date.getMonth()}`;
 }
 
 function compareMonths(a: Date, b: Date): number {
@@ -60,24 +64,45 @@ function monthTitle(date: Date): string {
   return date.toLocaleString([], { month: 'long', year: 'numeric' });
 }
 
-function buildMonthCells(monthDate: Date): CalendarCell[] {
-  const year = monthDate.getFullYear();
-  const month = monthDate.getMonth();
-  const firstOfMonth = new Date(year, month, 1);
-  const lastOfMonth = new Date(year, month + 1, 0);
-
-  const gridStart = new Date(year, month, 1 - firstOfMonth.getDay());
-  const gridEnd = new Date(year, month, lastOfMonth.getDate() + (6 - lastOfMonth.getDay()));
-
+function buildCalendarWeeks(startMonth: Date, endMonth: Date): CalendarWeek[] {
+  const firstOfStart = new Date(startMonth.getFullYear(), startMonth.getMonth(), 1);
+  const lastOfEnd = new Date(endMonth.getFullYear(), endMonth.getMonth() + 1, 0);
+  const gridStart = new Date(
+    firstOfStart.getFullYear(),
+    firstOfStart.getMonth(),
+    1 - firstOfStart.getDay(),
+  );
+  const gridEnd = new Date(
+    lastOfEnd.getFullYear(),
+    lastOfEnd.getMonth(),
+    lastOfEnd.getDate() + (6 - lastOfEnd.getDay()),
+  );
   const cells: CalendarCell[] = [];
-  for (const cursor = new Date(gridStart); cursor <= gridEnd; cursor.setDate(cursor.getDate() + 1)) {
+  for (
+    const cursor = new Date(gridStart);
+    cursor <= gridEnd;
+    cursor.setDate(cursor.getDate() + 1)
+  ) {
+    const cellDate = new Date(cursor);
     cells.push({
-      dayKey: localDayKeyFromDate(cursor),
-      labelDay: cursor.getDate(),
-      inCurrentMonth: cursor.getMonth() === month,
+      dayKey: localDayKeyFromDate(cellDate),
+      date: cellDate,
+      labelDay: cellDate.getDate(),
     });
   }
-  return cells;
+
+  const weeks: CalendarWeek[] = [];
+  for (let index = 0; index < cells.length; index += 7) {
+    const weekCells = cells.slice(index, index + 7);
+    if (weekCells.length < 7) continue;
+    const firstDay = weekCells[0];
+    weeks.push({
+      key: firstDay.dayKey,
+      monthDate: startOfMonth(firstDay.date),
+      cells: weekCells,
+    });
+  }
+  return weeks;
 }
 
 function buildProjectsByDay(
@@ -129,6 +154,7 @@ function formatDurationUntilEnd(
 export default function Calendar() {
   const { data: projects = [], isLoading, error } = useAllProjectsIncludingArchived();
   const { data: projectTags = [] } = useProjectTags();
+  const { data: tasks = [] } = useTasksForProjects(projects.map((project) => project.id));
   const updateProject = useUpdateProject();
   const [view, setView] = useState<CalendarView>('due');
   const [loadedStartMonth, setLoadedStartMonth] = useState<Date>(() => {
@@ -143,7 +169,9 @@ export default function Calendar() {
   const [mutationError, setMutationError] = useState<string | null>(null);
   const timelineRef = useRef<HTMLDivElement | null>(null);
   const todayCellRef = useRef<HTMLDivElement | null>(null);
+  const weekRowRefs = useRef<Array<HTMLDivElement | null>>([]);
   const didScrollToTodayRef = useRef(false);
+  const [visibleMonth, setVisibleMonth] = useState<Date>(() => loadedStartMonth);
 
   const undatedProjects = useMemo(
     () => projects.filter((project) => localDayKeyFromIso(project.due_date) == null),
@@ -161,23 +189,34 @@ export default function Calendar() {
     () => new Map(projectTags.map((tag) => [tag.name, tag.color] as const)),
     [projectTags],
   );
+  const tasksByProjectId = useMemo(() => {
+    const byProject = new Map<string, typeof tasks>();
+    for (const task of tasks) {
+      const existing = byProject.get(task.project_id);
+      if (existing) {
+        existing.push(task);
+      } else {
+        byProject.set(task.project_id, [task]);
+      }
+    }
+    return byProject;
+  }, [tasks]);
+  const bufferGoalByProjectId = useMemo(() => {
+    const byProject = new Map<string, number | null>();
+    for (const project of projects) {
+      const projectTasks = tasksByProjectId.get(project.id) ?? [];
+      byProject.set(project.id, bufferModifierGoal(projectTasks, project));
+    }
+    return byProject;
+  }, [projects, tasksByProjectId]);
   const maxDueMonth = useMemo(() => latestDueDateMonth(projects), [projects]);
   const minFutureEnd = useMemo(() => addMonths(startOfMonth(new Date()), 1), []);
   const preferredFutureEnd = useMemo(() => {
     const candidate = maxDueMonth ? addMonths(maxDueMonth, 1) : minFutureEnd;
     return compareMonths(candidate, minFutureEnd) > 0 ? candidate : minFutureEnd;
   }, [maxDueMonth, minFutureEnd]);
-  const monthSections = useMemo(() => {
-    const sections: Array<{ monthDate: Date; cells: CalendarCell[] }> = [];
-    for (
-      let cursor = new Date(loadedStartMonth);
-      compareMonths(cursor, loadedEndMonth) <= 0;
-      cursor = addMonths(cursor, 1)
-    ) {
-      const monthDate = new Date(cursor);
-      sections.push({ monthDate, cells: buildMonthCells(monthDate) });
-    }
-    return sections;
+  const calendarWeeks = useMemo(() => {
+    return buildCalendarWeeks(loadedStartMonth, loadedEndMonth);
   }, [loadedStartMonth, loadedEndMonth]);
 
   useEffect(() => {
@@ -187,6 +226,43 @@ export default function Calendar() {
   }, [preferredFutureEnd]);
 
   useEffect(() => {
+    if (!calendarWeeks.length) return;
+    weekRowRefs.current = weekRowRefs.current.slice(0, calendarWeeks.length);
+  }, [calendarWeeks]);
+
+  useEffect(() => {
+    const container = timelineRef.current;
+    if (!container || calendarWeeks.length === 0) return;
+
+    const updateVisibleMonth = () => {
+      const containerTop = container.getBoundingClientRect().top;
+      const stickyOffset = 64;
+      const threshold = containerTop + stickyOffset;
+      let nextVisibleMonth = calendarWeeks[0].monthDate;
+      for (let index = 0; index < calendarWeeks.length; index += 1) {
+        const row = weekRowRefs.current[index];
+        if (!row) continue;
+        const rect = row.getBoundingClientRect();
+        if (rect.bottom >= threshold) {
+          nextVisibleMonth = calendarWeeks[index].monthDate;
+          break;
+        }
+      }
+      setVisibleMonth((prev) =>
+        compareMonths(prev, nextVisibleMonth) === 0 ? prev : nextVisibleMonth,
+      );
+    };
+
+    updateVisibleMonth();
+    container.addEventListener('scroll', updateVisibleMonth, { passive: true });
+    window.addEventListener('resize', updateVisibleMonth);
+    return () => {
+      container.removeEventListener('scroll', updateVisibleMonth);
+      window.removeEventListener('resize', updateVisibleMonth);
+    };
+  }, [calendarWeeks]);
+
+  useEffect(() => {
     if (didScrollToTodayRef.current) return;
     const container = timelineRef.current;
     const todayCell = todayCellRef.current;
@@ -194,7 +270,7 @@ export default function Calendar() {
     const offsetWithinContainer = todayCell.offsetTop - container.offsetTop;
     container.scrollTop = Math.max(offsetWithinContainer - 60, 0);
     didScrollToTodayRef.current = true;
-  }, [monthSections]);
+  }, [calendarWeeks]);
 
   const dropProject = async (target: { type: 'undated' } | { type: 'day'; dayKey: string }) => {
     if (!draggingProjectId) return;
@@ -341,85 +417,97 @@ export default function Calendar() {
       {mutationError ? <p className="text-danger">{mutationError}</p> : null}
 
       <section className="space-y-2">
-        <div ref={timelineRef} className="max-h-[72vh] space-y-6 overflow-y-auto pr-1">
-          {monthSections.map(({ monthDate, cells }) => (
-            <section key={monthKey(monthDate)} className="space-y-2">
-              <div className="sticky top-0 z-10 rounded-lg bg-bg/95 px-2 py-2 backdrop-blur">
-                <h2 className="text-sm font-semibold text-fg">{monthTitle(monthDate)}</h2>
-                <div className="mt-2 grid grid-cols-7 gap-2">
-                  {WEEKDAY_LABELS.map((weekday) => (
-                    <div
-                      key={`${monthKey(monthDate)}-${weekday}`}
-                      className="px-2 py-1 text-xs font-medium uppercase tracking-wide text-muted"
-                    >
-                      {weekday}
-                    </div>
-                  ))}
+        <div ref={timelineRef} className="max-h-[72vh] space-y-2 overflow-y-auto pr-1">
+          <div className="sticky top-0 z-10 rounded-lg bg-bg/95 px-2 py-2 backdrop-blur">
+            <h2 className="text-sm font-semibold text-fg">{monthTitle(visibleMonth)}</h2>
+            <div className="mt-2 grid grid-cols-7 gap-2">
+              {WEEKDAY_LABELS.map((weekday) => (
+                <div
+                  key={weekday}
+                  className="px-2 py-1 text-xs font-medium uppercase tracking-wide text-muted"
+                >
+                  {weekday}
                 </div>
-              </div>
+              ))}
+            </div>
+          </div>
 
-              <div className="grid grid-cols-1 gap-2 sm:grid-cols-7">
-                {cells.map((cell) => {
-                  const dayProjects = projectsByDay.get(cell.dayKey) ?? [];
-                  const isToday = cell.dayKey === todayKey;
-                  const shouldTrackTodayCell = isToday && cell.inCurrentMonth;
-                  return (
-                    <div
-                      key={cell.dayKey}
-                      ref={shouldTrackTodayCell ? todayCellRef : undefined}
-                      className={`rounded-xl border p-2 min-h-28 space-y-2 ${
-                        cell.inCurrentMonth ? 'border-border bg-surface/60' : 'border-border/70 bg-surface2/50'
-                      } ${isToday ? 'ring-1 ring-accent/60' : ''}`}
-                      onDragOver={(event) => {
-                        if (!draggingProjectId) return;
-                        event.preventDefault();
-                        event.dataTransfer.dropEffect = 'move';
-                      }}
-                      onDrop={(event) => {
-                        event.preventDefault();
-                        void dropProject({ type: 'day', dayKey: cell.dayKey });
-                      }}
-                    >
-                      <div className="flex items-center justify-between">
-                        <span className={`text-xs font-medium ${cell.inCurrentMonth ? 'text-fg' : 'text-muted'}`}>
-                          {cell.labelDay}
-                        </span>
-                        {isToday ? (
-                          <span className="rounded bg-accent/15 px-1.5 py-0.5 text-[10px] font-semibold text-accent">
-                            Today
+          {calendarWeeks.map((week, weekIndex) => (
+            <div
+              key={week.key}
+              ref={(element) => {
+                weekRowRefs.current[weekIndex] = element;
+              }}
+              className="grid grid-cols-1 gap-2 sm:grid-cols-7"
+            >
+              {week.cells.map((cell) => {
+                const dayProjects = projectsByDay.get(cell.dayKey) ?? [];
+                const isToday = cell.dayKey === todayKey;
+                const monthBoundaryLabel = cell.labelDay === 1
+                  ? cell.date.toLocaleString([], { month: 'short' })
+                  : null;
+                return (
+                  <div
+                    key={cell.dayKey}
+                    ref={isToday ? todayCellRef : undefined}
+                    className={`rounded-xl border border-border bg-surface/60 p-2 min-h-28 space-y-2 ${
+                      isToday ? 'ring-1 ring-accent/60' : ''
+                    }`}
+                    onDragOver={(event) => {
+                      if (!draggingProjectId) return;
+                      event.preventDefault();
+                      event.dataTransfer.dropEffect = 'move';
+                    }}
+                    onDrop={(event) => {
+                      event.preventDefault();
+                      void dropProject({ type: 'day', dayKey: cell.dayKey });
+                    }}
+                  >
+                    <div className="flex items-center justify-between gap-1">
+                      <div className="flex items-center gap-1">
+                        <span className="text-xs font-medium text-fg">{cell.labelDay}</span>
+                        {monthBoundaryLabel ? (
+                          <span className="text-[10px] font-medium uppercase tracking-wide text-muted">
+                            {monthBoundaryLabel}
                           </span>
                         ) : null}
                       </div>
-
-                      <div className="space-y-1">
-                        {dayProjects.map((project) => (
-                          <ProjectChip
-                            key={project.id}
-                            project={project}
-                            tagColor={project.tag ? (tagColorByName.get(project.tag) ?? null) : null}
-                            draggable
-                            endInfo={
-                              view === 'start'
-                                ? {
-                                    endLabel: formatEndDateTime(project.due_date),
-                                    durationLabel: formatDurationUntilEnd(
-                                      project.start_date,
-                                      project.due_date,
-                                    ),
-                                  }
-                                : undefined
-                            }
-                            draggingProjectId={draggingProjectId}
-                            onDragStart={setDraggingProjectId}
-                            onDragEnd={() => setDraggingProjectId(null)}
-                          />
-                        ))}
-                      </div>
+                      {isToday ? (
+                        <span className="rounded bg-accent/15 px-1.5 py-0.5 text-[10px] font-semibold text-accent">
+                          Today
+                        </span>
+                      ) : null}
                     </div>
-                  );
-                })}
-              </div>
-            </section>
+
+                    <div className="space-y-1">
+                      {dayProjects.map((project) => (
+                        <ProjectChip
+                          key={project.id}
+                          project={project}
+                          tagColor={project.tag ? (tagColorByName.get(project.tag) ?? null) : null}
+                          draggable
+                          endInfo={
+                            view === 'start'
+                              ? {
+                                  endLabel: formatEndDateTime(project.due_date),
+                                  durationLabel: formatDurationUntilEnd(
+                                    project.start_date,
+                                    project.due_date,
+                                  ),
+                                }
+                              : undefined
+                          }
+                            bufferGoal={view === 'start' ? (bufferGoalByProjectId.get(project.id) ?? null) : null}
+                          draggingProjectId={draggingProjectId}
+                          onDragStart={setDraggingProjectId}
+                          onDragEnd={() => setDraggingProjectId(null)}
+                        />
+                      ))}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
           ))}
         </div>
       </section>
@@ -432,6 +520,7 @@ function ProjectChip({
   tagColor,
   draggable,
   endInfo,
+  bufferGoal,
   draggingProjectId,
   onDragStart,
   onDragEnd,
@@ -440,6 +529,7 @@ function ProjectChip({
   tagColor: string | null;
   draggable: boolean;
   endInfo?: { endLabel: string | null; durationLabel: string | null };
+  bufferGoal?: number | null;
   draggingProjectId: string | null;
   onDragStart: (projectId: string) => void;
   onDragEnd: () => void;
@@ -466,17 +556,24 @@ function ProjectChip({
         draggingProjectId === project.id ? 'opacity-60' : ''
       }`}
     >
-      <Link
-        to={`/projects/${project.id}`}
-        draggable={false}
-        onDragStart={(event) => event.preventDefault()}
-        className={`block truncate transition-colors ${
-          isArchived ? 'text-success hover:text-success' : 'text-fg hover:text-accent'
-        }`}
-        title={project.name}
-      >
-        {project.name}
-      </Link>
+      <div className="flex items-start justify-between gap-2">
+        <Link
+          to={`/projects/${project.id}`}
+          draggable={false}
+          onDragStart={(event) => event.preventDefault()}
+          className={`block min-w-0 flex-1 truncate transition-colors ${
+            isArchived ? 'text-success hover:text-success' : 'text-fg hover:text-accent'
+          }`}
+          title={project.name}
+        >
+          {project.name}
+        </Link>
+        {typeof bufferGoal === 'number' ? (
+          <span className="shrink-0 font-sans text-[10px] text-muted" title="Buffer modifier goal">
+            x{bufferGoal.toFixed(2)} goal
+          </span>
+        ) : null}
+      </div>
       {endInfo ? (
         <div className="space-y-0.5">
           <span className="block text-[10px] text-muted">
