@@ -102,12 +102,13 @@ async function handleListProjects(userId: string): Promise<Response> {
     sort_order: number;
     created_at: string;
     archived_at: string | null;
+    pace_hidden: boolean | number | null;
   };
 
   const projectsResUnknown = await admin
     .from('projects')
     .select(
-      'id,name,video_length,due_date,buffer_modifier,tag,series,sort_order,created_at,archived_at',
+      'id,name,video_length,due_date,buffer_modifier,tag,series,sort_order,created_at,archived_at,pace_hidden',
     )
     .eq('user_id', userId)
     .is('archived_at', null)
@@ -123,7 +124,10 @@ async function handleListProjects(userId: string): Promise<Response> {
   // PostgREST filter behavior changes or a stale deployment omits `.is(...)`.
   const projects = ((projectsRes.data ?? []) as RawProject[])
     .filter((project) => project.archived_at == null)
-    .map(({ archived_at: _archivedAt, ...project }) => project);
+    .map(({ archived_at: _archivedAt, pace_hidden, ...project }) => ({
+      ...project,
+      pace_hidden: Boolean(pace_hidden),
+    }));
   const projectIds = projects.map((p: { id: string }) => p.id);
 
   type RawTask = {
