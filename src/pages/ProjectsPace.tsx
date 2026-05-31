@@ -40,6 +40,7 @@ export default function ProjectsPace() {
     isHideMode,
     toggleHideMode,
     toggleProjectHidden,
+    setHiddenProjectIds,
   } = useHiddenPaceCards();
   const { data: projects = [], isLoading: projectsLoading, error: projectsError } =
     useProjects();
@@ -67,6 +68,21 @@ export default function ProjectsPace() {
   const visibleProjects = isHideMode
     ? sortedProjects
     : sortedProjects.filter((project) => !hiddenProjectIds.has(project.id));
+
+  const handleSetActiveProjects = () => {
+    const nowMs = now.getTime();
+    const hidden = new Set<string>();
+    for (const project of sortedProjects) {
+      const isArchived = project.archived_at != null;
+      const startMs = new Date(project.start_date).getTime();
+      const startedOk = !Number.isNaN(startMs) && nowMs >= startMs;
+      const endMs = project.due_date ? new Date(project.due_date).getTime() : null;
+      const endOk = endMs == null || nowMs <= endMs;
+      const isActive = !isArchived && startedOk && endOk;
+      if (!isActive) hidden.add(project.id);
+    }
+    setHiddenProjectIds(hidden);
+  };
 
   return (
     <div className="space-y-6">
@@ -104,13 +120,22 @@ export default function ProjectsPace() {
             {isHideMode ? 'Confirm hidden cards' : 'Hide cards'}
           </button>
         ) : activeTab === 'table' ? (
-          <button
-            type="button"
-            className="btn-secondary"
-            onClick={() => setOpenColumnsSignal((prev) => prev + 1)}
-          >
-            Visible columns
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              className="btn-ghost"
+              onClick={handleSetActiveProjects}
+            >
+              Set active projects
+            </button>
+            <button
+              type="button"
+              className="btn-secondary"
+              onClick={() => setOpenColumnsSignal((prev) => prev + 1)}
+            >
+              Visible columns
+            </button>
+          </div>
         ) : null}
       </div>
 

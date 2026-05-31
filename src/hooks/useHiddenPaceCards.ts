@@ -108,6 +108,18 @@ function toggleHideModeState() {
   emit();
 }
 
+function setHiddenProjectIdsState(ids: ReadonlySet<string>) {
+  ensureInitialized();
+  const next = new Set(ids);
+  state = {
+    ...state,
+    hiddenProjectIds: next,
+    hideModeProjectIds: next,
+  };
+  persistHiddenProjectIds(next);
+  emit();
+}
+
 function toggleProjectHiddenState(projectId: string) {
   ensureInitialized();
   if (!state.isHideMode) return;
@@ -135,6 +147,7 @@ export function useHiddenPaceCards() {
     isHideMode: snapshot.isHideMode,
     toggleHideMode: toggleHideModeState,
     toggleProjectHidden: toggleProjectHiddenState,
+    setHiddenProjectIds: setHiddenProjectIdsState,
   };
 }
 
