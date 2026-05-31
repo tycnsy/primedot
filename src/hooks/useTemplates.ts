@@ -28,6 +28,12 @@ const projectTagsKey = (userId: string | undefined) =>
 const projectSeriesKey = (userId: string | undefined) =>
   ['project_series', userId] as const;
 
+function defaultStartDateIso(): string {
+  const now = new Date();
+  now.setHours(5, 0, 0, 0);
+  return now.toISOString();
+}
+
 function normalizeTag(tag: string | null | undefined): string | null {
   if (tag == null) return null;
   const trimmed = tag.trim();
@@ -202,6 +208,9 @@ export function useCreateProjectFromTemplate() {
           projectInput?.due_date === undefined
             ? null
             : projectInput.due_date ?? null,
+        sync_true_deadline_with_due_date:
+          projectInput?.sync_true_deadline_with_due_date ?? true,
+        start_date: projectInput?.start_date ?? defaultStartDateIso(),
         buffer_modifier:
           projectInput?.buffer_modifier ?? template.buffer_modifier,
         tag:

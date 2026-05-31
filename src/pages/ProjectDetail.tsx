@@ -37,6 +37,7 @@ import RebalanceModal from '../components/RebalanceModal';
 import ComplexTaskSettingsModal from '../components/ComplexTaskSettingsModal';
 import ComplexCollapseConflictModal from '../components/ComplexCollapseConflictModal';
 import {
+  bufferModifierGoal,
   deriveTaskStatus,
   getSubtasks,
   projectProgress,
@@ -275,6 +276,8 @@ export default function ProjectDetail() {
   const progress = projectProgress(allTasks, p);
   const remaining = remainingProgress(allTasks, p);
   const overallPct = totalLen > 0 ? Math.min(100, (progress / totalLen) * 100) : 0;
+  const bufferGoal = bufferModifierGoal(allTasks, p);
+  const startLabel = formatDueDateTime(p.start_date);
   const dueLabel = formatDueDateTime(p.due_date);
   const archivedLabel = formatDueDateTime(p.archived_at);
 
@@ -294,6 +297,7 @@ export default function ProjectDetail() {
           <div className="mt-1 flex flex-wrap items-center gap-2">
             <span className="pill">video {formatHMS(p.video_length)}</span>
             <span className="pill">×{p.buffer_modifier} buffer</span>
+            {startLabel ? <span className="pill">start {startLabel}</span> : null}
             {dueLabel ? <span className="pill">due {dueLabel}</span> : null}
             {p.tag ? <TagPill name={p.tag} color={tagColorByName.get(p.tag)} /> : null}
             {p.series ? (
@@ -477,6 +481,11 @@ export default function ProjectDetail() {
               <Stat label="Total task length" value={formatHMS(totalLen)} mono />
               <Stat label="Progress" value={formatHMS(progress)} mono />
               <Stat label="Remaining" value={formatHMS(remaining)} mono />
+              <Stat
+                label="Buffer Modifier Goal"
+                value={bufferGoal != null ? `×${bufferGoal.toFixed(2)}` : '—'}
+                mono
+              />
             </div>
             <div className="space-y-1.5">
               <div className="progress-track">

@@ -252,6 +252,8 @@ export function useCreateProject() {
         .from('projects')
         .insert({
           ...input,
+          sync_true_deadline_with_due_date:
+            input.sync_true_deadline_with_due_date ?? true,
           tag,
           series,
           user_id: user.id,

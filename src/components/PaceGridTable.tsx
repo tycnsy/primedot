@@ -3,7 +3,13 @@ import { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useUpsertPaceSettings } from '../hooks/usePaceSettings';
 import { useUpdateProject } from '../hooks/useProjects';
-import { currentPace, currentPaceEnd, paceMargin } from '../lib/calc';
+import ModalShell from './goals/ModalShell';
+import {
+  bufferModifierGoal,
+  currentPace,
+  currentPaceEnd,
+  paceMargin,
+} from '../lib/calc';
 import { buildPacePatchFromBufferSeconds, buildRebalanceOutcome } from '../lib/pace';
 import { formatHMS } from '../lib/time';
 import type { PaceSettings, Project, Task } from '../lib/types';
@@ -12,8 +18,40 @@ const SET_PACE_AMOUNT_KEY = 'prime:pace-table:set-pace-amount';
 const SET_PACE_UNIT_KEY = 'prime:pace-table:set-pace-unit';
 const REBALANCE_AMOUNT_KEY = 'prime:pace-table:rebalance-amount';
 const REBALANCE_UNIT_KEY = 'prime:pace-table:rebalance-unit';
+const VISIBLE_COLUMNS_KEY = 'prime:pace-table:visible-columns';
 
 type TimeUnit = 'minutes' | 'hours';
+type PaceColumnId =
+  | 'name'
+  | 'currentPace'
+  | 'paceMargin'
+  | 'currentPaceEnd'
+  | 'buffer'
+  | 'bufferModifierGoal'
+  | 'setPace'
+  | 'rebalance';
+
+const TABLE_COLUMNS: readonly PaceColumnId[] = [
+  'name',
+  'currentPace',
+  'paceMargin',
+  'currentPaceEnd',
+  'buffer',
+  'bufferModifierGoal',
+  'setPace',
+  'rebalance',
+];
+
+const COLUMN_LABELS: Record<PaceColumnId, string> = {
+  name: 'Name',
+  currentPace: 'Current pace',
+  paceMargin: 'Pace margin',
+  currentPaceEnd: 'Pace Ends @',
+  buffer: 'Buffer',
+  bufferModifierGoal: 'Buffer Goal',
+  setPace: 'Set pace',
+  rebalance: 'Rebalance',
+};
 
 interface PaceGridTableProps {
   projects: Project[];
@@ -21,6 +59,7 @@ interface PaceGridTableProps {
   paceByProject: Record<string, PaceSettings>;
   now: Date;
   isLoading: boolean;
+  openColumnsSignal?: number;
 }
 
 interface PaceGridTableRowProps {
@@ -31,6 +70,7 @@ interface PaceGridTableRowProps {
   isLoading: boolean;
   setPaceSeconds: number;
   rebalanceOffsetSeconds: number;
+  visibleColumns: Set<PaceColumnId>;
 }
 
 function formatPaceEnd(date: Date | null): string {
@@ -59,6 +99,21 @@ function toSeconds(amount: string, unit: TimeUnit): number {
   return unit === 'minutes' ? parsed * 60 : parsed * 3600;
 }
 
+function parseVisibleColumns(value: string): Set<PaceColumnId> {
+  const parsedColumns = value
+    .split(',')
+    .map((column) => column.trim())
+    .filter((column): column is PaceColumnId =>
+      TABLE_COLUMNS.includes(column as PaceColumnId),
+    );
+
+  if (parsedColumns.length === 0) {
+    return new Set(TABLE_COLUMNS);
+  }
+
+  return new Set(parsedColumns);
+}
+
 function PaceGridTableRow({
   project,
   tasks,
@@ -67,6 +122,7 @@ function PaceGridTableRow({
   isLoading,
   setPaceSeconds,
   rebalanceOffsetSeconds,
+  visibleColumns,
 }: PaceGridTableRowProps) {
   const upsertPace = useUpsertPaceSettings(project.id);
   const updateProject = useUpdateProject();
@@ -77,6 +133,13 @@ function PaceGridTableRow({
   const paceSeconds = showComputed ? currentPace(tasks, project, pace, now) : null;
   const marginSeconds = showComputed ? paceMargin(pace) : null;
   const paceEnd = showComputed ? currentPaceEnd(tasks, project, pace) : null;
+  const goalBufferModifier = bufferModifierGoal(tasks, project);
+  const bufferClassName =
+    goalBufferModifier == null
+      ? 'text-fg'
+      : project.buffer_modifier < goalBufferModifier
+        ? 'font-semibold text-danger'
+        : 'font-semibold text-success';
 
   const handleSetPace = async () => {
     setError(null);
@@ -138,48 +201,73 @@ function PaceGridTableRow({
 
   return (
     <tr className={`border-t border-border/60 align-top ${rowTintClass}`}>
-      <td className="px-3 py-2">
-        <Link to={`/projects/${project.id}?tab=pace`} className="font-medium text-fg hover:underline">
-          {project.name}
-        </Link>
-      </td>
-      <td className="px-3 py-2 font-sans tabular-nums text-fg">
-        {paceSeconds == null ? (isLoading ? 'Loading...' : 'No pace') : formatHMS(paceSeconds)}
-      </td>
-      <td
-        className={`px-3 py-2 font-sans tabular-nums ${
-          marginSeconds == null ? 'text-muted' : marginSeconds < 0 ? 'text-danger' : 'text-fg'
-        }`}
-      >
-        {marginSeconds == null ? (isLoading ? 'Loading...' : 'No pace') : formatHMS(marginSeconds)}
-      </td>
-      <td className="px-3 py-2 text-fg/90">
-        {isLoading ? 'Loading...' : formatPaceEnd(paceEnd)}
-      </td>
-      <td className="px-3 py-2 font-sans tabular-nums text-fg">x{project.buffer_modifier.toFixed(2)}</td>
-      <td className="px-3 py-2 text-center">
-        <button
-          type="button"
-          onClick={handleSetPace}
-          className="btn-secondary !h-6 !w-6 !bg-white !p-0 !text-fg"
-          aria-label="Set pace"
-          title="Set pace"
-          disabled={isMutating}
-        />
-      </td>
-      <td className="px-3 py-2 text-center">
-        <div className="space-y-1">
+      {visibleColumns.has('name') ? (
+        <td className="px-3 py-2">
+          <Link to={`/projects/${project.id}?tab=pace`} className="font-medium text-fg hover:underline">
+            {project.name}
+          </Link>
+        </td>
+      ) : null}
+      {visibleColumns.has('currentPace') ? (
+        <td className="px-3 py-2 text-center font-sans tabular-nums text-fg">
+          {paceSeconds == null ? (isLoading ? 'Loading...' : 'No pace') : formatHMS(paceSeconds)}
+        </td>
+      ) : null}
+      {visibleColumns.has('paceMargin') ? (
+        <td
+          className={`px-3 py-2 text-center font-sans tabular-nums ${
+            marginSeconds == null ? 'text-muted' : marginSeconds < 0 ? 'text-danger' : 'text-fg'
+          }`}
+        >
+          {marginSeconds == null
+            ? isLoading
+              ? 'Loading...'
+              : 'No pace'
+            : formatHMS(marginSeconds)}
+        </td>
+      ) : null}
+      {visibleColumns.has('currentPaceEnd') ? (
+        <td className="px-3 py-2 text-center text-fg/90">
+          {isLoading ? 'Loading...' : formatPaceEnd(paceEnd)}
+        </td>
+      ) : null}
+      {visibleColumns.has('buffer') ? (
+        <td className={`px-3 py-2 text-center font-sans tabular-nums ${bufferClassName}`}>
+          x{project.buffer_modifier.toFixed(2)}
+        </td>
+      ) : null}
+      {visibleColumns.has('bufferModifierGoal') ? (
+        <td className="px-3 py-2 text-center font-sans tabular-nums text-fg">
+          {goalBufferModifier == null ? '—' : `x${goalBufferModifier.toFixed(2)}`}
+        </td>
+      ) : null}
+      {visibleColumns.has('setPace') ? (
+        <td className="px-3 py-2 text-center">
           <button
             type="button"
-            onClick={handleRebalance}
-            className="btn-primary !h-6 !w-6 !p-0"
-            aria-label="Rebalance"
-            title="Rebalance"
+            onClick={handleSetPace}
+            className="btn-secondary !h-6 !w-6 !bg-white !p-0 !text-fg"
+            aria-label="Set pace"
+            title="Set pace"
             disabled={isMutating}
           />
-          {error ? <p className="text-xs text-danger">{error}</p> : null}
-        </div>
-      </td>
+        </td>
+      ) : null}
+      {visibleColumns.has('rebalance') ? (
+        <td className="px-3 py-2 text-center">
+          <div className="space-y-1">
+            <button
+              type="button"
+              onClick={handleRebalance}
+              className="btn-primary !h-6 !w-6 !p-0"
+              aria-label="Rebalance"
+              title="Rebalance"
+              disabled={isMutating}
+            />
+            {error ? <p className="text-xs text-danger">{error}</p> : null}
+          </div>
+        </td>
+      ) : null}
     </tr>
   );
 }
@@ -190,6 +278,7 @@ export default function PaceGridTable({
   paceByProject,
   now,
   isLoading,
+  openColumnsSignal = 0,
 }: PaceGridTableProps) {
   const [setPaceAmount, setSetPaceAmount] = useState<string>(() =>
     safeReadLocalStorage(SET_PACE_AMOUNT_KEY, '2'),
@@ -203,6 +292,10 @@ export default function PaceGridTable({
   const [rebalanceUnit, setRebalanceUnit] = useState<TimeUnit>(() =>
     toTimeUnit(safeReadLocalStorage(REBALANCE_UNIT_KEY, 'minutes'), 'minutes'),
   );
+  const [visibleColumns, setVisibleColumns] = useState<Set<PaceColumnId>>(() =>
+    parseVisibleColumns(safeReadLocalStorage(VISIBLE_COLUMNS_KEY, TABLE_COLUMNS.join(','))),
+  );
+  const [isColumnsModalOpen, setIsColumnsModalOpen] = useState(false);
 
   useEffect(() => {
     if (typeof window === 'undefined') return;
@@ -239,6 +332,35 @@ export default function PaceGridTable({
       // localStorage may be unavailable; ignore persistence.
     }
   }, [rebalanceUnit]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    try {
+      const serialized = TABLE_COLUMNS.filter((column) => visibleColumns.has(column)).join(',');
+      window.localStorage.setItem(VISIBLE_COLUMNS_KEY, serialized);
+    } catch {
+      // localStorage may be unavailable; ignore persistence.
+    }
+  }, [visibleColumns]);
+
+  useEffect(() => {
+    if (openColumnsSignal > 0) {
+      setIsColumnsModalOpen(true);
+    }
+  }, [openColumnsSignal]);
+
+  const toggleColumnVisibility = (column: PaceColumnId) => {
+    setVisibleColumns((prev) => {
+      const next = new Set(prev);
+      if (next.has(column)) {
+        if (next.size === 1) return prev;
+        next.delete(column);
+      } else {
+        next.add(column);
+      }
+      return next;
+    });
+  };
 
   const setPaceSeconds = useMemo(
     () => toSeconds(setPaceAmount, setPaceUnit),
@@ -304,15 +426,28 @@ export default function PaceGridTable({
 
       <div className="card overflow-x-auto p-0">
         <table className="min-w-full text-sm">
-          <thead className="bg-surface2/50 text-left text-xs uppercase tracking-wide text-muted">
+          <thead className="bg-surface2/50 text-center text-xs uppercase tracking-wide text-muted">
             <tr>
-              <th className="px-3 py-2 font-semibold">Name</th>
-              <th className="px-3 py-2 font-semibold">Current pace</th>
-              <th className="px-3 py-2 font-semibold">Pace margin</th>
-              <th className="px-3 py-2 font-semibold">Current pace end</th>
-              <th className="px-3 py-2 font-semibold">Buffer</th>
-              <th className="px-3 py-2 font-semibold text-right">Set pace</th>
-              <th className="px-3 py-2 font-semibold text-right">Rebalance</th>
+              {visibleColumns.has('name') ? <th className="px-3 py-2 font-semibold">Name</th> : null}
+              {visibleColumns.has('currentPace') ? (
+                <th className="px-3 py-2 font-semibold">Current pace</th>
+              ) : null}
+              {visibleColumns.has('paceMargin') ? (
+                <th className="px-3 py-2 font-semibold">Pace margin</th>
+              ) : null}
+              {visibleColumns.has('currentPaceEnd') ? (
+                <th className="px-3 py-2 font-semibold">{COLUMN_LABELS.currentPaceEnd}</th>
+              ) : null}
+              {visibleColumns.has('buffer') ? <th className="px-3 py-2 font-semibold">Buffer</th> : null}
+              {visibleColumns.has('bufferModifierGoal') ? (
+                <th className="px-3 py-2 font-semibold">{COLUMN_LABELS.bufferModifierGoal}</th>
+              ) : null}
+              {visibleColumns.has('setPace') ? (
+                <th className="px-3 py-2 font-semibold">Set pace</th>
+              ) : null}
+              {visibleColumns.has('rebalance') ? (
+                <th className="px-3 py-2 font-semibold">Rebalance</th>
+              ) : null}
             </tr>
           </thead>
           <tbody>
@@ -326,11 +461,39 @@ export default function PaceGridTable({
                 isLoading={isLoading}
                 setPaceSeconds={setPaceSeconds}
                 rebalanceOffsetSeconds={rebalanceOffsetSeconds}
+                visibleColumns={visibleColumns}
               />
             ))}
           </tbody>
         </table>
       </div>
+      <ModalShell
+        open={isColumnsModalOpen}
+        title="Visible columns"
+        onClose={() => setIsColumnsModalOpen(false)}
+      >
+        <div className="space-y-3">
+          <p className="text-sm text-muted">
+            Choose which columns are visible in the pace table.
+          </p>
+          <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+            {TABLE_COLUMNS.map((column) => (
+              <label
+                key={column}
+                className="inline-flex cursor-pointer items-center gap-2 rounded-md border border-border/70 bg-surface2/40 px-3 py-2 text-sm text-fg"
+              >
+                <input
+                  type="checkbox"
+                  checked={visibleColumns.has(column)}
+                  onChange={() => toggleColumnVisibility(column)}
+                />
+                {COLUMN_LABELS[column]}
+              </label>
+            ))}
+          </div>
+          <p className="text-xs text-muted">At least one column must stay visible.</p>
+        </div>
+      </ModalShell>
     </div>
   );
 }

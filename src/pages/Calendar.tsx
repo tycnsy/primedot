@@ -1,6 +1,11 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { dueDateForDropTarget, localDayKeyFromDate, localDayKeyFromIso } from '../lib/calendarDueDate';
+import {
+  dueDateForDropTarget,
+  localDayKeyFromDate,
+  localDayKeyFromIso,
+  startDateForDropDay,
+} from '../lib/calendarDueDate';
 import TagPill from '../components/TagPill';
 import {
   useAllProjectsIncludingArchived,
@@ -14,6 +19,8 @@ type CalendarCell = {
   labelDay: number;
   inCurrentMonth: boolean;
 };
+
+type CalendarView = 'due' | 'start';
 
 const WEEKDAY_LABELS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 
@@ -73,10 +80,13 @@ function buildMonthCells(monthDate: Date): CalendarCell[] {
   return cells;
 }
 
-function buildProjectsByDay(projects: Project[]): Map<string, Project[]> {
+function buildProjectsByDay(
+  projects: Project[],
+  getIso: (project: Project) => string | null | undefined,
+): Map<string, Project[]> {
   const byDay = new Map<string, Project[]>();
   for (const project of projects) {
-    const dayKey = localDayKeyFromIso(project.due_date);
+    const dayKey = localDayKeyFromIso(getIso(project));
     if (!dayKey) continue;
     const list = byDay.get(dayKey);
     if (list) {
@@ -88,10 +98,39 @@ function buildProjectsByDay(projects: Project[]): Map<string, Project[]> {
   return byDay;
 }
 
+function formatEndDateTime(iso: string | null | undefined): string | null {
+  if (!iso) return null;
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return null;
+  return date.toLocaleString([], {
+    month: 'short',
+    day: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+  });
+}
+
+function formatDurationUntilEnd(
+  startIso: string | null | undefined,
+  endIso: string | null | undefined,
+): string | null {
+  if (!startIso || !endIso) return null;
+  const start = new Date(startIso);
+  const end = new Date(endIso);
+  if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) return null;
+  const diffMs = end.getTime() - start.getTime();
+  if (diffMs < 0) return null;
+  const totalHours = Math.floor(diffMs / (1000 * 60 * 60));
+  const days = Math.floor(totalHours / 24);
+  const hours = totalHours % 24;
+  return `${days}d ${hours}h until end`;
+}
+
 export default function Calendar() {
   const { data: projects = [], isLoading, error } = useAllProjectsIncludingArchived();
   const { data: projectTags = [] } = useProjectTags();
   const updateProject = useUpdateProject();
+  const [view, setView] = useState<CalendarView>('due');
   const [loadedStartMonth, setLoadedStartMonth] = useState<Date>(() => {
     const now = new Date();
     return addMonths(startOfMonth(now), -1);
@@ -110,7 +149,13 @@ export default function Calendar() {
     () => projects.filter((project) => localDayKeyFromIso(project.due_date) == null),
     [projects],
   );
-  const projectsByDay = useMemo(() => buildProjectsByDay(projects), [projects]);
+  const projectsByDay = useMemo(
+    () =>
+      buildProjectsByDay(projects, (project) =>
+        view === 'start' ? project.start_date : project.due_date,
+      ),
+    [projects, view],
+  );
   const todayKey = useMemo(() => localDayKeyFromDate(new Date()), []);
   const tagColorByName = useMemo(
     () => new Map(projectTags.map((tag) => [tag.name, tag.color] as const)),
@@ -159,6 +204,31 @@ export default function Calendar() {
       return;
     }
 
+    if (view === 'start') {
+      if (target.type !== 'day') {
+        setDraggingProjectId(null);
+        return;
+      }
+      const currentDayKey = localDayKeyFromIso(project.start_date);
+      if (currentDayKey === target.dayKey) {
+        setDraggingProjectId(null);
+        return;
+      }
+
+      setMutationError(null);
+      try {
+        await updateProject.mutateAsync({
+          id: project.id,
+          patch: { start_date: startDateForDropDay(target.dayKey) },
+        });
+      } catch (err) {
+        setMutationError(err instanceof Error ? err.message : 'Failed to update start date.');
+      } finally {
+        setDraggingProjectId(null);
+      }
+      return;
+    }
+
     const currentDayKey = localDayKeyFromIso(project.due_date);
     const nextDayKey = target.type === 'day' ? target.dayKey : null;
     if (currentDayKey === nextDayKey) {
@@ -185,59 +255,82 @@ export default function Calendar() {
         <div className="space-y-1">
           <span className="label">Planning</span>
           <h1 className="text-3xl font-semibold tracking-tight text-fg">Calendar</h1>
-          <p className="text-sm text-muted">Drag projects onto a day to set due dates at 11:00 PM.</p>
+          <p className="text-sm text-muted">
+            {view === 'due'
+              ? 'Drag projects onto a day to set due dates at 11:00 PM.'
+              : 'Drag projects onto a day to set start dates at 5:00 AM.'}
+          </p>
         </div>
-        <div className="segmented">
-          <button
-            type="button"
-            className="segmented-item"
-            onClick={() => setLoadedStartMonth((prev) => addMonths(prev, -1))}
-          >
-            Load previous
-          </button>
-          <button
-            type="button"
-            className="segmented-item"
-            onClick={() => setLoadedEndMonth((prev) => addMonths(prev, 1))}
-          >
-            Load future
-          </button>
+        <div className="flex flex-wrap items-center gap-2">
+          <div className="segmented">
+            <button
+              type="button"
+              data-active={view === 'due'}
+              onClick={() => setView('due')}
+            >
+              By due date
+            </button>
+            <button
+              type="button"
+              data-active={view === 'start'}
+              onClick={() => setView('start')}
+            >
+              By start date
+            </button>
+          </div>
+          <div className="segmented">
+            <button
+              type="button"
+              onClick={() => setLoadedStartMonth((prev) => addMonths(prev, -1))}
+            >
+              Load previous
+            </button>
+            <button
+              type="button"
+              onClick={() => setLoadedEndMonth((prev) => addMonths(prev, 1))}
+            >
+              Load future
+            </button>
+          </div>
         </div>
       </div>
 
-      <section
-        className={`card space-y-3 ${draggingProjectId ? 'ring-1 ring-border' : ''}`}
-        onDragOver={(event) => {
-          if (!draggingProjectId) return;
-          event.preventDefault();
-          event.dataTransfer.dropEffect = 'move';
-        }}
-        onDrop={(event) => {
-          event.preventDefault();
-          void dropProject({ type: 'undated' });
-        }}
-      >
-        <div className="flex items-center justify-between gap-2">
-          <h2 className="text-sm font-semibold text-fg">No due date</h2>
-          <span className="text-xs text-muted">Drop here to clear a due date</span>
-        </div>
-        {undatedProjects.length === 0 ? (
-          <p className="text-xs text-muted">All projects are currently scheduled.</p>
-        ) : (
-          <div className="flex flex-wrap gap-2">
-            {undatedProjects.map((project) => (
-              <ProjectChip
-                key={project.id}
-                project={project}
-                tagColor={project.tag ? (tagColorByName.get(project.tag) ?? null) : null}
-                draggingProjectId={draggingProjectId}
-                onDragStart={setDraggingProjectId}
-                onDragEnd={() => setDraggingProjectId(null)}
-              />
-            ))}
+      {view === 'due' ? (
+        <section
+          className={`card space-y-3 ${draggingProjectId ? 'ring-1 ring-border' : ''}`}
+          onDragOver={(event) => {
+            if (!draggingProjectId) return;
+            event.preventDefault();
+            event.dataTransfer.dropEffect = 'move';
+          }}
+          onDrop={(event) => {
+            event.preventDefault();
+            void dropProject({ type: 'undated' });
+          }}
+        >
+          <div className="flex items-center justify-between gap-2">
+            <h2 className="text-sm font-semibold text-fg">No due date</h2>
+            <span className="text-xs text-muted">Drop here to clear a due date</span>
           </div>
-        )}
-      </section>
+          {undatedProjects.length === 0 ? (
+            <p className="text-xs text-muted">All projects are currently scheduled.</p>
+          ) : (
+            <div className="flex flex-wrap gap-2">
+              {undatedProjects.map((project) => (
+                <ProjectChip
+                  key={project.id}
+                  project={project}
+                  tagColor={project.tag ? (tagColorByName.get(project.tag) ?? null) : null}
+                  draggable
+                  draggingProjectId={draggingProjectId}
+                  onDragStart={setDraggingProjectId}
+                  onDragEnd={() => setDraggingProjectId(null)}
+                />
+              ))}
+            </div>
+          )}
+        </section>
+      ) : null}
 
       {isLoading ? <p className="text-muted">Loading projects…</p> : null}
       {error ? (
@@ -304,6 +397,18 @@ export default function Calendar() {
                             key={project.id}
                             project={project}
                             tagColor={project.tag ? (tagColorByName.get(project.tag) ?? null) : null}
+                            draggable
+                            endInfo={
+                              view === 'start'
+                                ? {
+                                    endLabel: formatEndDateTime(project.due_date),
+                                    durationLabel: formatDurationUntilEnd(
+                                      project.start_date,
+                                      project.due_date,
+                                    ),
+                                  }
+                                : undefined
+                            }
                             draggingProjectId={draggingProjectId}
                             onDragStart={setDraggingProjectId}
                             onDragEnd={() => setDraggingProjectId(null)}
@@ -325,22 +430,27 @@ export default function Calendar() {
 function ProjectChip({
   project,
   tagColor,
+  draggable,
+  endInfo,
   draggingProjectId,
   onDragStart,
   onDragEnd,
 }: {
   project: Project;
   tagColor: string | null;
+  draggable: boolean;
+  endInfo?: { endLabel: string | null; durationLabel: string | null };
   draggingProjectId: string | null;
   onDragStart: (projectId: string) => void;
   onDragEnd: () => void;
 }) {
   const isArchived = !!project.archived_at;
+  const isDraggable = draggable && !isArchived;
   return (
     <div
-      draggable={!isArchived}
+      draggable={isDraggable}
       onDragStart={(event) => {
-        if (isArchived) {
+        if (!isDraggable) {
           event.preventDefault();
           return;
         }
@@ -367,6 +477,16 @@ function ProjectChip({
       >
         {project.name}
       </Link>
+      {endInfo ? (
+        <div className="space-y-0.5">
+          <span className="block text-[10px] text-muted">
+            {endInfo.endLabel ? `Ends ${endInfo.endLabel}` : 'No due date'}
+          </span>
+          {endInfo.durationLabel ? (
+            <span className="block text-[10px] font-medium text-fg">{endInfo.durationLabel}</span>
+          ) : null}
+        </div>
+      ) : null}
       {isArchived ? (
         <span className="inline-flex rounded bg-success/20 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-success">
           Archived

@@ -26,6 +26,12 @@ function fromLocalDateTimeInput(local: string): string {
   return new Date(local).toISOString();
 }
 
+function defaultStartLocal(): string {
+  const now = new Date();
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}T05:00`;
+}
+
 export default function ProjectForm({
   initial,
   tagOptions = [],
@@ -40,6 +46,9 @@ export default function ProjectForm({
   );
   const [dueDateLocal, setDueDateLocal] = useState<string>(
     toLocalDateTimeInput(initial?.due_date),
+  );
+  const [startDateLocal, setStartDateLocal] = useState<string>(
+    toLocalDateTimeInput(initial?.start_date ?? initial?.created_at) || defaultStartLocal(),
   );
   const [bufferModifier, setBufferModifier] = useState<string>(
     initial ? String(initial.buffer_modifier) : '1',
@@ -73,6 +82,9 @@ export default function ProjectForm({
         name: name.trim(),
         video_length: videoLength,
         due_date: dueDateLocal ? fromLocalDateTimeInput(dueDateLocal) : null,
+        sync_true_deadline_with_due_date:
+          initial?.sync_true_deadline_with_due_date ?? true,
+        start_date: fromLocalDateTimeInput(startDateLocal),
         buffer_modifier: buffer,
         tag: tag.trim() || null,
         series: series.trim() || null,
@@ -120,10 +132,23 @@ export default function ProjectForm({
             id="proj-buf"
             className="input"
             type="number"
-            step="0.1"
+            step="0.01"
             min="0.1"
             value={bufferModifier}
             onChange={(e) => setBufferModifier(e.target.value)}
+          />
+        </div>
+        <div className="space-y-1">
+          <label className="label" htmlFor="proj-start">
+            Start date & time
+          </label>
+          <input
+            id="proj-start"
+            className="input"
+            type="datetime-local"
+            value={startDateLocal}
+            onChange={(e) => setStartDateLocal(e.target.value)}
+            required
           />
         </div>
         <div className="space-y-1">

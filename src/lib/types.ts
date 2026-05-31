@@ -14,6 +14,7 @@ export interface Project {
   series: string | null;
   sort_order: number;
   created_at: string;
+  start_date: string;
   archived_at: string | null;
 }
 
@@ -96,7 +97,14 @@ export interface TemplateTask {
 
 export type ProjectInput = Pick<
   Project,
-  'name' | 'video_length' | 'due_date' | 'buffer_modifier' | 'tag' | 'series'
+  | 'name'
+  | 'video_length'
+  | 'due_date'
+  | 'sync_true_deadline_with_due_date'
+  | 'start_date'
+  | 'buffer_modifier'
+  | 'tag'
+  | 'series'
 >;
 
 export type ProjectUpdateInput = Partial<
@@ -105,6 +113,7 @@ export type ProjectUpdateInput = Partial<
     | 'name'
     | 'video_length'
     | 'due_date'
+    | 'start_date'
     | 'buffer_modifier'
     | 'tag'
     | 'series'

@@ -248,6 +248,25 @@ export function totalTaskLength(tasks: Task[], project: Project): number {
   }, 0);
 }
 
+export function bufferModifierGoal(tasks: Task[], project: Project): number | null {
+  if (!project.due_date) return null;
+  const startMs = new Date(project.start_date ?? project.created_at).getTime();
+  const dueMs = new Date(project.due_date).getTime();
+  if (Number.isNaN(startMs) || Number.isNaN(dueMs)) return null;
+
+  const windowHours = (dueMs - startMs) / 3_600_000;
+  if (!Number.isFinite(windowHours) || windowHours <= 0) return null;
+
+  const totalUnbufferedHours = totalTaskLength(tasks, {
+    ...project,
+    buffer_modifier: 1,
+  }) / 3_600;
+  if (!Number.isFinite(totalUnbufferedHours) || totalUnbufferedHours <= 0) return null;
+
+  const goal = windowHours / totalUnbufferedHours;
+  return Number.isFinite(goal) && goal > 0 ? goal : null;
+}
+
 export function projectProgress(tasks: Task[], project: Project): number {
   return tasks.reduce((acc, t) => {
     if (!shouldCountInAggregate(t, tasks)) return acc;

@@ -39,6 +39,12 @@ export interface WhiteboardElement {
   seed: number;
   // freedraw only:
   points?: [number, number][];
+  /** Per-point input pressure (parallel to points) for perfect-freehand. */
+  pressures?: number[];
+  /** When true, pressure is simulated from point spacing (no real stylus data). */
+  simulatePressure?: boolean;
+  /** Last point once the stroke is finished; closes the perfect-freehand end cap. */
+  lastCommittedPoint?: [number, number];
   // text only:
   text?: string;
   textRuns?: WhiteboardTextRun[];

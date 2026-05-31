@@ -376,7 +376,7 @@ export default function ProjectsTable({
                       {renderCell(project, 'buffer_modifier', `x${project.buffer_modifier}`, {
                         type: 'number',
                         min: '0.1',
-                        step: '0.1',
+                        step: '0.01',
                       })}
                     </td>
                     <td className="border-b border-border/70 px-2 py-2 text-sm text-fg">

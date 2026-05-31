@@ -48,3 +48,13 @@ export function dueDateForDropTarget(target: DueDateDropTarget): string | null {
   }
   return localDate.toISOString();
 }
+
+export function startDateForDropDay(dayKey: string): string {
+  const { year, monthIndex, day } = parseDayKey(dayKey);
+  // Persist local wall-clock 5 AM on the dropped day.
+  const localDate = new Date(year, monthIndex, day, 5, 0, 0, 0);
+  if (Number.isNaN(localDate.getTime())) {
+    throw new Error('Invalid drop date.');
+  }
+  return localDate.toISOString();
+}

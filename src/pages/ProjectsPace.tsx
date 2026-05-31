@@ -32,6 +32,7 @@ function cardTint(seconds: number | null): string {
 
 export default function ProjectsPace() {
   const [activeTab, setActiveTab] = useState<'grid' | 'table'>('grid');
+  const [openColumnsSignal, setOpenColumnsSignal] = useState(0);
   const now = useTicker(1000);
   const {
     hiddenProjectIds,
@@ -101,6 +102,14 @@ export default function ProjectsPace() {
             className={isHideMode ? 'btn-primary' : 'btn-ghost'}
           >
             {isHideMode ? 'Confirm hidden cards' : 'Hide cards'}
+          </button>
+        ) : activeTab === 'table' ? (
+          <button
+            type="button"
+            className="btn-secondary"
+            onClick={() => setOpenColumnsSignal((prev) => prev + 1)}
+          >
+            Visible columns
           </button>
         ) : null}
       </div>
@@ -244,6 +253,7 @@ export default function ProjectsPace() {
           paceByProject={paceByProject}
           now={now}
           isLoading={tasksLoading || paceLoading}
+          openColumnsSignal={openColumnsSignal}
         />
       ) : null}
     </div>

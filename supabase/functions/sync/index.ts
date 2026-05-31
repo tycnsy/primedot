@@ -91,9 +91,24 @@ async function handleWhoami(userId: string): Promise<Response> {
 }
 
 async function handleListProjects(userId: string): Promise<Response> {
+  type RawProject = {
+    id: string;
+    name: string;
+    video_length: number;
+    due_date: string | null;
+    buffer_modifier: number;
+    tag: string | null;
+    series: string | null;
+    sort_order: number;
+    created_at: string;
+    archived_at: string | null;
+  };
+
   const projectsResUnknown = await admin
     .from('projects')
-    .select('id,name,video_length,due_date,buffer_modifier,tag,series,sort_order,created_at')
+    .select(
+      'id,name,video_length,due_date,buffer_modifier,tag,series,sort_order,created_at,archived_at',
+    )
     .eq('user_id', userId)
     .is('archived_at', null)
     .order('sort_order', { ascending: true })
@@ -104,7 +119,11 @@ async function handleListProjects(userId: string): Promise<Response> {
   const projectsRes = projectsResUnknown;
   if (projectsRes.error) return internal(projectsRes.error.message);
 
-  const projects = projectsRes.data ?? [];
+  // Keep a defensive in-memory filter so archived rows are excluded even if
+  // PostgREST filter behavior changes or a stale deployment omits `.is(...)`.
+  const projects = ((projectsRes.data ?? []) as RawProject[])
+    .filter((project) => project.archived_at == null)
+    .map(({ archived_at: _archivedAt, ...project }) => project);
   const projectIds = projects.map((p: { id: string }) => p.id);
 
   type RawTask = {

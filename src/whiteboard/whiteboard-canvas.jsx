@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef, useMemo, useCallback, forwardRef, useImperativeHandle } from 'react';
 import rough from 'roughjs';
+import { getStroke } from 'perfect-freehand';
 
 // =================================================================
 // Element model
@@ -512,9 +513,11 @@ function hitTest(el, px, py) {
     return distToSegment(px, py, x1, y1, x2, y2) < pad;
   }
   if (el.type === 'freedraw' && el.points) {
+    // Tolerance tracks the rendered (pressure-tapered) stroke half-width.
+    const tol = Math.max(6, (el.strokeWidth ?? 2) * 4.25 * 0.5);
     for (let i = 1; i < el.points.length; i++) {
       const [a, b] = el.points[i - 1], [c, d] = el.points[i];
-      if (distToSegment(px, py, el.x + a, el.y + b, el.x + c, el.y + d) < 6) return true;
+      if (distToSegment(px, py, el.x + a, el.y + b, el.x + c, el.y + d) < tol) return true;
     }
     return false;
   }
@@ -1051,6 +1054,10 @@ function Canvas({
     };
     if (tool === 'freedraw') {
       base.points = [[0, 0]];
+      base.pressures = [e.pressure];
+      // A reported pressure of exactly 0.5 means there's no real pen/stylus
+      // data, so fall back to distance-based pressure simulation.
+      base.simulatePressure = e.pressure === 0.5;
       base.fill = 'transparent';
     }
     setDrafting(base);
@@ -1114,7 +1121,11 @@ function Canvas({
     }
     if (drag.mode === 'draw' && drafting) {
       if (drafting.type === 'freedraw') {
-        setDrafting(d => ({ ...d, points: [...d.points, [w.x - d.x, w.y - d.y]] }));
+        setDrafting(d => ({
+          ...d,
+          points: [...d.points, [w.x - d.x, w.y - d.y]],
+          pressures: [...(d.pressures ?? []), e.pressure],
+        }));
       } else {
         let nw = w.x - drafting.x, nh = w.y - drafting.y;
         if (e.shiftKey && (drafting.type === 'rectangle' || drafting.type === 'ellipse' || drafting.type === 'diamond')) {
@@ -1174,6 +1185,10 @@ function Canvas({
       if (final.type === 'freedraw' && final.points.length < 2) {
         setDrafting(null);
         return;
+      }
+      if (final.type === 'freedraw') {
+        // Mark the stroke as finished so perfect-freehand closes the end cap.
+        final = { ...final, lastCommittedPoint: final.points[final.points.length - 1] };
       }
       if ((final.type === 'rectangle' || final.type === 'ellipse' || final.type === 'diamond') && Math.abs(final.w) < 4 && Math.abs(final.h) < 4) {
         setDrafting(null);
@@ -1587,6 +1602,57 @@ function Canvas({
 }
 
 // =================================================================
+// Freehand (perfect-freehand) — matches Excalidraw's brush mechanics
+// =================================================================
+// Excalidraw's exact getStroke tuning for the freedraw tool.
+const FREEDRAW_OPTIONS = {
+  thinning: 0.6,
+  smoothing: 0.5,
+  streamline: 0.5,
+  easing: (t) => Math.sin((t * Math.PI) / 2),
+};
+
+// Turn the polygon outline points returned by getStroke into SVG path data.
+// Uses median points between samples to produce smooth quadratic curves, then
+// closes the path so it renders as a filled shape (same approach as Excalidraw).
+function getSvgPathFromStroke(points) {
+  if (!points.length) return '';
+  const max = points.length - 1;
+  return points
+    .reduce(
+      (acc, point, i, arr) => {
+        if (i === max) {
+          acc.push(point, med(point, arr[0]), 'L', arr[0], 'Z');
+        } else {
+          acc.push(point, med(point, arr[i + 1]));
+        }
+        return acc;
+      },
+      ['M', points[0], 'Q'],
+    )
+    .join(' ');
+}
+
+function med(A, B) {
+  return [(A[0] + B[0]) / 2, (A[1] + B[1]) / 2];
+}
+
+function getFreeDrawSvgPath(el) {
+  const pts = (el.points || []).map(([px, py]) => [el.x + px, el.y + py]);
+  const simulatePressure = el.simulatePressure ?? true;
+  const inputPoints = simulatePressure
+    ? pts
+    : pts.map((p, i) => [...p, (el.pressures?.[i] ?? 0.5) * 2]);
+  const outline = getStroke(inputPoints, {
+    ...FREEDRAW_OPTIONS,
+    simulatePressure,
+    size: (el.strokeWidth ?? 2) * 4.25,
+    last: !!el.lastCommittedPoint,
+  });
+  return getSvgPathFromStroke(outline);
+}
+
+// =================================================================
 // renderElement(rc, el) -> SVGElement
 // =================================================================
 function renderElement(rc, el, options = {}) {
@@ -1633,9 +1699,14 @@ function renderElement(rc, el, options = {}) {
     g.appendChild(rc.line(x2, y2, ax2, ay2, opts));
     return g;
   }
-  if (el.type === 'freedraw' && el.points && el.points.length >= 2) {
-    const pts = el.points.map(([px, py]) => [el.x + px, el.y + py]);
-    return rc.curve(pts, { ...opts, roughness: 0, fill: undefined });
+  if (el.type === 'freedraw' && el.points && el.points.length >= 1) {
+    const d = getFreeDrawSvgPath(el);
+    if (!d) return null;
+    const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+    path.setAttribute('d', d);
+    path.setAttribute('fill', normalizeColor(el.stroke || '#1e1e1e'));
+    path.setAttribute('stroke', 'none');
+    return path;
   }
   if (el.type === 'text') {
     if (el._editing) return null;
