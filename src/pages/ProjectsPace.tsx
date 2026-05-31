@@ -33,6 +33,7 @@ function cardTint(seconds: number | null): string {
 export default function ProjectsPace() {
   const [activeTab, setActiveTab] = useState<'grid' | 'table'>('grid');
   const [openColumnsSignal, setOpenColumnsSignal] = useState(0);
+  const [viewAllProjects, setViewAllProjects] = useState(false);
   const now = useTicker(1000);
   const {
     hiddenProjectIds,
@@ -65,9 +66,10 @@ export default function ProjectsPace() {
     acc[task.project_id].push(task);
     return acc;
   }, {});
-  const visibleProjects = isHideMode
-    ? sortedProjects
-    : sortedProjects.filter((project) => !hiddenProjectIds.has(project.id));
+  const visibleProjects =
+    isHideMode || viewAllProjects
+      ? sortedProjects
+      : sortedProjects.filter((project) => !hiddenProjectIds.has(project.id));
 
   const handleSetActiveProjects = () => {
     const nowMs = now.getTime();
@@ -127,6 +129,13 @@ export default function ProjectsPace() {
               onClick={handleSetActiveProjects}
             >
               Set active projects
+            </button>
+            <button
+              type="button"
+              className={viewAllProjects ? 'btn-primary' : 'btn-ghost'}
+              onClick={() => setViewAllProjects((prev) => !prev)}
+            >
+              View all projects
             </button>
             <button
               type="button"
@@ -279,6 +288,7 @@ export default function ProjectsPace() {
           now={now}
           isLoading={tasksLoading || paceLoading}
           openColumnsSignal={openColumnsSignal}
+          viewAllMode={viewAllProjects}
         />
       ) : null}
     </div>

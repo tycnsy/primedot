@@ -60,6 +60,7 @@ interface PaceGridTableProps {
   now: Date;
   isLoading: boolean;
   openColumnsSignal?: number;
+  viewAllMode?: boolean;
 }
 
 interface PaceGridTableRowProps {
@@ -71,6 +72,7 @@ interface PaceGridTableRowProps {
   setPaceSeconds: number;
   rebalanceOffsetSeconds: number;
   visibleColumns: Set<PaceColumnId>;
+  viewAllMode: boolean;
 }
 
 function formatPaceEnd(date: Date | null): string {
@@ -123,6 +125,7 @@ function PaceGridTableRow({
   setPaceSeconds,
   rebalanceOffsetSeconds,
   visibleColumns,
+  viewAllMode,
 }: PaceGridTableRowProps) {
   const upsertPace = useUpsertPaceSettings(project.id);
   const updateProject = useUpdateProject();
@@ -134,6 +137,8 @@ function PaceGridTableRow({
   const marginSeconds = showComputed ? paceMargin(pace) : null;
   const paceEnd = showComputed ? currentPaceEnd(tasks, project, pace) : null;
   const goalBufferModifier = bufferModifierGoal(tasks, project);
+  const startMs = new Date(project.start_date).getTime();
+  const startInFuture = Number.isFinite(startMs) && startMs > now.getTime();
   const bufferClassName =
     goalBufferModifier == null
       ? 'text-fg'
@@ -162,12 +167,15 @@ function PaceGridTableRow({
 
   const handleRebalance = async () => {
     setError(null);
-    if (!Number.isFinite(rebalanceOffsetSeconds)) {
+    const offsetSeconds = viewAllMode
+      ? (startMs - now.getTime()) / 1000
+      : rebalanceOffsetSeconds;
+    if (!Number.isFinite(offsetSeconds)) {
       setError('Rebalance amount must be a valid number.');
       return;
     }
 
-    const outcome = buildRebalanceOutcome(tasks, project, rebalanceOffsetSeconds, now);
+    const outcome = buildRebalanceOutcome(tasks, project, offsetSeconds, now);
     if (!outcome.ok) {
       setError(outcome.message);
       return;
@@ -255,17 +263,21 @@ function PaceGridTableRow({
       ) : null}
       {visibleColumns.has('rebalance') ? (
         <td className="px-3 py-2 text-center">
-          <div className="space-y-1">
-            <button
-              type="button"
-              onClick={handleRebalance}
-              className="btn-primary !h-6 !w-6 !p-0"
-              aria-label="Rebalance"
-              title="Rebalance"
-              disabled={isMutating}
-            />
-            {error ? <p className="text-xs text-danger">{error}</p> : null}
-          </div>
+          {viewAllMode && !startInFuture ? (
+            <span className="text-muted">—</span>
+          ) : (
+            <div className="space-y-1">
+              <button
+                type="button"
+                onClick={handleRebalance}
+                className="btn-primary !h-6 !w-6 !p-0"
+                aria-label="Rebalance"
+                title="Rebalance"
+                disabled={isMutating}
+              />
+              {error ? <p className="text-xs text-danger">{error}</p> : null}
+            </div>
+          )}
         </td>
       ) : null}
     </tr>
@@ -279,6 +291,7 @@ export default function PaceGridTable({
   now,
   isLoading,
   openColumnsSignal = 0,
+  viewAllMode = false,
 }: PaceGridTableProps) {
   const [setPaceAmount, setSetPaceAmount] = useState<string>(() =>
     safeReadLocalStorage(SET_PACE_AMOUNT_KEY, '2'),
@@ -462,6 +475,7 @@ export default function PaceGridTable({
                 setPaceSeconds={setPaceSeconds}
                 rebalanceOffsetSeconds={rebalanceOffsetSeconds}
                 visibleColumns={visibleColumns}
+                viewAllMode={viewAllMode}
               />
             ))}
           </tbody>
