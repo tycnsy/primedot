@@ -9,6 +9,7 @@ export type Todo = {
   title: string;
   startDate: string;
   endDate: string;
+  tag: string | null;
   done: boolean;
   completedAt: string | null;
   order: number;
@@ -19,6 +20,7 @@ export type NewTodo = {
   title: string;
   startDate: string;
   endDate?: string;
+  tag?: string | null;
 };
 
 type TodoRow = {
@@ -27,9 +29,18 @@ type TodoRow = {
   title: string;
   start_date: string;
   end_date: string;
+  tag: string | null;
   done: boolean;
   completed_at: string | null;
   sort_order: number;
+  created_at: string;
+};
+
+export type TodoTag = {
+  id: string;
+  user_id: string;
+  name: string;
+  color: string;
   created_at: string;
 };
 
@@ -39,6 +50,25 @@ function todayDateString() {
   return new Date().toISOString().slice(0, 10);
 }
 
+function normalizeTag(tag: string | null | undefined): string | null {
+  if (tag == null) return null;
+  const trimmed = tag.trim();
+  return trimmed.length > 0 ? trimmed : null;
+}
+
+function sortByOrderThenCreated(a: Todo, b: Todo): number {
+  if (a.order !== b.order) return a.order - b.order;
+  return a.createdAt.localeCompare(b.createdAt);
+}
+
+async function ensureTodoTag(userId: string, tag: string | null): Promise<void> {
+  if (!tag) return;
+  const { error } = await supabase
+    .from('todo_tags')
+    .upsert({ user_id: userId, name: tag }, { onConflict: 'user_id,name' });
+  if (error) throw error;
+}
+
 function mapTodo(row: TodoRow): Todo {
   return {
     id: row.id,
@@ -46,6 +76,7 @@ function mapTodo(row: TodoRow): Todo {
     title: row.title,
     startDate: row.start_date,
     endDate: row.end_date,
+    tag: row.tag,
     done: row.done,
     completedAt: row.completed_at,
     order: row.sort_order,
@@ -76,11 +107,14 @@ export function useTodos() {
     mutationFn: async (input: NewTodo) => {
       if (!user) throw new Error('Not signed in');
       const current = qc.getQueryData<Todo[]>(todosKey(user.id)) ?? [];
+      const tag = normalizeTag(input.tag);
+      await ensureTodoTag(user.id, tag);
       const payload = {
         user_id: user.id,
         title: input.title,
         start_date: input.startDate,
         end_date: input.endDate ?? input.startDate,
+        tag,
         done: false,
         sort_order: current.length,
       };
@@ -103,6 +137,11 @@ export function useTodos() {
       if ('title' in patch) payload.title = patch.title;
       if ('startDate' in patch) payload.start_date = patch.startDate;
       if ('endDate' in patch) payload.end_date = patch.endDate;
+      if ('tag' in patch) {
+        const nextTag = normalizeTag(patch.tag);
+        payload.tag = nextTag;
+        if (user) await ensureTodoTag(user.id, nextTag);
+      }
       if ('order' in patch) payload.sort_order = patch.order;
       if ('done' in patch) {
         payload.done = patch.done;
@@ -139,6 +178,44 @@ export function useTodos() {
     },
   });
 
+  const reorderMutation = useMutation({
+    mutationFn: async (orderedIds: string[]) => {
+      if (!user) throw new Error('Not signed in');
+      const current = qc.getQueryData<Todo[]>(todosKey(user.id)) ?? [];
+      const currentActive = current.filter((todo) => !todo.done).sort(sortByOrderThenCreated);
+      const activeIds = currentActive.map((todo) => todo.id);
+      const idSet = new Set(activeIds);
+      const deduped = orderedIds.filter((id, idx) => idSet.has(id) && orderedIds.indexOf(id) === idx);
+      const missing = activeIds.filter((id) => !deduped.includes(id));
+      const finalIds = [...deduped, ...missing];
+      const orderById = new Map(finalIds.map((id, idx) => [id, idx]));
+
+      qc.setQueryData<Todo[]>(
+        todosKey(user.id),
+        (prev) =>
+          prev?.map((todo) =>
+            orderById.has(todo.id) ? { ...todo, order: orderById.get(todo.id) ?? todo.order } : todo,
+          ) ?? [],
+      );
+
+      const changed = currentActive.filter((todo) => (orderById.get(todo.id) ?? todo.order) !== todo.order);
+      if (!changed.length) return;
+      await Promise.all(
+        changed.map(async (todo) => {
+          const { error } = await supabase
+            .from('todos')
+            .update({ sort_order: orderById.get(todo.id) ?? todo.order })
+            .eq('id', todo.id)
+            .eq('user_id', user.id);
+          if (error) throw error;
+        }),
+      );
+    },
+    onError: () => {
+      qc.invalidateQueries({ queryKey: todosKey(user?.id) });
+    },
+  });
+
   const todos = todosQuery.data ?? [];
 
   return {
@@ -148,10 +225,24 @@ export function useTodos() {
     createTodo: (input: NewTodo) => createMutation.mutateAsync(input),
     updateTodo: (id: string, patch: Partial<Todo>) =>
       updateMutation.mutateAsync({ id, patch }),
+    reorderTodos: (orderedIds: string[]) => reorderMutation.mutateAsync(orderedIds),
     toggleDone: (id: string, done: boolean) =>
       updateMutation.mutateAsync({ id, patch: { done } }),
     deleteTodo: (id: string) => deleteMutation.mutateAsync(id),
   };
+}
+
+export function useTodoTags() {
+  const { user } = useAuth();
+  return useQuery({
+    queryKey: ['todo_tags', user?.id],
+    enabled: !!user,
+    queryFn: async (): Promise<TodoTag[]> => {
+      const { data, error } = await supabase.from('todo_tags').select('*').order('name', { ascending: true });
+      if (error) throw error;
+      return (data ?? []) as TodoTag[];
+    },
+  });
 }
 
 export function useOverdueTodoCount(): number {

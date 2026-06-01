@@ -318,8 +318,8 @@ export default function GoalsIndex() {
         open={!!logGoal}
         goal={logGoal}
         onClose={() => setLogGoal(null)}
-        onSave={({ goalId, value, note, at }) => {
-          addLog(goalId, { value, note, at });
+        onSave={({ goalId, value, note, at, kind, delta }) => {
+          addLog(goalId, { value, note, at, kind, delta });
         }}
       />
       <NewGoalModal

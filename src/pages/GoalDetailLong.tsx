@@ -46,6 +46,30 @@ function formatDateOnlyLong(isoDate: string): string {
   return dateOnlyLongFormatter.format(parseDateOnly(isoDate));
 }
 
+function formatLogDateTime(iso: string, includeYear: boolean): string {
+  return new Intl.DateTimeFormat('en-US', {
+    month: 'short',
+    day: 'numeric',
+    year: includeYear ? 'numeric' : undefined,
+    hour: 'numeric',
+    minute: '2-digit',
+  }).format(new Date(iso));
+}
+
+function toLocalDateTimeInputValue(iso: string): string {
+  const date = new Date(iso);
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  const hours = String(date.getHours()).padStart(2, '0');
+  const minutes = String(date.getMinutes()).padStart(2, '0');
+  return `${year}-${month}-${day}T${hours}:${minutes}`;
+}
+
+function sortLogsNewestFirst(logs: LogEntry[]): LogEntry[] {
+  return [...logs].sort((a, b) => new Date(b.at).getTime() - new Date(a.at).getTime());
+}
+
 export default function GoalDetailLong() {
   const navigate = useNavigate();
   const { goalId } = useParams<{ goalId: string }>();
@@ -56,6 +80,8 @@ export default function GoalDetailLong() {
     tagById,
     toggleMilestone,
     addLog,
+    updateLog,
+    deleteLog,
     updateLongGoal,
     archiveLongGoal,
   } = useGoalsStore();
@@ -174,7 +200,18 @@ export default function GoalDetailLong() {
         </div>
       ) : null}
 
-      {tab === 'log' ? <FullLogCard goal={goal} onLog={() => setIsLogModalOpen(true)} /> : null}
+      {tab === 'log' ? (
+        <FullLogCard
+          goal={goal}
+          onLog={() => setIsLogModalOpen(true)}
+          onUpdateLog={async (logId, patch) => {
+            await updateLog(logId, patch);
+          }}
+          onDeleteLog={async (logId) => {
+            await deleteLog(logId);
+          }}
+        />
+      ) : null}
       {tab === 'related' ? <RelatedGoalsCard related={relatedGoals} onOpen={navigate} full /> : null}
       {tab === 'settings' ? (
         <div className="card space-y-4">
@@ -228,8 +265,8 @@ export default function GoalDetailLong() {
         open={isLogModalOpen}
         goal={goal}
         onClose={() => setIsLogModalOpen(false)}
-        onSave={({ goalId: saveGoalId, value, note, at }) => {
-          addLog(saveGoalId, { value, note, at });
+        onSave={({ goalId: saveGoalId, value, note, at, kind, delta }) => {
+          addLog(saveGoalId, { value, note, at, kind, delta });
         }}
       />
       <NewGoalModal
@@ -516,7 +553,7 @@ function RelatedGoalsCard({
 }
 
 function RecentLogCard({ goal }: { goal: LongGoal }) {
-  const recent = [...goal.logs].sort((a, b) => new Date(b.at).getTime() - new Date(a.at).getTime()).slice(0, 5);
+  const recent = sortLogsNewestFirst(goal.logs).slice(0, 5);
   return (
     <div className="card space-y-2">
       <div className="flex items-center justify-between">
@@ -533,8 +570,18 @@ function RecentLogCard({ goal }: { goal: LongGoal }) {
   );
 }
 
-function FullLogCard({ goal, onLog }: { goal: LongGoal; onLog: () => void }) {
-  const rows = [...goal.logs].sort((a, b) => new Date(b.at).getTime() - new Date(a.at).getTime());
+function FullLogCard({
+  goal,
+  onLog,
+  onUpdateLog,
+  onDeleteLog,
+}: {
+  goal: LongGoal;
+  onLog: () => void;
+  onUpdateLog: (logId: string, patch: { at?: string; note?: string }) => Promise<void>;
+  onDeleteLog: (logId: string) => Promise<void>;
+}) {
+  const rows = sortLogsNewestFirst(goal.logs);
   return (
     <div className="card space-y-2">
       <div className="flex items-center justify-between">
@@ -545,35 +592,156 @@ function FullLogCard({ goal, onLog }: { goal: LongGoal; onLog: () => void }) {
       </div>
       <div className="space-y-1.5">
         {rows.map((log) => (
-          <LogRow key={log.id} log={log} unit={goal.type === 'milestone' ? undefined : goal.unit} detailed />
+          <LogRow
+            key={log.id}
+            log={log}
+            unit={goal.type === 'milestone' ? undefined : goal.unit}
+            detailed
+            onUpdate={onUpdateLog}
+            onDelete={onDeleteLog}
+          />
         ))}
       </div>
     </div>
   );
 }
 
-function LogRow({ log, unit, detailed = false }: { log: LogEntry; unit?: string; detailed?: boolean }) {
+function LogRow({
+  log,
+  unit,
+  detailed = false,
+  onUpdate,
+  onDelete,
+}: {
+  log: LogEntry;
+  unit?: string;
+  detailed?: boolean;
+  onUpdate?: (logId: string, patch: { at?: string; note?: string }) => Promise<void>;
+  onDelete?: (logId: string) => Promise<void>;
+}) {
+  const [isEditing, setIsEditing] = useState(false);
+  const [editDateTime, setEditDateTime] = useState(toLocalDateTimeInputValue(log.at));
+  const [editNote, setEditNote] = useState(log.note ?? '');
+  const isAdjustment = log.kind === 'adjustment' && typeof log.delta === 'number';
+  const formattedValue =
+    typeof log.value === 'number' ? `${numberFormatter.format(log.value)}${unit ?? ''}` : '—';
+  const formattedDelta =
+    isAdjustment && typeof log.delta === 'number'
+      ? `${log.delta >= 0 ? '+' : ''}${numberFormatter.format(log.delta)}${unit ?? ''}`
+      : null;
+
   return (
     <div className="rounded-lg bg-surface2/50 px-2.5 py-2">
-      <div className={`grid gap-2 ${detailed ? 'sm:grid-cols-[150px_120px_1fr]' : 'sm:grid-cols-[120px_1fr]'}`}>
-        <span className="text-xs text-muted">
-          {new Intl.DateTimeFormat('en-US', {
-            month: 'short',
-            day: 'numeric',
-            year: detailed ? 'numeric' : undefined,
-          }).format(new Date(log.at))}
-        </span>
+      <div
+        className={`grid gap-2 ${
+          detailed
+            ? onDelete || onUpdate
+              ? 'sm:grid-cols-[200px_120px_1fr_auto]'
+              : 'sm:grid-cols-[200px_120px_1fr]'
+            : 'sm:grid-cols-[170px_1fr]'
+        }`}
+      >
+        <div className="flex items-center gap-1.5">
+          <span className="text-xs text-muted">
+            {formatLogDateTime(log.at, detailed)}
+          </span>
+          {isAdjustment ? <span className="pill">Adjustment</span> : null}
+        </div>
         {detailed ? (
           <span className="text-sm font-medium text-fg tabular-nums">
-            {typeof log.value === 'number' ? `${numberFormatter.format(log.value)}${unit ?? ''}` : '—'}
+            {formattedValue}
           </span>
         ) : null}
         <span className="text-sm text-fg">
           {!detailed && typeof log.value === 'number'
-            ? `${numberFormatter.format(log.value)}${unit ?? ''}${log.note ? ` · ${log.note}` : ''}`
-            : log.note ?? ''}
+            ? `${formattedValue}${formattedDelta ? ` · ${formattedDelta}` : ''}${log.note ? ` · ${log.note}` : ''}`
+            : `${formattedDelta ? `${formattedDelta}${log.note ? ` · ${log.note}` : ''}` : log.note ?? ''}`}
         </span>
+        {detailed && (onUpdate || onDelete) ? (
+          <div className="flex items-start gap-1 sm:justify-self-end">
+            {onUpdate ? (
+              <button
+                type="button"
+                className="btn-ghost !px-2 !py-1 text-xs"
+                onClick={() => {
+                  setEditDateTime(toLocalDateTimeInputValue(log.at));
+                  setEditNote(log.note ?? '');
+                  setIsEditing(!isEditing);
+                }}
+              >
+                {isEditing ? 'Close' : 'Edit'}
+              </button>
+            ) : null}
+            {onDelete ? (
+              <button
+                type="button"
+                className="btn-ghost !px-2 !py-1 text-xs text-danger"
+                onClick={async () => {
+                  if (!window.confirm('Delete this log entry?')) return;
+                  await onDelete(log.id);
+                }}
+              >
+                Delete
+              </button>
+            ) : null}
+          </div>
+        ) : null}
       </div>
+      {detailed && onUpdate && isEditing ? (
+        <div className="mt-2 grid gap-2 rounded-md border border-border bg-surface px-2.5 py-2">
+          <div className="space-y-1">
+            <label htmlFor={`edit-log-date-time-${log.id}`} className="label">
+              Date &amp; time
+            </label>
+            <input
+              id={`edit-log-date-time-${log.id}`}
+              type="datetime-local"
+              className="input"
+              value={editDateTime}
+              onChange={(event) => setEditDateTime(event.target.value)}
+            />
+          </div>
+          <div className="space-y-1">
+            <label htmlFor={`edit-log-note-${log.id}`} className="label">
+              Note
+            </label>
+            <textarea
+              id={`edit-log-note-${log.id}`}
+              className="input min-h-[80px] resize-y py-2"
+              value={editNote}
+              onChange={(event) => setEditNote(event.target.value)}
+            />
+          </div>
+          <div className="flex justify-end gap-2">
+            <button
+              type="button"
+              className="btn-ghost"
+              onClick={() => {
+                setEditDateTime(toLocalDateTimeInputValue(log.at));
+                setEditNote(log.note ?? '');
+                setIsEditing(false);
+              }}
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              className="btn-primary"
+              onClick={async () => {
+                const nextAt = new Date(editDateTime);
+                if (Number.isNaN(nextAt.getTime())) return;
+                await onUpdate(log.id, {
+                  at: nextAt.toISOString(),
+                  note: editNote,
+                });
+                setIsEditing(false);
+              }}
+            >
+              Save
+            </button>
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }

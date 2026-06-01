@@ -3,7 +3,13 @@ import type { LongGoal } from '../../features/goals';
 import ModalShell from './ModalShell';
 
 function todayIsoDate(): string {
-  return new Date().toISOString().slice(0, 10);
+  const now = new Date();
+  const year = now.getFullYear();
+  const month = String(now.getMonth() + 1).padStart(2, '0');
+  const day = String(now.getDate()).padStart(2, '0');
+  const hours = String(now.getHours()).padStart(2, '0');
+  const minutes = String(now.getMinutes()).padStart(2, '0');
+  return `${year}-${month}-${day}T${hours}:${minutes}`;
 }
 
 export interface LogProgressPayload {
@@ -11,6 +17,8 @@ export interface LogProgressPayload {
   at: string;
   value?: number;
   note?: string;
+  kind?: 'total' | 'adjustment';
+  delta?: number;
 }
 
 interface LogProgressModalProps {
@@ -27,45 +35,84 @@ export default function LogProgressModal({
   onSave,
 }: LogProgressModalProps) {
   const [value, setValue] = useState('');
-  const [date, setDate] = useState(todayIsoDate());
+  const [dateTime, setDateTime] = useState(todayIsoDate());
   const [note, setNote] = useState('');
+  const [mode, setMode] = useState<'total' | 'adjustment'>('adjustment');
 
   useEffect(() => {
     if (!open || !goal) return;
     setValue('');
-    setDate(todayIsoDate());
+    setDateTime(todayIsoDate());
     setNote('');
+    setMode('adjustment');
   }, [goal, open]);
 
   const isMilestone = goal?.type === 'milestone';
+  const isTrend = goal?.type === 'trend';
+
+  const trendBaseValue = useMemo(() => {
+    if (!goal || goal.type !== 'trend') return undefined;
+    const latest = [...goal.logs]
+      .sort((a, b) => new Date(b.at).getTime() - new Date(a.at).getTime())
+      .find((log) => typeof log.value === 'number');
+    return latest?.value ?? goal.startValue;
+  }, [goal]);
 
   const valueLabel = useMemo(() => {
     if (!goal || isMilestone) return '';
-    if (goal.type === 'trend') return `Current value (${goal.unit})`;
+    if (goal.type === 'trend') {
+      return mode === 'adjustment'
+        ? `Adjustment (+/- ${goal.unit})`
+        : `Current value (${goal.unit})`;
+    }
     return `Amount to add (${goal.unit})`;
-  }, [goal, isMilestone]);
+  }, [goal, isMilestone, mode]);
 
   if (!goal) return null;
 
   const handleSave = () => {
+    const parsedDate = new Date(dateTime);
+    if (Number.isNaN(parsedDate.getTime())) return;
+
     if (!isMilestone) {
       const parsed = Number(value);
       if (Number.isNaN(parsed)) return;
+      if (isTrend && mode === 'adjustment') {
+        if (typeof trendBaseValue !== 'number') return;
+        onSave({
+          goalId: goal.id,
+          at: parsedDate.toISOString(),
+          value: trendBaseValue + parsed,
+          note: note.trim() || undefined,
+          kind: 'adjustment',
+          delta: parsed,
+        });
+        onClose();
+        return;
+      }
       onSave({
         goalId: goal.id,
-        at: new Date(`${date}T12:00:00`).toISOString(),
+        at: parsedDate.toISOString(),
         value: parsed,
         note: note.trim() || undefined,
+        kind: isTrend ? 'total' : undefined,
       });
     } else {
       onSave({
         goalId: goal.id,
-        at: new Date(`${date}T12:00:00`).toISOString(),
+        at: parsedDate.toISOString(),
         note: note.trim() || undefined,
       });
     }
     onClose();
   };
+
+  const parsedValue = Number(value);
+  const hasParsedValue = value.trim().length > 0 && !Number.isNaN(parsedValue);
+  const adjustmentPreviewValue =
+    isTrend && mode === 'adjustment' && typeof trendBaseValue === 'number'
+      ? trendBaseValue + (hasParsedValue ? parsedValue : 0)
+      : null;
 
   return (
     <ModalShell
@@ -84,6 +131,24 @@ export default function LogProgressModal({
       }
     >
       <div className="space-y-4">
+        {isTrend ? (
+          <div className="space-y-1">
+            <span className="label">Entry type</span>
+            <div className="segmented w-fit">
+              <button type="button" data-active={mode === 'total'} onClick={() => setMode('total')}>
+                Total
+              </button>
+              <button
+                type="button"
+                data-active={mode === 'adjustment'}
+                onClick={() => setMode('adjustment')}
+              >
+                Adjustment
+              </button>
+            </div>
+          </div>
+        ) : null}
+
         {!isMilestone ? (
           <div className="space-y-1">
             <label htmlFor="log-value" className="label">
@@ -98,18 +163,23 @@ export default function LogProgressModal({
               className="input text-lg tabular-nums"
               autoFocus
             />
+            {adjustmentPreviewValue !== null ? (
+              <p className="text-xs text-muted">
+                New total will be {adjustmentPreviewValue.toLocaleString()} {goal.unit}
+              </p>
+            ) : null}
           </div>
         ) : null}
 
         <div className="space-y-1">
-          <label htmlFor="log-date" className="label">
-            Date
+          <label htmlFor="log-date-time" className="label">
+            Date &amp; time
           </label>
           <input
-            id="log-date"
-            type="date"
-            value={date}
-            onChange={(event) => setDate(event.target.value)}
+            id="log-date-time"
+            type="datetime-local"
+            value={dateTime}
+            onChange={(event) => setDateTime(event.target.value)}
             className="input"
           />
         </div>

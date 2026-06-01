@@ -50,6 +50,8 @@ type GoalLongLogRow = {
   at: string;
   value: number | null;
   note: string | null;
+  kind: 'total' | 'adjustment';
+  delta: number | null;
   created_at: string;
 };
 
@@ -116,6 +118,8 @@ function mapLog(row: GoalLongLogRow): LogEntry {
     at: row.at,
     value: row.value ?? undefined,
     note: row.note ?? undefined,
+    kind: row.kind ?? undefined,
+    delta: row.delta ?? undefined,
   };
 }
 
@@ -234,6 +238,8 @@ export interface GoalsStoreActions {
   toggleDailyCheck: (goalId: string) => Promise<void>;
   setDailyCount: (goalId: string, value: number) => Promise<void>;
   addLog: (goalId: string, log: Omit<LogEntry, 'id' | 'at'> & { at?: string }) => Promise<void>;
+  updateLog: (logId: string, patch: { at?: string; note?: string }) => Promise<void>;
+  deleteLog: (logId: string) => Promise<void>;
   toggleMilestone: (goalId: string, milestoneId: string) => Promise<void>;
   addLongGoal: (goal: NewLongGoalInput) => Promise<string>;
   reorderLongGoals: (goalIdsInOrder: string[]) => Promise<void>;
@@ -547,12 +553,57 @@ export function useGoalsStore(): GoalsStore {
         at: log.at ?? new Date().toISOString(),
         value: log.value ?? null,
         note: log.note ?? null,
+        kind: log.kind ?? 'total',
+        delta: log.delta ?? null,
       });
       if (error) throw error;
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: longLogsKey(user?.id) });
       showToast('Log entry added.');
+    },
+  });
+
+  const deleteLogMutation = useMutation({
+    mutationFn: async (logId: string) => {
+      if (!user) throw new Error('Not signed in');
+      const { error } = await supabase
+        .from('goals_long_logs')
+        .delete()
+        .eq('id', logId)
+        .eq('user_id', user.id);
+      if (error) throw error;
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: longLogsKey(user?.id) });
+      showToast('Log entry deleted.');
+    },
+  });
+
+  const updateLogMutation = useMutation({
+    mutationFn: async ({
+      logId,
+      patch,
+    }: {
+      logId: string;
+      patch: { at?: string; note?: string };
+    }) => {
+      if (!user) throw new Error('Not signed in');
+      const updates: { at?: string; note?: string | null } = {};
+      if (typeof patch.at === 'string') updates.at = patch.at;
+      if (Object.prototype.hasOwnProperty.call(patch, 'note')) {
+        updates.note = patch.note?.trim() ? patch.note.trim() : null;
+      }
+      const { error } = await supabase
+        .from('goals_long_logs')
+        .update(updates)
+        .eq('id', logId)
+        .eq('user_id', user.id);
+      if (error) throw error;
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: longLogsKey(user?.id) });
+      showToast('Log entry updated.');
     },
   });
 
@@ -749,6 +800,12 @@ export function useGoalsStore(): GoalsStore {
     },
     addLog: async (goalId: string, log: Omit<LogEntry, 'id' | 'at'> & { at?: string }) => {
       await addLogMutation.mutateAsync({ goalId, log });
+    },
+    updateLog: async (logId: string, patch: { at?: string; note?: string }) => {
+      await updateLogMutation.mutateAsync({ logId, patch });
+    },
+    deleteLog: async (logId: string) => {
+      await deleteLogMutation.mutateAsync(logId);
     },
     toggleMilestone: async (goalId: string, milestoneId: string) => {
       await toggleMilestoneMutation.mutateAsync({ goalId, milestoneId });

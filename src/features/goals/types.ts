@@ -14,6 +14,8 @@ export interface LogEntry {
   at: string;
   value?: number;
   note?: string;
+  kind?: 'total' | 'adjustment';
+  delta?: number;
 }
 
 export interface Milestone {
