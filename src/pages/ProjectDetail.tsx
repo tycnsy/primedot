@@ -50,6 +50,7 @@ import { formatHMS } from '../lib/time';
 import type { ComplexMode, Task } from '../lib/types';
 
 const NOTES_AUTOSAVE_DELAY_MS = 700;
+const EMPTY_TASKS: Task[] = [];
 
 function formatDueDateTime(iso: string | null): string | null {
   if (!iso) return null;
@@ -128,7 +129,7 @@ export default function ProjectDetail() {
   const [collapseConflictFor, setCollapseConflictFor] = useState<Task | null>(
     null,
   );
-  const allTasks = tasks.data ?? [];
+  const allTasks = tasks.data ?? EMPTY_TASKS;
   const tagColorByName = new Map(
     (projectTags.data ?? []).map((tag) => [tag.name, tag.color] as const),
   );
@@ -137,8 +138,8 @@ export default function ProjectDetail() {
   );
 
   useEffect(() => {
-    setOrderedTasks(allTasks);
-  }, [allTasks]);
+    setOrderedTasks(tasks.data ?? EMPTY_TASKS);
+  }, [tasks.data]);
 
   useEffect(() => {
     const nextTab =
@@ -267,6 +268,31 @@ export default function ProjectDetail() {
     });
   };
 
+  useEffect(() => {
+    if (!project.data) return;
+    const normalizedNotesDraft = notesDraft.trim().length > 0 ? notesDraft : null;
+    const notesChanged = normalizedNotesDraft !== project.data.notes;
+    if (!notesChanged || updateProject.isPending) return;
+
+    const timeoutId = window.setTimeout(() => {
+      void updateProject
+        .mutateAsync({
+          id: project.data!.id,
+          patch: { notes: notesDraft },
+        })
+        .then(() => {
+          setNotesError(null);
+        })
+        .catch((error) => {
+          setNotesError(error instanceof Error ? error.message : 'Failed to save notes.');
+        });
+    }, NOTES_AUTOSAVE_DELAY_MS);
+
+    return () => {
+      window.clearTimeout(timeoutId);
+    };
+  }, [notesDraft, project.data, updateProject]);
+
   if (!id) return <Navigate to="/projects" replace />;
   if (project.isLoading || tasks.isLoading) {
     return <p className="text-muted">Loading…</p>;
@@ -300,28 +326,6 @@ export default function ProjectDetail() {
       : notesChanged
         ? 'Unsaved changes'
         : 'Saved automatically';
-
-  useEffect(() => {
-    if (!notesChanged || updateProject.isPending) return;
-
-    const timeoutId = window.setTimeout(() => {
-      void updateProject
-        .mutateAsync({
-          id: p.id,
-          patch: { notes: notesDraft },
-        })
-        .then(() => {
-          setNotesError(null);
-        })
-        .catch((error) => {
-          setNotesError(error instanceof Error ? error.message : 'Failed to save notes.');
-        });
-    }, NOTES_AUTOSAVE_DELAY_MS);
-
-    return () => {
-      window.clearTimeout(timeoutId);
-    };
-  }, [notesChanged, notesDraft, p.id, updateProject]);
 
   return (
     <div className="space-y-8">

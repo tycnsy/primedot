@@ -189,16 +189,22 @@ export function useTasks(projectId: string | undefined) {
         .eq('project_id', projectId!)
         .order('sort_order', { ascending: true })
         .order('created_at', { ascending: true });
-      if (!error) return (data ?? []) as Task[];
+      if (!error) {
+        return (data ?? []) as Task[];
+      }
 
-      if (!isMissingTaskSortOrderColumn(error)) throw error;
+      if (!isMissingTaskSortOrderColumn(error)) {
+        throw error;
+      }
 
       const fallback = await supabase
         .from('tasks')
         .select('*')
         .eq('project_id', projectId!)
         .order('created_at', { ascending: true });
-      if (fallback.error) throw fallback.error;
+      if (fallback.error) {
+        throw fallback.error;
+      }
       return ((fallback.data ?? []) as Task[]).map((task, index) => ({
         ...task,
         sort_order: index,

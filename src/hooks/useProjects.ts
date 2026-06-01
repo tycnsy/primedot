@@ -196,7 +196,9 @@ export function useProject(id: string | undefined) {
         .select('*')
         .eq('id', id!)
         .maybeSingle();
-      if (error) throw error;
+      if (error) {
+        throw error;
+      }
       return (data ?? null) as Project | null;
     },
   });
