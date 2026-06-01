@@ -12,6 +12,7 @@ export interface Project {
   buffer_modifier: number;
   tag: string | null;
   series: string | null;
+  notes: string | null;
   sort_order: number;
   created_at: string;
   start_date: string;
@@ -106,6 +107,7 @@ export type ProjectInput = Pick<
   | 'buffer_modifier'
   | 'tag'
   | 'series'
+  | 'notes'
 >;
 
 export type ProjectUpdateInput = Partial<
@@ -118,6 +120,7 @@ export type ProjectUpdateInput = Partial<
     | 'buffer_modifier'
     | 'tag'
     | 'series'
+    | 'notes'
     | 'sync_true_deadline_with_due_date'
   >
 >;

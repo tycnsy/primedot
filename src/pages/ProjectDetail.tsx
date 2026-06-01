@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import ReactMarkdown from 'react-markdown';
 import {
   Link,
   Navigate,
@@ -109,7 +110,9 @@ export default function ProjectDetail() {
   const [editingProject, setEditingProject] = useState(false);
   const [showNewTask, setShowNewTask] = useState(false);
   const [editingTask, setEditingTask] = useState<Task | null>(null);
-  const [activeTab, setActiveTab] = useState<'overview' | 'pace'>('overview');
+  const [activeTab, setActiveTab] = useState<'overview' | 'notes' | 'pace'>('overview');
+  const [notesDraft, setNotesDraft] = useState('');
+  const [notesError, setNotesError] = useState<string | null>(null);
   const [showTemplateForm, setShowTemplateForm] = useState(false);
   const [templateName, setTemplateName] = useState('');
   const [templateError, setTemplateError] = useState<string | null>(null);
@@ -137,8 +140,15 @@ export default function ProjectDetail() {
   }, [allTasks]);
 
   useEffect(() => {
-    setActiveTab(requestedTab === 'pace' ? 'pace' : 'overview');
+    const nextTab =
+      requestedTab === 'pace' || requestedTab === 'notes' ? requestedTab : 'overview';
+    setActiveTab(nextTab);
   }, [id, requestedTab]);
+
+  useEffect(() => {
+    setNotesDraft(project.data?.notes ?? '');
+    setNotesError(null);
+  }, [project.data?.id, project.data?.notes]);
 
   const topLevelTasks = orderedTasks.filter((t) => !t.parent_id);
   const subtasksByParent = new Map<string, Task[]>();
@@ -248,7 +258,7 @@ export default function ProjectDetail() {
     attemptCompress(parent);
   };
 
-  const handleTabChange = (nextTab: 'overview' | 'pace') => {
+  const handleTabChange = (nextTab: 'overview' | 'notes' | 'pace') => {
     setSearchParams((prev) => {
       const next = new URLSearchParams(prev);
       next.set('tab', nextTab);
@@ -280,6 +290,8 @@ export default function ProjectDetail() {
   const startLabel = formatDueDateTime(p.start_date);
   const dueLabel = formatDueDateTime(p.due_date);
   const archivedLabel = formatDueDateTime(p.archived_at);
+  const normalizedNotesDraft = notesDraft.trim().length > 0 ? notesDraft : null;
+  const notesChanged = normalizedNotesDraft !== p.notes;
 
   return (
     <div className="space-y-8">
@@ -459,6 +471,12 @@ export default function ProjectDetail() {
           onClick={() => handleTabChange('overview')}
         >
           Overview
+        </button>
+        <button
+          data-active={activeTab === 'notes'}
+          onClick={() => handleTabChange('notes')}
+        >
+          Notes
         </button>
         <button
           data-active={activeTab === 'pace'}
@@ -756,6 +774,60 @@ export default function ProjectDetail() {
             )}
           </div>
         </>
+      ) : activeTab === 'notes' ? (
+        <div className="grid gap-4 lg:grid-cols-2">
+          <div className="card space-y-3">
+            <div className="flex items-center justify-between gap-2">
+              <h2 className="text-base font-semibold text-fg">Markdown notes</h2>
+              <span className="text-xs text-muted">
+                {notesChanged ? 'Unsaved changes' : 'Saved'}
+              </span>
+            </div>
+            <textarea
+              className="input min-h-72 resize-y"
+              value={notesDraft}
+              onChange={(event) => {
+                setNotesDraft(event.target.value);
+                if (notesError) setNotesError(null);
+              }}
+              placeholder="Write notes in markdown..."
+              spellCheck
+            />
+            {notesError ? <p className="text-xs text-danger">{notesError}</p> : null}
+            <div className="flex justify-end">
+              <button
+                type="button"
+                className="btn-primary"
+                disabled={!notesChanged || updateProject.isPending}
+                onClick={async () => {
+                  try {
+                    await updateProject.mutateAsync({
+                      id: p.id,
+                      patch: { notes: notesDraft },
+                    });
+                    setNotesError(null);
+                  } catch (error) {
+                    setNotesError(
+                      error instanceof Error ? error.message : 'Failed to save notes.',
+                    );
+                  }
+                }}
+              >
+                {updateProject.isPending ? 'Saving…' : 'Save notes'}
+              </button>
+            </div>
+          </div>
+          <div className="card space-y-3">
+            <h2 className="text-base font-semibold text-fg">Preview</h2>
+            {normalizedNotesDraft ? (
+              <div className="markdown-preview">
+                <ReactMarkdown>{notesDraft}</ReactMarkdown>
+              </div>
+            ) : (
+              <p className="text-sm text-muted">Nothing to preview yet.</p>
+            )}
+          </div>
+        </div>
       ) : (
         <div className="space-y-6">
           <PaceDisplay

@@ -48,6 +48,12 @@ function normalizeSeries(series: string | null | undefined): string | null {
   return trimmed.length > 0 ? trimmed : null;
 }
 
+function normalizeNotes(notes: string | null | undefined): string | null {
+  if (notes == null) return null;
+  const trimmed = notes.trim();
+  return trimmed.length > 0 ? notes : null;
+}
+
 async function ensureProjectTag(userId: string, tag: string | null): Promise<void> {
   if (!tag) return;
   const { error } = await supabase
@@ -236,6 +242,7 @@ export function useCreateProject() {
       if (!user) throw new Error('Not signed in');
       const tag = normalizeTag(input.tag);
       const series = normalizeSeries(input.series);
+      const notes = normalizeNotes(input.notes);
       await ensureProjectTag(user.id, tag);
       await ensureProjectSeries(user.id, series);
       const { data: lastProject, error: lastProjectError } = await supabase
@@ -256,6 +263,7 @@ export function useCreateProject() {
             input.sync_true_deadline_with_due_date ?? true,
           tag,
           series,
+          notes,
           user_id: user.id,
           ...(isLegacyDb ? {} : { sort_order: (lastProject?.sort_order ?? -1) + 1 }),
         })
@@ -291,6 +299,7 @@ export function useUpdateProject() {
         ...(patch.series === undefined
           ? {}
           : { series: normalizeSeries(patch.series) }),
+        ...(patch.notes === undefined ? {} : { notes: normalizeNotes(patch.notes) }),
       };
       if (!user) throw new Error('Not signed in');
       await ensureProjectTag(user.id, normalizedPatch.tag ?? null);

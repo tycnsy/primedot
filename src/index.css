@@ -235,6 +235,49 @@
       rgb(var(--success))
     );
   }
+
+  .markdown-preview {
+    @apply space-y-3 text-sm text-fg;
+  }
+  .markdown-preview :where(h1, h2, h3, h4, h5, h6) {
+    @apply font-semibold text-fg;
+  }
+  .markdown-preview :where(h1) {
+    @apply text-2xl;
+  }
+  .markdown-preview :where(h2) {
+    @apply text-xl;
+  }
+  .markdown-preview :where(h3) {
+    @apply text-lg;
+  }
+  .markdown-preview :where(p, li, blockquote) {
+    @apply leading-6 text-fg;
+  }
+  .markdown-preview :where(ul, ol) {
+    @apply ml-5 space-y-1;
+  }
+  .markdown-preview :where(ul) {
+    @apply list-disc;
+  }
+  .markdown-preview :where(ol) {
+    @apply list-decimal;
+  }
+  .markdown-preview :where(code) {
+    @apply rounded bg-surface2 px-1 py-0.5 font-mono text-xs;
+  }
+  .markdown-preview :where(pre) {
+    @apply overflow-x-auto rounded-lg border border-border bg-surface2 p-3;
+  }
+  .markdown-preview :where(pre code) {
+    @apply bg-transparent p-0 text-xs;
+  }
+  .markdown-preview :where(a) {
+    @apply text-accent underline underline-offset-2;
+  }
+  .markdown-preview :where(blockquote) {
+    @apply border-l-2 border-border pl-3 text-muted;
+  }
 }
 
 @layer utilities {

@@ -40,6 +40,12 @@ function normalizeTag(tag: string | null | undefined): string | null {
   return trimmed.length > 0 ? trimmed : null;
 }
 
+function normalizeNotes(notes: string | null | undefined): string | null {
+  if (notes == null) return null;
+  const trimmed = notes.trim();
+  return trimmed.length > 0 ? notes : null;
+}
+
 async function ensureProjectTag(userId: string, tag: string | null): Promise<void> {
   if (!tag) return;
   const { error } = await supabase
@@ -221,6 +227,10 @@ export function useCreateProjectFromTemplate() {
           projectInput?.series === undefined
             ? normalizeTag(template.series)
             : normalizeTag(projectInput.series),
+        notes:
+          projectInput?.notes === undefined
+            ? null
+            : normalizeNotes(projectInput.notes),
       };
 
       await ensureProjectTag(user.id, resolvedInput.tag);

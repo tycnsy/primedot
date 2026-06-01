@@ -88,6 +88,7 @@ export default function ProjectForm({
         buffer_modifier: buffer,
         tag: tag.trim() || null,
         series: series.trim() || null,
+        notes: initial?.notes ?? null,
       });
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Save failed.');

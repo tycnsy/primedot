@@ -99,6 +99,7 @@ async function handleListProjects(userId: string): Promise<Response> {
     buffer_modifier: number;
     tag: string | null;
     series: string | null;
+    notes: string | null;
     sort_order: number;
     created_at: string;
     archived_at: string | null;
@@ -108,7 +109,7 @@ async function handleListProjects(userId: string): Promise<Response> {
   const projectsResUnknown = await admin
     .from('projects')
     .select(
-      'id,name,video_length,due_date,buffer_modifier,tag,series,sort_order,created_at,archived_at,pace_hidden',
+      'id,name,video_length,due_date,buffer_modifier,tag,series,notes,sort_order,created_at,archived_at,pace_hidden',
     )
     .eq('user_id', userId)
     .is('archived_at', null)
