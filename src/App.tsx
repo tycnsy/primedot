@@ -8,6 +8,7 @@ import ProjectsArchive from './pages/ProjectsArchive';
 import ProjectDetail from './pages/ProjectDetail';
 import ProjectsPace from './pages/ProjectsPace';
 import Calendar from './pages/Calendar';
+import Todos from './pages/Todos';
 import Timer from './pages/Timer';
 import Templates from './pages/Templates';
 import TemplateDetail from './pages/TemplateDetail';
@@ -97,6 +98,7 @@ export default function App() {
           <Route path="/projects" element={<Projects />} />
           <Route path="/projects/archive" element={<ProjectsArchive />} />
           <Route path="/calendar" element={<Calendar />} />
+          <Route path="/todos" element={<Todos />} />
           <Route path="/projects/pace" element={<ProjectsPace />} />
           <Route path="/templates" element={<Templates />} />
           <Route path="/templates/:templateId" element={<TemplateDetail />} />

@@ -1,5 +1,4 @@
 import { useEffect, useState } from 'react';
-import ReactMarkdown from 'react-markdown';
 import {
   Link,
   Navigate,
@@ -49,6 +48,8 @@ import {
 } from '../lib/calc';
 import { formatHMS } from '../lib/time';
 import type { ComplexMode, Task } from '../lib/types';
+
+const NOTES_AUTOSAVE_DELAY_MS = 700;
 
 function formatDueDateTime(iso: string | null): string | null {
   if (!iso) return null;
@@ -292,6 +293,35 @@ export default function ProjectDetail() {
   const archivedLabel = formatDueDateTime(p.archived_at);
   const normalizedNotesDraft = notesDraft.trim().length > 0 ? notesDraft : null;
   const notesChanged = normalizedNotesDraft !== p.notes;
+  const notesStatusText = notesError
+    ? 'Save failed'
+    : updateProject.isPending && notesChanged
+      ? 'Saving…'
+      : notesChanged
+        ? 'Unsaved changes'
+        : 'Saved automatically';
+
+  useEffect(() => {
+    if (!notesChanged || updateProject.isPending) return;
+
+    const timeoutId = window.setTimeout(() => {
+      void updateProject
+        .mutateAsync({
+          id: p.id,
+          patch: { notes: notesDraft },
+        })
+        .then(() => {
+          setNotesError(null);
+        })
+        .catch((error) => {
+          setNotesError(error instanceof Error ? error.message : 'Failed to save notes.');
+        });
+    }, NOTES_AUTOSAVE_DELAY_MS);
+
+    return () => {
+      window.clearTimeout(timeoutId);
+    };
+  }, [notesChanged, notesDraft, p.id, updateProject]);
 
   return (
     <div className="space-y-8">
@@ -775,58 +805,23 @@ export default function ProjectDetail() {
           </div>
         </>
       ) : activeTab === 'notes' ? (
-        <div className="grid gap-4 lg:grid-cols-2">
-          <div className="card space-y-3">
-            <div className="flex items-center justify-between gap-2">
-              <h2 className="text-base font-semibold text-fg">Markdown notes</h2>
-              <span className="text-xs text-muted">
-                {notesChanged ? 'Unsaved changes' : 'Saved'}
-              </span>
-            </div>
-            <textarea
-              className="input min-h-72 resize-y"
-              value={notesDraft}
-              onChange={(event) => {
-                setNotesDraft(event.target.value);
-                if (notesError) setNotesError(null);
-              }}
-              placeholder="Write notes in markdown..."
-              spellCheck
-            />
-            {notesError ? <p className="text-xs text-danger">{notesError}</p> : null}
-            <div className="flex justify-end">
-              <button
-                type="button"
-                className="btn-primary"
-                disabled={!notesChanged || updateProject.isPending}
-                onClick={async () => {
-                  try {
-                    await updateProject.mutateAsync({
-                      id: p.id,
-                      patch: { notes: notesDraft },
-                    });
-                    setNotesError(null);
-                  } catch (error) {
-                    setNotesError(
-                      error instanceof Error ? error.message : 'Failed to save notes.',
-                    );
-                  }
-                }}
-              >
-                {updateProject.isPending ? 'Saving…' : 'Save notes'}
-              </button>
-            </div>
+        <div className="card space-y-3">
+          <div className="flex items-center justify-between gap-2">
+            <h2 className="text-base font-semibold text-fg">Markdown notes</h2>
+            <span className="text-xs text-muted">{notesStatusText}</span>
           </div>
-          <div className="card space-y-3">
-            <h2 className="text-base font-semibold text-fg">Preview</h2>
-            {normalizedNotesDraft ? (
-              <div className="markdown-preview">
-                <ReactMarkdown>{notesDraft}</ReactMarkdown>
-              </div>
-            ) : (
-              <p className="text-sm text-muted">Nothing to preview yet.</p>
-            )}
-          </div>
+          <textarea
+            className="input min-h-72 resize-y"
+            value={notesDraft}
+            onChange={(event) => {
+              setNotesDraft(event.target.value);
+              if (notesError) setNotesError(null);
+            }}
+            placeholder="Write notes in markdown..."
+            spellCheck
+          />
+          <p className="text-xs text-muted">Changes save automatically.</p>
+          {notesError ? <p className="text-xs text-danger">{notesError}</p> : null}
         </div>
       ) : (
         <div className="space-y-6">

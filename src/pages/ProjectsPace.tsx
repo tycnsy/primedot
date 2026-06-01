@@ -33,9 +33,9 @@ function cardTint(seconds: number | null): string {
 export default function ProjectsPace() {
   const [searchParams, setSearchParams] = useSearchParams();
   const [activeTab, setActiveTab] = useState<'grid' | 'table'>(
-    searchParams.get('tab') === 'table' ? 'table' : 'grid',
+    searchParams.get('tab') === 'grid' ? 'grid' : 'table',
   );
-  const tabFromUrl = searchParams.get('tab') === 'table' ? 'table' : 'grid';
+  const tabFromUrl = searchParams.get('tab') === 'grid' ? 'grid' : 'table';
   const [openColumnsSignal, setOpenColumnsSignal] = useState(0);
   const [viewAllProjects, setViewAllProjects] = useState(false);
   const now = useTicker(1000);
@@ -94,9 +94,9 @@ export default function ProjectsPace() {
     setActiveTab(tab);
     const nextParams = new URLSearchParams(searchParams);
     if (tab === 'table') {
-      nextParams.set('tab', 'table');
-    } else {
       nextParams.delete('tab');
+    } else {
+      nextParams.set('tab', 'grid');
     }
     setSearchParams(nextParams, { replace: true });
   };

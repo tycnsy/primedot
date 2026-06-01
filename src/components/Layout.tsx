@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Link, NavLink, Outlet, useLocation } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import PaceWidgetSync from './PaceWidgetSync';
@@ -6,14 +6,25 @@ import ThemeToggle from './ThemeToggle';
 import RightPaceSidebar from './RightPaceSidebar';
 import RightPinnedWhiteboards from './RightPinnedWhiteboards';
 import { useHiddenPaceCards } from '../hooks/useHiddenPaceCards';
+import { useNavPreferences } from '../hooks/useNavPreferences';
+import { useOverdueTodoCount } from '../hooks/useTodos';
 
 const LEFT_STORAGE_KEY = 'prime:sidebar-collapsed';
 const RIGHT_STORAGE_KEY = 'prime:right-sidebar-collapsed';
+
+type NavItemConfig = {
+  id: string;
+  to: string;
+  label: string;
+  icon: React.ReactNode;
+  badge?: number;
+};
 
 export default function Layout() {
   const { user, signOut } = useAuth();
   const location = useLocation();
   const { isHideMode, toggleHideMode } = useHiddenPaceCards();
+  const overdueTodoCount = useOverdueTodoCount();
 
   const [collapsed, setCollapsed] = useState<boolean>(() => {
     if (typeof window === 'undefined') return false;
@@ -32,6 +43,64 @@ export default function Layout() {
     }
   });
   const [mobileOpen, setMobileOpen] = useState(false);
+  const [isEditMode, setIsEditMode] = useState(false);
+  const [draggedNavId, setDraggedNavId] = useState<string | null>(null);
+  const [dropNavId, setDropNavId] = useState<string | null>(null);
+
+  const navItems = useMemo<NavItemConfig[]>(
+    () => [
+      { id: 'projects', to: '/projects', label: 'Projects', icon: <ProjectsIcon /> },
+      { id: 'pace', to: '/projects/pace', label: 'Pace Grid', icon: <PaceGridIcon /> },
+      { id: 'templates', to: '/templates', label: 'Templates', icon: <TemplatesIcon /> },
+      { id: 'calendar', to: '/calendar', label: 'Calendar', icon: <CalendarIcon /> },
+      {
+        id: 'todos',
+        to: '/todos',
+        label: 'To-Do',
+        icon: <TodoIcon />,
+        badge: overdueTodoCount,
+      },
+      { id: 'timer', to: '/timer', label: 'Timer', icon: <TimerIcon /> },
+      { id: 'habits', to: '/habits/today', label: 'Habits', icon: <HabitsIcon /> },
+      { id: 'goals', to: '/goals', label: 'Goals', icon: <GoalsIcon /> },
+      { id: 'whiteboards', to: '/whiteboards', label: 'Whiteboard', icon: <WhiteboardIcon /> },
+      {
+        id: 'integrations',
+        to: '/settings/integrations',
+        label: 'Integrations',
+        icon: <IntegrationsIcon />,
+      },
+      { id: 'tags', to: '/settings/tags', label: 'Tags', icon: <TagIcon /> },
+      { id: 'series', to: '/settings/series', label: 'Series', icon: <SeriesIcon /> },
+    ],
+    [overdueTodoCount],
+  );
+  const availableNavIds = useMemo(() => navItems.map((item) => item.id), [navItems]);
+  const navItemById = useMemo(
+    () => new Map(navItems.map((item) => [item.id, item])),
+    [navItems],
+  );
+  const {
+    visibleIds,
+    hiddenOrderedIds,
+    isLoading: navPrefsLoading,
+    reorder,
+    toggleHidden,
+  } = useNavPreferences(availableNavIds);
+  const visibleItems = useMemo(
+    () =>
+      visibleIds
+        .map((id) => navItemById.get(id))
+        .filter((item): item is NavItemConfig => !!item),
+    [navItemById, visibleIds],
+  );
+  const hiddenItems = useMemo(
+    () =>
+      hiddenOrderedIds
+        .map((id) => navItemById.get(id))
+        .filter((item): item is NavItemConfig => !!item),
+    [hiddenOrderedIds, navItemById],
+  );
 
   useEffect(() => {
     try {
@@ -64,6 +133,12 @@ export default function Layout() {
     return () => window.removeEventListener('keydown', onKey);
   }, [mobileOpen]);
 
+  useEffect(() => {
+    if (collapsed && isEditMode) {
+      setIsEditMode(false);
+    }
+  }, [collapsed, isEditMode]);
+
   const widthClass = collapsed ? 'w-16' : 'w-60';
   const rightWidthClass = rightCollapsed ? 'w-12' : 'w-64';
   const mainLeftPadClass = collapsed ? 'md:pl-16' : 'md:pl-60';
@@ -81,6 +156,19 @@ export default function Layout() {
     : isTimerWide || isCalendarWide || isProjectsWide
       ? 'w-full px-4 py-8 sm:px-6'
       : 'mx-auto max-w-5xl px-4 py-8 sm:px-6';
+
+  const handleDropOnVisible = async (targetId: string) => {
+    if (!draggedNavId || draggedNavId === targetId) {
+      setDropNavId(null);
+      return;
+    }
+    try {
+      await reorder(draggedNavId, targetId);
+    } finally {
+      setDraggedNavId(null);
+      setDropNavId(null);
+    }
+  };
 
   return (
     <div className="relative min-h-screen">
@@ -183,70 +271,97 @@ export default function Layout() {
           </button>
         </div>
 
-        <nav
-          className="flex flex-1 flex-col gap-0.5 px-2 text-sm"
-          aria-label="Sections"
-        >
-          <SidebarLink
-            to="/projects"
-            label="Projects"
-            collapsed={collapsed}
-            icon={<ProjectsIcon />}
-          />
-          <SidebarLink
-            to="/templates"
-            label="Templates"
-            collapsed={collapsed}
-            icon={<TemplatesIcon />}
-          />
-          <SidebarLink
-            to="/calendar"
-            label="Calendar"
-            collapsed={collapsed}
-            icon={<CalendarIcon />}
-          />
-          <SidebarLink
-            to="/timer"
-            label="Timer"
-            collapsed={collapsed}
-            icon={<TimerIcon />}
-          />
-          <SidebarLink
-            to="/habits/today"
-            label="Habits"
-            collapsed={collapsed}
-            icon={<HabitsIcon />}
-          />
-          <SidebarLink
-            to="/goals"
-            label="Goals"
-            collapsed={collapsed}
-            icon={<GoalsIcon />}
-          />
-          <SidebarLink
-            to="/whiteboards"
-            label="Whiteboard"
-            collapsed={collapsed}
-            icon={<WhiteboardIcon />}
-          />
-          <SidebarLink
-            to="/settings/integrations"
-            label="Integrations"
-            collapsed={collapsed}
-            icon={<IntegrationsIcon />}
-          />
-          <SidebarLink
-            to="/settings/tags"
-            label="Tags"
-            collapsed={collapsed}
-            icon={<TagIcon />}
-          />
-          <SidebarLink
-            to="/settings/series"
-            label="Series"
-            collapsed={collapsed}
-            icon={<SeriesIcon />}
-          />
+        <nav className="flex flex-1 min-h-0 flex-col px-2 text-sm" aria-label="Sections">
+          {!collapsed && (
+            <div className="mb-2 px-0.5 pt-0.5">
+              <button
+                type="button"
+                onClick={() => {
+                  setIsEditMode((value) => !value);
+                  setDraggedNavId(null);
+                  setDropNavId(null);
+                }}
+                className={isEditMode ? 'btn-secondary w-full !px-2.5 !py-1.5' : 'btn-ghost w-full !px-2.5 !py-1.5'}
+              >
+                {isEditMode ? <DoneIcon /> : <EditIcon />}
+                <span>{isEditMode ? 'Done' : 'Edit links'}</span>
+              </button>
+            </div>
+          )}
+
+          {isEditMode && !collapsed ? (
+            <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto pb-2">
+              <div className="flex flex-col gap-1">
+                <h3 className="px-2 text-[11px] font-semibold uppercase tracking-wide text-muted">
+                  Visible
+                </h3>
+                {visibleItems.map((item) => (
+                  <EditableNavRow
+                    key={item.id}
+                    item={item}
+                    isHidden={false}
+                    isDragging={draggedNavId === item.id}
+                    isDropTarget={dropNavId === item.id}
+                    draggable={!navPrefsLoading}
+                    onDragStart={(id) => setDraggedNavId(id)}
+                    onDragOver={(id) => setDropNavId(id)}
+                    onDrop={handleDropOnVisible}
+                    onDragEnd={() => {
+                      setDraggedNavId(null);
+                      setDropNavId(null);
+                    }}
+                    onToggleHidden={toggleHidden}
+                    disabled={navPrefsLoading}
+                  />
+                ))}
+                {visibleItems.length === 0 && (
+                  <p className="rounded-md bg-surface2 px-2.5 py-2 text-xs text-muted">
+                    No visible links.
+                  </p>
+                )}
+              </div>
+
+              <div className="flex flex-col gap-1">
+                <h3 className="px-2 text-[11px] font-semibold uppercase tracking-wide text-muted">
+                  Hidden
+                </h3>
+                {hiddenItems.map((item) => (
+                  <EditableNavRow
+                    key={item.id}
+                    item={item}
+                    isHidden={true}
+                    isDragging={false}
+                    isDropTarget={false}
+                    draggable={false}
+                    onDragStart={() => undefined}
+                    onDragOver={() => undefined}
+                    onDrop={() => undefined}
+                    onDragEnd={() => undefined}
+                    onToggleHidden={toggleHidden}
+                    disabled={navPrefsLoading}
+                  />
+                ))}
+                {hiddenItems.length === 0 && (
+                  <p className="rounded-md bg-surface2 px-2.5 py-2 text-xs text-muted">
+                    No hidden links.
+                  </p>
+                )}
+              </div>
+            </div>
+          ) : (
+            <div className="flex flex-1 flex-col gap-0.5">
+              {visibleItems.map((item) => (
+                <SidebarLink
+                  key={item.id}
+                  to={item.to}
+                  label={item.label}
+                  collapsed={collapsed}
+                  icon={item.icon}
+                  badge={item.badge}
+                />
+              ))}
+            </div>
+          )}
         </nav>
 
         <div className="mt-auto flex flex-col gap-3 border-t border-border/60 px-3 py-3">
@@ -352,20 +467,30 @@ function SidebarLink({
   label,
   icon,
   collapsed,
+  badge,
 }: {
   to: string;
   label: string;
   icon: React.ReactNode;
   collapsed: boolean;
+  badge?: number;
 }) {
+  const showBadge = typeof badge === 'number' && badge > 0;
+  const badgeText = showBadge ? (badge > 99 ? '99+' : String(badge)) : '';
   return (
     <NavLink
       to={to}
       end
       title={collapsed ? label : undefined}
-      aria-label={collapsed ? label : undefined}
+      aria-label={
+        collapsed
+          ? showBadge
+            ? `${label}, ${badge} overdue`
+            : label
+          : undefined
+      }
       className={({ isActive }) =>
-        `flex items-center gap-2.5 rounded-md px-2.5 py-2 transition-colors ${
+        `relative flex items-center gap-2.5 rounded-md px-2.5 py-2 transition-colors ${
           collapsed ? 'justify-center' : ''
         } ${
           isActive
@@ -374,9 +499,86 @@ function SidebarLink({
         }`
       }
     >
-      <span className="shrink-0 text-current">{icon}</span>
+      <span className="relative shrink-0 text-current">
+        {icon}
+        {showBadge && collapsed && (
+          <span className="absolute -right-1.5 -top-1.5 inline-flex h-[16px] min-w-[16px] items-center justify-center rounded-full bg-danger px-1 text-[9px] font-semibold leading-none text-white">
+            {badgeText}
+          </span>
+        )}
+      </span>
       {!collapsed && <span className="truncate">{label}</span>}
+      {showBadge && !collapsed && (
+        <span className="ml-auto inline-flex h-[18px] min-w-[18px] items-center justify-center rounded-full bg-danger px-1.5 text-[10px] font-semibold leading-none text-white">
+          {badgeText}
+        </span>
+      )}
     </NavLink>
+  );
+}
+
+function EditableNavRow({
+  item,
+  isHidden,
+  isDragging,
+  isDropTarget,
+  draggable,
+  onDragStart,
+  onDragOver,
+  onDrop,
+  onDragEnd,
+  onToggleHidden,
+  disabled,
+}: {
+  item: NavItemConfig;
+  isHidden: boolean;
+  isDragging: boolean;
+  isDropTarget: boolean;
+  draggable: boolean;
+  onDragStart: (id: string) => void;
+  onDragOver: (id: string) => void;
+  onDrop: (id: string) => void | Promise<void>;
+  onDragEnd: () => void;
+  onToggleHidden: (id: string) => Promise<void>;
+  disabled: boolean;
+}) {
+  return (
+    <div
+      draggable={draggable}
+      onDragStart={() => onDragStart(item.id)}
+      onDragOver={(event) => {
+        if (!draggable) return;
+        event.preventDefault();
+        onDragOver(item.id);
+      }}
+      onDrop={(event) => {
+        if (!draggable) return;
+        event.preventDefault();
+        void onDrop(item.id);
+      }}
+      onDragEnd={onDragEnd}
+      className={`flex items-center gap-2 rounded-md px-2 py-2 transition-colors ${
+        isDropTarget ? 'bg-surface2 ring-1 ring-inset ring-border' : 'hover:bg-surface2/60'
+      } ${isDragging ? 'opacity-50' : ''} ${draggable ? 'cursor-grab' : ''}`}
+    >
+      <span className={`text-muted ${draggable ? '' : 'opacity-40'}`}>
+        <DragHandleIcon />
+      </span>
+      <span className="shrink-0 text-current">{item.icon}</span>
+      <span className="truncate">{item.label}</span>
+      <button
+        type="button"
+        aria-label={isHidden ? `Show ${item.label}` : `Hide ${item.label}`}
+        title={isHidden ? 'Show link' : 'Hide link'}
+        className="btn-ghost ml-auto !px-1.5 !py-1"
+        onClick={() => {
+          void onToggleHidden(item.id);
+        }}
+        disabled={disabled}
+      >
+        {isHidden ? <EyeClosedIcon /> : <EyeOpenIcon />}
+      </button>
+    </div>
   );
 }
 
@@ -394,6 +596,100 @@ function ChevronIcon({ collapsed }: { collapsed: boolean }) {
       aria-hidden
     >
       {collapsed ? <path d="m9 6 6 6-6 6" /> : <path d="m15 6-6 6 6 6" />}
+    </svg>
+  );
+}
+
+function EditIcon() {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      width="14"
+      height="14"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.7"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden
+    >
+      <path d="M12 20h9" />
+      <path d="m16.5 3.5 4 4L8 20l-5 1 1-5Z" />
+    </svg>
+  );
+}
+
+function DoneIcon() {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      width="14"
+      height="14"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.8"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden
+    >
+      <path d="m5 13 4 4L19 7" />
+    </svg>
+  );
+}
+
+function DragHandleIcon() {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      width="14"
+      height="14"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.8"
+      strokeLinecap="round"
+      aria-hidden
+    >
+      <path d="M9 5h.01M9 12h.01M9 19h.01M15 5h.01M15 12h.01M15 19h.01" />
+    </svg>
+  );
+}
+
+function EyeOpenIcon() {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      width="14"
+      height="14"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.7"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden
+    >
+      <path d="M2 12s3.5-6 10-6 10 6 10 6-3.5 6-10 6-10-6-10-6Z" />
+      <circle cx="12" cy="12" r="2.8" />
+    </svg>
+  );
+}
+
+function EyeClosedIcon() {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      width="14"
+      height="14"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.7"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden
+    >
+      <path d="M3 3l18 18" />
+      <path d="M10.6 6.3A11.8 11.8 0 0 1 12 6c6.5 0 10 6 10 6a18.8 18.8 0 0 1-4 4.7" />
+      <path d="M6.7 6.8C3.8 8.5 2 12 2 12s3.5 6 10 6c1.3 0 2.5-.2 3.7-.6" />
+      <path d="M9.8 9.8a3 3 0 0 0 4.2 4.2" />
     </svg>
   );
 }
@@ -454,6 +750,28 @@ function ProjectsIcon() {
   );
 }
 
+function PaceGridIcon() {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      width="16"
+      height="16"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.6"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden
+    >
+      <rect x="3" y="4" width="18" height="16" rx="1.8" />
+      <path d="M3 10h18" />
+      <path d="M3 16h18" />
+      <path d="M9 4v16" />
+      <path d="M15 4v16" />
+    </svg>
+  );
+}
+
 function TimerIcon() {
   return (
     <svg
@@ -496,6 +814,27 @@ function CalendarIcon() {
       <path d="M8 14h3" />
       <path d="M13 14h3" />
       <path d="M8 18h3" />
+    </svg>
+  );
+}
+
+function TodoIcon() {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      width="16"
+      height="16"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.6"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden
+    >
+      <path d="m3 7 2 2 3-3" />
+      <path d="m3 17 2 2 3-3" />
+      <path d="M12 8h9" />
+      <path d="M12 18h9" />
     </svg>
   );
 }
