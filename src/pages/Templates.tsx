@@ -1,27 +1,55 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import {
+  useArchiveTemplate,
   useCreateProjectFromTemplate,
   useDeleteTemplate,
+  useReorderTemplates,
   useTemplateTasksForTemplates,
   useTemplates,
 } from '../hooks/useTemplates';
+import { useProjectSeries, useProjectTags } from '../hooks/useProjects';
+import TagPill from '../components/TagPill';
 import type { ProjectTemplate } from '../lib/types';
 import { formatHMS } from '../lib/time';
 
 export default function Templates() {
   const navigate = useNavigate();
   const templatesQ = useTemplates();
+  const projectTags = useProjectTags();
+  const projectSeries = useProjectSeries();
   const [activeTemplate, setActiveTemplate] = useState<ProjectTemplate | null>(null);
+  const [orderedTemplates, setOrderedTemplates] = useState<ProjectTemplate[]>([]);
+  const [draggedTemplateId, setDraggedTemplateId] = useState<string | null>(null);
   const [projectName, setProjectName] = useState('');
   const [createError, setCreateError] = useState<string | null>(null);
   const [deleteError, setDeleteError] = useState<string | null>(null);
+  const [archiveError, setArchiveError] = useState<string | null>(null);
+  const [reorderError, setReorderError] = useState<string | null>(null);
   const [deletingTemplateId, setDeletingTemplateId] = useState<string | null>(null);
+  const [archivingTemplateId, setArchivingTemplateId] = useState<string | null>(null);
   const createProjectFromTemplate = useCreateProjectFromTemplate();
   const deleteTemplate = useDeleteTemplate();
+  const archiveTemplate = useArchiveTemplate();
+  const reorderTemplates = useReorderTemplates();
+  useEffect(() => {
+    setOrderedTemplates(templatesQ.data ?? []);
+  }, [templatesQ.data]);
+
+  const tagColorByName = useMemo(
+    () => new Map((projectTags.data ?? []).map((tag) => [tag.name, tag.color] as const)),
+    [projectTags.data],
+  );
+  const seriesColorByName = useMemo(
+    () =>
+      new Map(
+        (projectSeries.data ?? []).map((series) => [series.name, series.color] as const),
+      ),
+    [projectSeries.data],
+  );
   const templateIds = useMemo(
-    () => (templatesQ.data ?? []).map((template) => template.id),
-    [templatesQ.data],
+    () => orderedTemplates.map((template) => template.id),
+    [orderedTemplates],
   );
   const templateTasksQ = useTemplateTasksForTemplates(templateIds);
   const taskCountByTemplate = useMemo(() => {
@@ -37,6 +65,27 @@ export default function Templates() {
     setCreateError(null);
   };
 
+  const reorder = async (sourceId: string, targetId: string) => {
+    if (sourceId === targetId) return;
+    const previous = orderedTemplates;
+    const sourceIndex = previous.findIndex((template) => template.id === sourceId);
+    const targetIndex = previous.findIndex((template) => template.id === targetId);
+    if (sourceIndex < 0 || targetIndex < 0) return;
+    const reordered = [...previous];
+    const [moved] = reordered.splice(sourceIndex, 1);
+    reordered.splice(targetIndex, 0, moved);
+    setOrderedTemplates(reordered);
+    setReorderError(null);
+    try {
+      await reorderTemplates.mutateAsync(reordered.map((template) => template.id));
+    } catch (error) {
+      setOrderedTemplates(previous);
+      setReorderError(
+        error instanceof Error ? error.message : 'Failed to reorder templates.',
+      );
+    }
+  };
+
   return (
     <div className="space-y-8">
       <div className="flex flex-wrap items-end justify-between gap-4">
@@ -47,9 +96,14 @@ export default function Templates() {
             Save reusable project blueprints with premade settings and tasks.
           </p>
         </div>
-        <Link to="/projects" className="btn-ghost">
-          Back to projects
-        </Link>
+        <div className="flex items-center gap-2">
+          <Link to="/templates/archive" className="btn-ghost">
+            View archive
+          </Link>
+          <Link to="/projects" className="btn-ghost">
+            Back to projects
+          </Link>
+        </div>
       </div>
 
       {activeTemplate ? (
@@ -120,19 +174,54 @@ export default function Templates() {
         </p>
       ) : null}
       {deleteError ? <p className="text-danger">{deleteError}</p> : null}
+      {archiveError ? <p className="text-danger">{archiveError}</p> : null}
+      {reorderError ? <p className="text-danger">{reorderError}</p> : null}
 
-      {templatesQ.data && templatesQ.data.length === 0 ? (
+      {orderedTemplates.length === 0 && !templatesQ.isLoading ? (
         <div className="card text-center text-sm text-muted">
           No templates yet. Open any project and click "Save as template" to add one.
         </div>
       ) : null}
 
       <ul className="grid gap-3 sm:grid-cols-2">
-        {templatesQ.data?.map((template) => (
-          <li key={template.id} className="card space-y-3">
+        {orderedTemplates.map((template) => (
+          <li
+            key={template.id}
+            className={`card space-y-3 ${draggedTemplateId === template.id ? 'opacity-60' : ''}`}
+            draggable
+            onDragStart={(event) => {
+              setDraggedTemplateId(template.id);
+              event.dataTransfer.setData('text/template-id', template.id);
+              event.dataTransfer.effectAllowed = 'move';
+            }}
+            onDragOver={(event) => {
+              event.preventDefault();
+              event.dataTransfer.dropEffect = 'move';
+            }}
+            onDrop={(event) => {
+              event.preventDefault();
+              const sourceId = event.dataTransfer.getData('text/template-id');
+              setDraggedTemplateId(null);
+              if (sourceId) void reorder(sourceId, template.id);
+            }}
+            onDragEnd={() => setDraggedTemplateId(null)}
+          >
             <div className="flex items-start justify-between gap-3">
               <h3 className="font-medium text-fg">{template.name}</h3>
-              {template.tag ? <span className="pill shrink-0">{template.tag}</span> : null}
+              <div className="flex flex-wrap items-center justify-end gap-2">
+                {template.tag ? (
+                  <TagPill
+                    name={template.tag}
+                    color={tagColorByName.get(template.tag) ?? null}
+                  />
+                ) : null}
+                {template.series ? (
+                  <TagPill
+                    name={template.series}
+                    color={seriesColorByName.get(template.series) ?? null}
+                  />
+                ) : null}
+              </div>
             </div>
             <div className="divider" />
             <dl className="grid grid-cols-3 gap-2">
@@ -189,6 +278,32 @@ export default function Templates() {
                 )}
               </button>
               <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={async () => {
+                    if (!confirm(`Archive template "${template.name}"?`)) return;
+                    const isActiveTemplate = activeTemplate?.id === template.id;
+                    setArchiveError(null);
+                    setArchivingTemplateId(template.id);
+                    try {
+                      await archiveTemplate.mutateAsync(template.id);
+                      if (isActiveTemplate) {
+                        setActiveTemplate(null);
+                        setCreateError(null);
+                      }
+                    } catch (err) {
+                      setArchiveError(
+                        err instanceof Error ? err.message : 'Failed to archive template.',
+                      );
+                    } finally {
+                      setArchivingTemplateId(null);
+                    }
+                  }}
+                  className="btn-ghost !px-3 !py-1.5 text-xs"
+                  disabled={archivingTemplateId === template.id}
+                >
+                  {archivingTemplateId === template.id ? 'Archiving…' : 'Archive'}
+                </button>
                 <button
                   type="button"
                   onClick={() => navigate(`/templates/${template.id}`)}

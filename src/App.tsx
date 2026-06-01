@@ -11,6 +11,7 @@ import Calendar from './pages/Calendar';
 import Todos from './pages/Todos';
 import Timer from './pages/Timer';
 import Templates from './pages/Templates';
+import TemplatesArchive from './pages/TemplatesArchive';
 import TemplateDetail from './pages/TemplateDetail';
 import HabitsToday from './pages/HabitsToday';
 import HabitsIndex from './pages/HabitsIndex';
@@ -101,6 +102,7 @@ export default function App() {
           <Route path="/todos" element={<Todos />} />
           <Route path="/projects/pace" element={<ProjectsPace />} />
           <Route path="/templates" element={<Templates />} />
+          <Route path="/templates/archive" element={<TemplatesArchive />} />
           <Route path="/templates/:templateId" element={<TemplateDetail />} />
           <Route path="/habits/today" element={<HabitsToday />} />
           <Route path="/habits" element={<HabitsIndex />} />

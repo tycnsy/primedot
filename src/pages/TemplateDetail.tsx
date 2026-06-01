@@ -89,6 +89,41 @@ export default function TemplateDetail() {
     [seriesQ.data],
   );
 
+  const tagDatalistOptions = useMemo(() => {
+    const names = (tagsQ.data ?? [])
+      .filter((tag) => !tag.archived_at)
+      .map((tag) => tag.name);
+    if (draft.tag.trim() && !names.includes(draft.tag.trim())) {
+      names.push(draft.tag.trim());
+    }
+    return names;
+  }, [tagsQ.data, draft.tag]);
+
+  const seriesDatalistOptions = useMemo(() => {
+    const trimmedTag = draft.tag.trim();
+    const names = (seriesQ.data ?? [])
+      .filter((series) => {
+        if (series.archived_at) return false;
+        if (!trimmedTag) return true;
+        return series.tag === trimmedTag;
+      })
+      .map((series) => series.name);
+    if (draft.series.trim() && !names.includes(draft.series.trim())) {
+      names.push(draft.series.trim());
+    }
+    return names;
+  }, [seriesQ.data, draft.tag, draft.series]);
+
+  const handleSeriesDraftChange = (value: string) => {
+    setDraft((prev) => {
+      if (prev.tag.trim()) return { ...prev, series: value };
+      const match = (seriesQ.data ?? []).find((series) => series.name === value.trim());
+      return match?.tag
+        ? { ...prev, series: value, tag: match.tag }
+        : { ...prev, series: value };
+    });
+  };
+
   if (!templateId) return <Navigate to="/templates" replace />;
   if (templateQ.isLoading || tasksQ.isLoading) return <p className="text-muted">Loading…</p>;
   if (!templateQ.data) {
@@ -275,8 +310,8 @@ export default function TemplateDetail() {
                 placeholder="Optional"
               />
               <datalist id="template-tag-options">
-                {(tagsQ.data ?? []).map((tag) => (
-                  <option key={tag.id} value={tag.name} />
+                {tagDatalistOptions.map((option) => (
+                  <option key={option} value={option} />
                 ))}
               </datalist>
             </div>
@@ -286,14 +321,12 @@ export default function TemplateDetail() {
                 className="input"
                 list="template-series-options"
                 value={draft.series}
-                onChange={(event) =>
-                  setDraft((prev) => ({ ...prev, series: event.target.value }))
-                }
+                onChange={(event) => handleSeriesDraftChange(event.target.value)}
                 placeholder="Optional"
               />
               <datalist id="template-series-options">
-                {(seriesQ.data ?? []).map((series) => (
-                  <option key={series.id} value={series.name} />
+                {seriesDatalistOptions.map((option) => (
+                  <option key={option} value={option} />
                 ))}
               </datalist>
             </div>

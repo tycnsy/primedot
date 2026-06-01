@@ -1,11 +1,16 @@
-import { useState, type FormEvent } from 'react';
-import type { Project, ProjectInput } from '../lib/types';
+import { useMemo, useState, type FormEvent } from 'react';
+import type {
+  Project,
+  ProjectInput,
+  ProjectSeries,
+  ProjectTag,
+} from '../lib/types';
 import { formatHMS, parseHMS } from '../lib/time';
 
 interface Props {
   initial?: Project | null;
-  tagOptions?: string[];
-  seriesOptions?: string[];
+  tagItems?: ProjectTag[];
+  seriesItems?: ProjectSeries[];
   onSubmit: (input: ProjectInput) => Promise<void> | void;
   onCancel?: () => void;
   submitLabel?: string;
@@ -34,8 +39,8 @@ function defaultStartLocal(): string {
 
 export default function ProjectForm({
   initial,
-  tagOptions = [],
-  seriesOptions = [],
+  tagItems = [],
+  seriesItems = [],
   onSubmit,
   onCancel,
   submitLabel = 'Save',
@@ -57,6 +62,33 @@ export default function ProjectForm({
   const [series, setSeries] = useState(initial?.series ?? '');
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+
+  const tagOptions = useMemo(() => {
+    const names = tagItems
+      .filter((item) => !item.archived_at)
+      .map((item) => item.name);
+    if (tag.trim() && !names.includes(tag.trim())) names.push(tag.trim());
+    return names;
+  }, [tagItems, tag]);
+
+  const seriesOptions = useMemo(() => {
+    const trimmedTag = tag.trim();
+    const available = seriesItems.filter((item) => {
+      if (item.archived_at) return false;
+      if (!trimmedTag) return true;
+      return item.tag === trimmedTag;
+    });
+    const names = available.map((item) => item.name);
+    if (series.trim() && !names.includes(series.trim())) names.push(series.trim());
+    return names;
+  }, [seriesItems, tag, series]);
+
+  const handleSeriesChange = (value: string) => {
+    setSeries(value);
+    if (tag.trim()) return;
+    const match = seriesItems.find((item) => item.name === value.trim());
+    if (match?.tag) setTag(match.tag);
+  };
 
   const submit = async (e: FormEvent) => {
     e.preventDefault();
@@ -190,7 +222,7 @@ export default function ProjectForm({
             id="proj-series"
             className="input"
             value={series}
-            onChange={(e) => setSeries(e.target.value)}
+            onChange={(e) => handleSeriesChange(e.target.value)}
             placeholder="optional"
             list="project-series-options"
           />

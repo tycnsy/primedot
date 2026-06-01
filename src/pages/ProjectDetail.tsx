@@ -487,8 +487,8 @@ export default function ProjectDetail() {
           <h2 className="mb-4 text-lg font-semibold text-fg">Edit project</h2>
           <ProjectForm
             initial={p}
-            tagOptions={(projectTags.data ?? []).map((tag) => tag.name)}
-            seriesOptions={(projectSeries.data ?? []).map((series) => series.name)}
+            tagItems={projectTags.data ?? []}
+            seriesItems={projectSeries.data ?? []}
             submitLabel="Save"
             onCancel={() => setEditingProject(false)}
             onSubmit={async (input) => {

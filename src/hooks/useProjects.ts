@@ -70,6 +70,20 @@ async function ensureProjectSeries(userId: string, series: string | null): Promi
   if (error) throw error;
 }
 
+async function countProjectsUsing(
+  userId: string,
+  field: 'tag' | 'series',
+  name: string,
+): Promise<number> {
+  const { count, error } = await supabase
+    .from('projects')
+    .select('id', { count: 'exact', head: true })
+    .eq('user_id', userId)
+    .eq(field, name);
+  if (error) throw error;
+  return count ?? 0;
+}
+
 async function getPaceSettings(projectId: string): Promise<PaceSettings | null> {
   const { data, error } = await supabase
     .from('pace_settings')
@@ -556,18 +570,58 @@ export function useUpdateProjectTag() {
   });
 }
 
+export function useArchiveProjectTag() {
+  const qc = useQueryClient();
+  const { user } = useAuth();
+  return useMutation({
+    mutationFn: async ({ id }: { id: string }) => {
+      if (!user) throw new Error('Not signed in');
+      const { error } = await supabase
+        .from('project_tags')
+        .update({ archived_at: new Date().toISOString() })
+        .eq('id', id)
+        .eq('user_id', user.id);
+      if (error) throw error;
+      return id;
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: projectTagsKey(user?.id) });
+    },
+  });
+}
+
+export function useRestoreProjectTag() {
+  const qc = useQueryClient();
+  const { user } = useAuth();
+  return useMutation({
+    mutationFn: async ({ id }: { id: string }) => {
+      if (!user) throw new Error('Not signed in');
+      const { error } = await supabase
+        .from('project_tags')
+        .update({ archived_at: null })
+        .eq('id', id)
+        .eq('user_id', user.id);
+      if (error) throw error;
+      return id;
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: projectTagsKey(user?.id) });
+    },
+  });
+}
+
 export function useDeleteProjectTag() {
   const qc = useQueryClient();
   const { user } = useAuth();
   return useMutation({
     mutationFn: async ({ id, name }: { id: string; name: string }) => {
       if (!user) throw new Error('Not signed in');
-      const { error: clearError } = await supabase
-        .from('projects')
-        .update({ tag: null })
-        .eq('user_id', user.id)
-        .eq('tag', name);
-      if (clearError) throw clearError;
+      const usage = await countProjectsUsing(user.id, 'tag', name);
+      if (usage > 0) {
+        throw new Error(
+          'This tag is attached to projects. Archive it instead of deleting.',
+        );
+      }
       const { error } = await supabase
         .from('project_tags')
         .delete()
@@ -592,18 +646,26 @@ export function useCreateProjectSeries() {
     mutationFn: async ({
       name,
       color,
+      tag,
     }: {
       name: string;
       color: string;
+      tag?: string | null;
     }) => {
       if (!user) throw new Error('Not signed in');
       const trimmedName = name.trim();
       if (!trimmedName) throw new Error('Name is required.');
       const trimmedColor = color.trim();
       if (!trimmedColor) throw new Error('Color is required.');
+      const relatedTag = normalizeTag(tag);
       const { data, error } = await supabase
         .from('project_series')
-        .insert({ user_id: user.id, name: trimmedName, color: trimmedColor })
+        .insert({
+          user_id: user.id,
+          name: trimmedName,
+          color: trimmedColor,
+          tag: relatedTag,
+        })
         .select('*')
         .single();
       if (error) throw error;
@@ -624,11 +686,13 @@ export function useUpdateProjectSeries() {
       oldName,
       name,
       color,
+      tag,
     }: {
       id: string;
       oldName: string;
       name: string;
       color: string;
+      tag?: string | null;
     }) => {
       if (!user) throw new Error('Not signed in');
       const trimmedName = name.trim();
@@ -638,7 +702,11 @@ export function useUpdateProjectSeries() {
 
       const { data, error } = await supabase
         .from('project_series')
-        .update({ name: trimmedName, color: trimmedColor })
+        .update({
+          name: trimmedName,
+          color: trimmedColor,
+          ...(tag === undefined ? {} : { tag: normalizeTag(tag) }),
+        })
         .eq('id', id)
         .eq('user_id', user.id)
         .select('*')
@@ -665,18 +733,58 @@ export function useUpdateProjectSeries() {
   });
 }
 
+export function useArchiveProjectSeries() {
+  const qc = useQueryClient();
+  const { user } = useAuth();
+  return useMutation({
+    mutationFn: async ({ id }: { id: string }) => {
+      if (!user) throw new Error('Not signed in');
+      const { error } = await supabase
+        .from('project_series')
+        .update({ archived_at: new Date().toISOString() })
+        .eq('id', id)
+        .eq('user_id', user.id);
+      if (error) throw error;
+      return id;
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: projectSeriesKey(user?.id) });
+    },
+  });
+}
+
+export function useRestoreProjectSeries() {
+  const qc = useQueryClient();
+  const { user } = useAuth();
+  return useMutation({
+    mutationFn: async ({ id }: { id: string }) => {
+      if (!user) throw new Error('Not signed in');
+      const { error } = await supabase
+        .from('project_series')
+        .update({ archived_at: null })
+        .eq('id', id)
+        .eq('user_id', user.id);
+      if (error) throw error;
+      return id;
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: projectSeriesKey(user?.id) });
+    },
+  });
+}
+
 export function useDeleteProjectSeries() {
   const qc = useQueryClient();
   const { user } = useAuth();
   return useMutation({
     mutationFn: async ({ id, name }: { id: string; name: string }) => {
       if (!user) throw new Error('Not signed in');
-      const { error: clearError } = await supabase
-        .from('projects')
-        .update({ series: null })
-        .eq('user_id', user.id)
-        .eq('series', name);
-      if (clearError) throw clearError;
+      const usage = await countProjectsUsing(user.id, 'series', name);
+      if (usage > 0) {
+        throw new Error(
+          'This series is attached to projects. Archive it instead of deleting.',
+        );
+      }
       const { error } = await supabase
         .from('project_series')
         .delete()

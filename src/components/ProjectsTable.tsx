@@ -1,7 +1,11 @@
 import { useMemo, useState, type ReactNode } from 'react';
 import { Link } from 'react-router-dom';
-import type { ProjectUpdateInput } from '../lib/types';
-import type { Project } from '../lib/types';
+import type {
+  Project,
+  ProjectSeries,
+  ProjectTag,
+  ProjectUpdateInput,
+} from '../lib/types';
 import type { ProjectGroupBy, ProjectSortBy } from '../lib/projectGrouping';
 import { buildProjectGroups } from '../lib/projectGrouping';
 import { formatHMS, parseHMS } from '../lib/time';
@@ -15,8 +19,8 @@ interface ProjectsTableProps {
   onSortByChange: (value: ProjectSortBy) => void;
   tagColorByName: Map<string, string>;
   seriesColorByName: Map<string, string>;
-  tagOptions: string[];
-  seriesOptions: string[];
+  tagItems: ProjectTag[];
+  seriesItems: ProjectSeries[];
   onUpdateProject: (id: string, patch: ProjectUpdateInput) => Promise<void>;
   onArchiveProject?: (id: string) => Promise<void>;
 }
@@ -71,8 +75,8 @@ export default function ProjectsTable({
   onSortByChange,
   tagColorByName,
   seriesColorByName,
-  tagOptions,
-  seriesOptions,
+  tagItems,
+  seriesItems,
   onUpdateProject,
   onArchiveProject,
 }: ProjectsTableProps) {
@@ -80,6 +84,10 @@ export default function ProjectsTable({
   const projectById = useMemo(
     () => new Map(projects.map((project) => [project.id, project] as const)),
     [projects],
+  );
+  const seriesByName = useMemo(
+    () => new Map(seriesItems.map((item) => [item.name, item] as const)),
+    [seriesItems],
   );
   const [editingCell, setEditingCell] = useState<EditingCell | null>(null);
   const [draftValue, setDraftValue] = useState('');
@@ -90,6 +98,36 @@ export default function ProjectsTable({
   const activeCellKey = editingCell
     ? `${editingCell.projectId}:${editingCell.field}`
     : null;
+
+  const tagOptions = useMemo(() => {
+    const names = tagItems
+      .filter((item) => !item.archived_at)
+      .map((item) => item.name);
+    if (editingCell?.field === 'tag') {
+      const current = draftValue.trim();
+      if (current && !names.includes(current)) names.push(current);
+    }
+    return names;
+  }, [tagItems, editingCell, draftValue]);
+
+  const seriesOptions = useMemo(() => {
+    const editingProject =
+      editingCell?.field === 'series'
+        ? projectById.get(editingCell.projectId)
+        : undefined;
+    const projectTag = editingProject?.tag?.trim() ?? '';
+    const available = seriesItems.filter((item) => {
+      if (item.archived_at) return false;
+      if (!projectTag) return true;
+      return item.tag === projectTag;
+    });
+    const names = available.map((item) => item.name);
+    if (editingCell?.field === 'series') {
+      const current = draftValue.trim();
+      if (current && !names.includes(current)) names.push(current);
+    }
+    return names;
+  }, [seriesItems, editingCell, draftValue, projectById]);
 
   const beginEdit = (project: Project, field: EditableField) => {
     const value =
@@ -138,6 +176,10 @@ export default function ProjectsTable({
         return;
       }
       patch = { series };
+      if (series && !(project.tag ?? '').trim()) {
+        const match = seriesByName.get(series);
+        if (match?.tag) patch.tag = match.tag;
+      }
     } else if (field === 'video_length') {
       const videoLength = parseHMS(draftValue);
       if (videoLength == null) {

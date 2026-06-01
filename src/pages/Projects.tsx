@@ -105,14 +105,8 @@ export default function Projects() {
       ),
     [projectSeries.data],
   );
-  const tagOptions = useMemo(
-    () => (projectTags.data ?? []).map((tag) => tag.name),
-    [projectTags.data],
-  );
-  const seriesOptions = useMemo(
-    () => (projectSeries.data ?? []).map((series) => series.name),
-    [projectSeries.data],
-  );
+  const tagItems = useMemo(() => projectTags.data ?? [], [projectTags.data]);
+  const seriesItems = useMemo(() => projectSeries.data ?? [], [projectSeries.data]);
 
   const setTab = (tab: ProjectsViewTab) => {
     setViewPref((prev) => {
@@ -180,8 +174,8 @@ export default function Projects() {
         <div className="card animate-fade-in">
           <h2 className="mb-4 text-lg font-semibold text-fg">Create project</h2>
           <ProjectForm
-            tagOptions={tagOptions}
-            seriesOptions={seriesOptions}
+            tagItems={tagItems}
+            seriesItems={seriesItems}
             onSubmit={async (input) => {
               await createProject.mutateAsync(input);
               setShowForm(false);
@@ -248,8 +242,8 @@ export default function Projects() {
           onSortByChange={setSortBy}
           tagColorByName={tagColorByName}
           seriesColorByName={seriesColorByName}
-          tagOptions={tagOptions}
-          seriesOptions={seriesOptions}
+          tagItems={tagItems}
+          seriesItems={seriesItems}
           onUpdateProject={async (id, patch) => {
             await updateProject.mutateAsync({ id, patch });
           }}

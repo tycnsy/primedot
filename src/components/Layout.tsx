@@ -563,9 +563,20 @@ function EditableNavRow({
         isDropTarget ? 'bg-surface2 ring-1 ring-inset ring-border' : 'hover:bg-surface2/60'
       } ${isDragging ? 'opacity-50' : ''} ${draggable ? 'cursor-grab' : ''}`}
     >
-      <span className={`text-muted ${draggable ? '' : 'opacity-40'}`}>
-        <DragHandleIcon />
-      </span>
+      {isHidden ? (
+        <Link
+          to={item.to}
+          className="btn-ghost !px-1.5 !py-1 text-muted"
+          aria-label={`Open ${item.label}`}
+          title={`Open ${item.label}`}
+        >
+          <OpenLinkIcon />
+        </Link>
+      ) : (
+        <span className={`text-muted ${draggable ? '' : 'opacity-40'}`}>
+          <DragHandleIcon />
+        </span>
+      )}
       <span className="shrink-0 text-current">{item.icon}</span>
       <span className="truncate">{item.label}</span>
       <button
@@ -652,6 +663,26 @@ function DragHandleIcon() {
       aria-hidden
     >
       <path d="M9 5h.01M9 12h.01M9 19h.01M15 5h.01M15 12h.01M15 19h.01" />
+    </svg>
+  );
+}
+
+function OpenLinkIcon() {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      width="14"
+      height="14"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.8"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden
+    >
+      <path d="M14 4h6v6" />
+      <path d="M10 14 20 4" />
+      <path d="M20 13v5a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h5" />
     </svg>
   );
 }

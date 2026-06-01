@@ -25,6 +25,7 @@ export interface ProjectTag {
   user_id: string;
   name: string;
   color: string;
+  archived_at: string | null;
   created_at: string;
 }
 
@@ -33,6 +34,8 @@ export interface ProjectSeries {
   user_id: string;
   name: string;
   color: string;
+  tag: string | null;
+  archived_at: string | null;
   created_at: string;
 }
 
@@ -79,6 +82,8 @@ export interface ProjectTemplate {
   series: string | null;
   target_deadline_offset_seconds: number | null;
   true_deadline_offset_seconds: number | null;
+  archived_at: string | null;
+  sort_order: number;
   created_at: string;
 }
 

@@ -15,6 +15,10 @@ import type {
 
 const templatesKey = (userId: string | undefined) =>
   ['project_templates', userId] as const;
+const archivedTemplatesKey = (userId: string | undefined) =>
+  ['project_templates', 'archived', userId] as const;
+const allTemplatesKey = (userId: string | undefined) =>
+  ['project_templates', 'all', userId] as const;
 const templateKey = (templateId: string) => ['project_templates', templateId] as const;
 const templateTasksManyKey = (templateIds: string[]) =>
   ['template_tasks', 'many', ...templateIds] as const;
@@ -27,6 +31,17 @@ const projectTagsKey = (userId: string | undefined) =>
   ['project_tags', userId] as const;
 const projectSeriesKey = (userId: string | undefined) =>
   ['project_series', userId] as const;
+
+type TemplateListMode = 'active' | 'archived' | 'all';
+
+function isMissingSortOrderColumn(error: unknown): boolean {
+  if (!error || typeof error !== 'object') return false;
+  const message = 'message' in error ? String(error.message ?? '') : '';
+  const details = 'details' in error ? String(error.details ?? '') : '';
+  const hint = 'hint' in error ? String(error.hint ?? '') : '';
+  const combined = `${message} ${details} ${hint}`.toLowerCase();
+  return combined.includes('sort_order') && combined.includes('column');
+}
 
 function defaultStartDateIso(): string {
   const now = new Date();
@@ -70,14 +85,63 @@ export function useTemplates() {
   return useQuery({
     queryKey: templatesKey(user?.id),
     enabled: !!user,
-    queryFn: async (): Promise<ProjectTemplate[]> => {
-      const { data, error } = await supabase
-        .from('project_templates')
-        .select('*')
-        .order('created_at', { ascending: false });
-      if (error) throw error;
-      return (data ?? []) as ProjectTemplate[];
-    },
+    queryFn: async (): Promise<ProjectTemplate[]> => fetchTemplates('active'),
+  });
+}
+
+async function fetchTemplates(mode: TemplateListMode): Promise<ProjectTemplate[]> {
+  let request = supabase
+    .from('project_templates')
+    .select('*')
+    .order('sort_order', { ascending: true })
+    .order('created_at', { ascending: false });
+  if (mode === 'active') {
+    request = request.is('archived_at', null);
+  } else if (mode === 'archived') {
+    request = request.not('archived_at', 'is', null).order('archived_at', {
+      ascending: false,
+    });
+  }
+  const { data, error } = await request;
+
+  if (!error) return (data ?? []) as ProjectTemplate[];
+  if (!isMissingSortOrderColumn(error)) throw error;
+
+  let fallback = supabase
+    .from('project_templates')
+    .select('*')
+    .order('created_at', { ascending: false });
+  if (mode === 'active') {
+    fallback = fallback.is('archived_at', null);
+  } else if (mode === 'archived') {
+    fallback = fallback.not('archived_at', 'is', null).order('archived_at', {
+      ascending: false,
+    });
+  }
+  const fallbackResult = await fallback;
+  if (fallbackResult.error) throw fallbackResult.error;
+
+  return ((fallbackResult.data ?? []) as ProjectTemplate[]).map((template, index) => ({
+    ...template,
+    sort_order: index,
+  }));
+}
+
+export function useArchivedTemplates() {
+  const { user } = useAuth();
+  return useQuery({
+    queryKey: archivedTemplatesKey(user?.id),
+    enabled: !!user,
+    queryFn: async (): Promise<ProjectTemplate[]> => fetchTemplates('archived'),
+  });
+}
+
+export function useAllTemplatesIncludingArchived() {
+  const { user } = useAuth();
+  return useQuery({
+    queryKey: allTemplatesKey(user?.id),
+    enabled: !!user,
+    queryFn: async (): Promise<ProjectTemplate[]> => fetchTemplates('all'),
   });
 }
 
@@ -145,6 +209,17 @@ export function useCreateTemplateFromProject() {
       tasks: Task[];
     }) => {
       if (!user) throw new Error('Not signed in');
+      const { data: lastTemplate, error: lastTemplateError } = await supabase
+        .from('project_templates')
+        .select('sort_order')
+        .eq('user_id', user.id)
+        .is('archived_at', null)
+        .order('sort_order', { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      const isLegacyDb = isMissingSortOrderColumn(lastTemplateError);
+      if (lastTemplateError && !isLegacyDb) throw lastTemplateError;
+
       const templateInput: ProjectTemplateInput = {
         name: name.trim(),
         video_length: project.video_length,
@@ -160,6 +235,8 @@ export function useCreateTemplateFromProject() {
         .insert({
           ...templateInput,
           user_id: user.id,
+          archived_at: null,
+          ...(isLegacyDb ? {} : { sort_order: (lastTemplate?.sort_order ?? -1) + 1 }),
         })
         .select()
         .single();
@@ -189,6 +266,8 @@ export function useCreateTemplateFromProject() {
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: templatesKey(user?.id) });
+      qc.invalidateQueries({ queryKey: archivedTemplatesKey(user?.id) });
+      qc.invalidateQueries({ queryKey: allTemplatesKey(user?.id) });
       qc.invalidateQueries({ queryKey: ['template_tasks'] });
     },
   });
@@ -318,6 +397,8 @@ export function useDeleteTemplate() {
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: templatesKey(user?.id) });
+      qc.invalidateQueries({ queryKey: archivedTemplatesKey(user?.id) });
+      qc.invalidateQueries({ queryKey: allTemplatesKey(user?.id) });
       qc.invalidateQueries({ queryKey: ['template_tasks'] });
     },
   });
@@ -354,9 +435,112 @@ export function useUpdateTemplate() {
     },
     onSuccess: (template) => {
       qc.invalidateQueries({ queryKey: templatesKey(user?.id) });
+      qc.invalidateQueries({ queryKey: archivedTemplatesKey(user?.id) });
+      qc.invalidateQueries({ queryKey: allTemplatesKey(user?.id) });
       qc.invalidateQueries({ queryKey: templateKey(template.id) });
       qc.invalidateQueries({ queryKey: projectTagsKey(user?.id) });
       qc.invalidateQueries({ queryKey: projectSeriesKey(user?.id) });
+    },
+  });
+}
+
+export function useArchiveTemplate() {
+  const qc = useQueryClient();
+  const { user } = useAuth();
+  return useMutation({
+    mutationFn: async (id: string) => {
+      const archivedAt = new Date().toISOString();
+      const { data, error } = await supabase
+        .from('project_templates')
+        .update({ archived_at: archivedAt })
+        .eq('id', id)
+        .select('*')
+        .single();
+      if (error) throw error;
+      return data as ProjectTemplate;
+    },
+    onSuccess: (template) => {
+      qc.invalidateQueries({ queryKey: templatesKey(user?.id) });
+      qc.invalidateQueries({ queryKey: archivedTemplatesKey(user?.id) });
+      qc.invalidateQueries({ queryKey: allTemplatesKey(user?.id) });
+      qc.invalidateQueries({ queryKey: templateKey(template.id) });
+    },
+  });
+}
+
+export function useRestoreTemplate() {
+  const qc = useQueryClient();
+  const { user } = useAuth();
+  return useMutation({
+    mutationFn: async (id: string) => {
+      const { data, error } = await supabase
+        .from('project_templates')
+        .update({ archived_at: null })
+        .eq('id', id)
+        .select('*')
+        .single();
+      if (error) throw error;
+      return data as ProjectTemplate;
+    },
+    onSuccess: (template) => {
+      qc.invalidateQueries({ queryKey: templatesKey(user?.id) });
+      qc.invalidateQueries({ queryKey: archivedTemplatesKey(user?.id) });
+      qc.invalidateQueries({ queryKey: allTemplatesKey(user?.id) });
+      qc.invalidateQueries({ queryKey: templateKey(template.id) });
+    },
+  });
+}
+
+export function useReorderTemplates() {
+  const qc = useQueryClient();
+  const { user } = useAuth();
+
+  return useMutation({
+    mutationFn: async (templateIds: string[]) => {
+      const updates = await Promise.all(
+        templateIds.map((id, index) =>
+          supabase
+            .from('project_templates')
+            .update({ sort_order: index })
+            .eq('id', id)
+            .select('id')
+            .single(),
+        ),
+      );
+
+      const firstError = updates.find((result) => result.error)?.error;
+      if (firstError && isMissingSortOrderColumn(firstError)) return templateIds;
+      if (firstError) throw firstError;
+
+      return templateIds;
+    },
+    onMutate: async (templateIds) => {
+      await qc.cancelQueries({ queryKey: templatesKey(user?.id) });
+      const previous = qc.getQueryData<ProjectTemplate[]>(templatesKey(user?.id));
+
+      if (previous) {
+        const byId = new Map(previous.map((template) => [template.id, template]));
+        const next = templateIds
+          .map((id, index) => {
+            const template = byId.get(id);
+            if (!template) return null;
+            return { ...template, sort_order: index };
+          })
+          .filter((template): template is ProjectTemplate => !!template);
+        qc.setQueryData(templatesKey(user?.id), next);
+      }
+
+      return { previous };
+    },
+    onError: (_err, _templateIds, context) => {
+      if (context?.previous) {
+        qc.setQueryData(templatesKey(user?.id), context.previous);
+      }
+    },
+    onSettled: () => {
+      qc.invalidateQueries({ queryKey: templatesKey(user?.id) });
+      qc.invalidateQueries({ queryKey: archivedTemplatesKey(user?.id) });
+      qc.invalidateQueries({ queryKey: allTemplatesKey(user?.id) });
     },
   });
 }
