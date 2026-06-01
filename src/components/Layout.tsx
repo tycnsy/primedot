@@ -272,23 +272,6 @@ export default function Layout() {
         </div>
 
         <nav className="flex flex-1 min-h-0 flex-col px-2 text-sm" aria-label="Sections">
-          {!collapsed && (
-            <div className="mb-2 px-0.5 pt-0.5">
-              <button
-                type="button"
-                onClick={() => {
-                  setIsEditMode((value) => !value);
-                  setDraggedNavId(null);
-                  setDropNavId(null);
-                }}
-                className={isEditMode ? 'btn-secondary w-full !px-2.5 !py-1.5' : 'btn-ghost w-full !px-2.5 !py-1.5'}
-              >
-                {isEditMode ? <DoneIcon /> : <EditIcon />}
-                <span>{isEditMode ? 'Done' : 'Edit links'}</span>
-              </button>
-            </div>
-          )}
-
           {isEditMode && !collapsed ? (
             <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto pb-2">
               <div className="flex flex-col gap-1">
@@ -365,6 +348,25 @@ export default function Layout() {
         </nav>
 
         <div className="mt-auto flex flex-col gap-3 border-t border-border/60 px-3 py-3">
+          {!collapsed && (
+            <button
+              type="button"
+              onClick={() => {
+                setIsEditMode((value) => !value);
+                setDraggedNavId(null);
+                setDropNavId(null);
+              }}
+              className={
+                isEditMode
+                  ? 'btn-secondary w-full !px-2.5 !py-1.5'
+                  : 'btn-ghost w-full !px-2.5 !py-1.5'
+              }
+            >
+              {isEditMode ? <DoneIcon /> : <EditIcon />}
+              <span>{isEditMode ? 'Done' : 'Edit links'}</span>
+            </button>
+          )}
+
           {!collapsed && (
             <div className="flex justify-start">
               <ThemeToggle />
