@@ -137,12 +137,10 @@ function PaceGridTableRow({
   const marginSeconds = showComputed ? paceMargin(pace) : null;
   const paceEnd = showComputed ? currentPaceEnd(tasks, project, pace) : null;
   const goalBufferModifier = bufferModifierGoal(tasks, project);
-  const startMs = new Date(project.start_date).getTime();
-  const startInFuture = Number.isFinite(startMs) && startMs > now.getTime();
   const bufferClassName =
     goalBufferModifier == null
       ? 'text-fg'
-      : project.buffer_modifier < goalBufferModifier
+      : Math.round(project.buffer_modifier * 100) < Math.round(goalBufferModifier * 100)
         ? 'font-semibold text-danger'
         : 'font-semibold text-success';
 
@@ -167,15 +165,29 @@ function PaceGridTableRow({
 
   const handleRebalance = async () => {
     setError(null);
-    const offsetSeconds = viewAllMode
-      ? (startMs - now.getTime()) / 1000
-      : rebalanceOffsetSeconds;
-    if (!Number.isFinite(offsetSeconds)) {
+    if (viewAllMode) {
+      if (goalBufferModifier == null) {
+        setError('No buffer goal available. Set a due date and tasks.');
+        return;
+      }
+      const bufferModifier = Math.round(goalBufferModifier * 100) / 100;
+      try {
+        await updateProject.mutateAsync({
+          id: project.id,
+          patch: { buffer_modifier: bufferModifier },
+        });
+      } catch (e) {
+        setError(e instanceof Error ? e.message : 'Failed to set buffer to goal.');
+      }
+      return;
+    }
+
+    if (!Number.isFinite(rebalanceOffsetSeconds)) {
       setError('Rebalance amount must be a valid number.');
       return;
     }
 
-    const outcome = buildRebalanceOutcome(tasks, project, offsetSeconds, now);
+    const outcome = buildRebalanceOutcome(tasks, project, rebalanceOffsetSeconds, now);
     if (!outcome.ok) {
       setError(outcome.message);
       return;
@@ -263,7 +275,7 @@ function PaceGridTableRow({
       ) : null}
       {visibleColumns.has('rebalance') ? (
         <td className="px-3 py-2 text-center">
-          {viewAllMode && !startInFuture ? (
+          {viewAllMode && goalBufferModifier == null ? (
             <span className="text-muted">—</span>
           ) : (
             <div className="space-y-1">
@@ -271,8 +283,8 @@ function PaceGridTableRow({
                 type="button"
                 onClick={handleRebalance}
                 className="btn-primary !h-6 !w-6 !p-0"
-                aria-label="Rebalance"
-                title="Rebalance"
+                aria-label={viewAllMode ? 'Set buffer to goal' : 'Rebalance'}
+                title={viewAllMode ? 'Set buffer to goal' : 'Rebalance'}
                 disabled={isMutating}
               />
               {error ? <p className="text-xs text-danger">{error}</p> : null}
