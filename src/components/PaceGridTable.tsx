@@ -176,6 +176,12 @@ function PaceGridTableRow({
           id: project.id,
           patch: { buffer_modifier: bufferModifier },
         });
+        if (pace?.true_deadline) {
+          await upsertPace.mutateAsync({
+            target_deadline: pace.true_deadline,
+            true_deadline: pace.true_deadline,
+          });
+        }
       } catch (e) {
         setError(e instanceof Error ? e.message : 'Failed to set buffer to goal.');
       }
