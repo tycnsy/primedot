@@ -144,8 +144,12 @@ function PaceGridTableRow({
   const marginSeconds = showComputed ? paceMargin(pace) : null;
   const paceEnd = showComputed ? currentPaceEnd(tasks, project, pace) : null;
   const goalBufferModifier = bufferModifierGoal(tasks, project);
+  const roundedBuffer = Math.round(project.buffer_modifier * 100);
+  const roundedGoal =
+    goalBufferModifier == null ? null : Math.round(goalBufferModifier * 100);
+  const needsPaceForGoal = roundedGoal != null && roundedBuffer < roundedGoal;
   let paceToGoalSeconds: number | null = null;
-  if (showComputed && paceSeconds != null && goalBufferModifier != null) {
+  if (needsPaceForGoal && showComputed && paceSeconds != null && goalBufferModifier != null) {
     const prediction = buildRebalancePredictionOutcome(
       tasks,
       project,
@@ -153,18 +157,14 @@ function PaceGridTableRow({
       { mode: 'buffer_to_hours', targetBufferModifier: goalBufferModifier },
       now,
     );
-    if (
-      prediction.ok &&
-      prediction.result.mode === 'buffer_to_hours' &&
-      prediction.result.requiredWorkHoursClamped > 0
-    ) {
-      paceToGoalSeconds = paceSeconds + prediction.result.requiredWorkHoursClamped * 3600;
+    if (prediction.ok && prediction.result.mode === 'buffer_to_hours') {
+      paceToGoalSeconds = paceSeconds + prediction.result.requiredWorkHours * 3600;
     }
   }
   const bufferClassName =
-    goalBufferModifier == null
+    roundedGoal == null
       ? 'text-fg'
-      : Math.round(project.buffer_modifier * 100) < Math.round(goalBufferModifier * 100)
+      : roundedBuffer < roundedGoal
         ? 'font-semibold text-danger'
         : 'font-semibold text-success';
 
