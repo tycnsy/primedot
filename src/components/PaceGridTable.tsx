@@ -10,7 +10,11 @@ import {
   currentPaceEnd,
   paceMargin,
 } from '../lib/calc';
-import { buildPacePatchFromBufferSeconds, buildRebalanceOutcome } from '../lib/pace';
+import {
+  buildPacePatchFromBufferSeconds,
+  buildRebalanceOutcome,
+  buildRebalancePredictionOutcome,
+} from '../lib/pace';
 import { formatHMS } from '../lib/time';
 import type { PaceSettings, Project, Task } from '../lib/types';
 
@@ -28,6 +32,7 @@ type PaceColumnId =
   | 'currentPaceEnd'
   | 'buffer'
   | 'bufferModifierGoal'
+  | 'paceToGoal'
   | 'setPace'
   | 'rebalance';
 
@@ -38,6 +43,7 @@ const TABLE_COLUMNS: readonly PaceColumnId[] = [
   'currentPaceEnd',
   'buffer',
   'bufferModifierGoal',
+  'paceToGoal',
   'setPace',
   'rebalance',
 ];
@@ -49,6 +55,7 @@ const COLUMN_LABELS: Record<PaceColumnId, string> = {
   currentPaceEnd: 'Pace Ends @',
   buffer: 'Buffer',
   bufferModifierGoal: 'Buffer Goal',
+  paceToGoal: 'Pace for goal',
   setPace: 'Set pace',
   rebalance: 'Rebalance',
 };
@@ -137,6 +144,23 @@ function PaceGridTableRow({
   const marginSeconds = showComputed ? paceMargin(pace) : null;
   const paceEnd = showComputed ? currentPaceEnd(tasks, project, pace) : null;
   const goalBufferModifier = bufferModifierGoal(tasks, project);
+  let paceToGoalSeconds: number | null = null;
+  if (showComputed && paceSeconds != null && goalBufferModifier != null) {
+    const prediction = buildRebalancePredictionOutcome(
+      tasks,
+      project,
+      0,
+      { mode: 'buffer_to_hours', targetBufferModifier: goalBufferModifier },
+      now,
+    );
+    if (
+      prediction.ok &&
+      prediction.result.mode === 'buffer_to_hours' &&
+      prediction.result.requiredWorkHoursClamped > 0
+    ) {
+      paceToGoalSeconds = paceSeconds + prediction.result.requiredWorkHoursClamped * 3600;
+    }
+  }
   const bufferClassName =
     goalBufferModifier == null
       ? 'text-fg'
@@ -265,6 +289,11 @@ function PaceGridTableRow({
       {visibleColumns.has('bufferModifierGoal') ? (
         <td className="px-3 py-2 text-center font-sans tabular-nums text-fg">
           {goalBufferModifier == null ? '—' : `x${goalBufferModifier.toFixed(2)}`}
+        </td>
+      ) : null}
+      {visibleColumns.has('paceToGoal') ? (
+        <td className="px-3 py-2 text-center font-sans tabular-nums text-fg">
+          {paceToGoalSeconds == null ? '—' : formatHMS(paceToGoalSeconds)}
         </td>
       ) : null}
       {visibleColumns.has('setPace') ? (
@@ -472,6 +501,9 @@ export default function PaceGridTable({
               {visibleColumns.has('buffer') ? <th className="px-3 py-2 font-semibold">Buffer</th> : null}
               {visibleColumns.has('bufferModifierGoal') ? (
                 <th className="px-3 py-2 font-semibold">{COLUMN_LABELS.bufferModifierGoal}</th>
+              ) : null}
+              {visibleColumns.has('paceToGoal') ? (
+                <th className="px-3 py-2 font-semibold">{COLUMN_LABELS.paceToGoal}</th>
               ) : null}
               {visibleColumns.has('setPace') ? (
                 <th className="px-3 py-2 font-semibold">Set pace</th>

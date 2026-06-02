@@ -74,3 +74,16 @@ export function formatTimer(totalSeconds: number): string {
     ? formatHMS(totalSeconds)
     : formatMS(totalSeconds);
 }
+
+/**
+ * Format decimal hours as `xh ym`, rounded to nearest minute.
+ */
+export function formatHoursMinutes(hours: number): string {
+  if (!Number.isFinite(hours)) return '—';
+  const totalMinutes = Math.round(hours * 60);
+  const sign = totalMinutes < 0 ? '-' : '';
+  const absoluteMinutes = Math.abs(totalMinutes);
+  const wholeHours = Math.floor(absoluteMinutes / 60);
+  const minutes = absoluteMinutes % 60;
+  return `${sign}${wholeHours}h ${minutes}m`;
+}
