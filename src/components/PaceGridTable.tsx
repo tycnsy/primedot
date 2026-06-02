@@ -35,6 +35,9 @@ type PaceColumnId =
   | 'paceToGoal'
   | 'setPace'
   | 'rebalance';
+type SortableColumnId = Exclude<PaceColumnId, 'setPace' | 'rebalance'>;
+type SortDirection = 'asc' | 'desc';
+type SortValue = string | number | null;
 
 const TABLE_COLUMNS: readonly PaceColumnId[] = [
   'name',
@@ -123,6 +126,35 @@ function parseVisibleColumns(value: string): Set<PaceColumnId> {
   return new Set(parsedColumns);
 }
 
+function computePaceToGoalSeconds(
+  tasks: Task[],
+  project: Project,
+  pace: PaceSettings | null,
+  now: Date,
+  isLoading: boolean,
+): number | null {
+  const goalBufferModifier = bufferModifierGoal(tasks, project);
+  const roundedBuffer = Math.round(project.buffer_modifier * 100);
+  const roundedGoal =
+    goalBufferModifier == null ? null : Math.round(goalBufferModifier * 100);
+  const needsPaceForGoal = roundedGoal != null && roundedBuffer < roundedGoal;
+  if (!needsPaceForGoal || goalBufferModifier == null || !pace || isLoading) {
+    return null;
+  }
+
+  const paceSeconds = currentPace(tasks, project, pace, now);
+  const prediction = buildRebalancePredictionOutcome(
+    tasks,
+    project,
+    0,
+    { mode: 'buffer_to_hours', targetBufferModifier: goalBufferModifier },
+    now,
+  );
+  if (!prediction.ok || prediction.result.mode !== 'buffer_to_hours') return null;
+
+  return paceSeconds + prediction.result.requiredWorkHours * 3600;
+}
+
 function PaceGridTableRow({
   project,
   tasks,
@@ -147,20 +179,13 @@ function PaceGridTableRow({
   const roundedBuffer = Math.round(project.buffer_modifier * 100);
   const roundedGoal =
     goalBufferModifier == null ? null : Math.round(goalBufferModifier * 100);
-  const needsPaceForGoal = roundedGoal != null && roundedBuffer < roundedGoal;
-  let paceToGoalSeconds: number | null = null;
-  if (needsPaceForGoal && showComputed && paceSeconds != null && goalBufferModifier != null) {
-    const prediction = buildRebalancePredictionOutcome(
-      tasks,
-      project,
-      0,
-      { mode: 'buffer_to_hours', targetBufferModifier: goalBufferModifier },
-      now,
-    );
-    if (prediction.ok && prediction.result.mode === 'buffer_to_hours') {
-      paceToGoalSeconds = paceSeconds + prediction.result.requiredWorkHours * 3600;
-    }
-  }
+  const paceToGoalSeconds = computePaceToGoalSeconds(
+    tasks,
+    project,
+    pace,
+    now,
+    isLoading,
+  );
   const bufferClassName =
     roundedGoal == null
       ? 'text-fg'
@@ -356,6 +381,8 @@ export default function PaceGridTable({
     parseVisibleColumns(safeReadLocalStorage(VISIBLE_COLUMNS_KEY, TABLE_COLUMNS.join(','))),
   );
   const [isColumnsModalOpen, setIsColumnsModalOpen] = useState(false);
+  const [sortColumn, setSortColumn] = useState<SortableColumnId | null>(null);
+  const [sortDirection, setSortDirection] = useState<SortDirection>('asc');
 
   useEffect(() => {
     if (typeof window === 'undefined') return;
@@ -422,6 +449,19 @@ export default function PaceGridTable({
     });
   };
 
+  const handleSort = (column: SortableColumnId) => {
+    setSortColumn((prev) => {
+      if (prev === column) {
+        setSortDirection((prevDirection) =>
+          prevDirection === 'asc' ? 'desc' : 'asc',
+        );
+        return prev;
+      }
+      setSortDirection('asc');
+      return column;
+    });
+  };
+
   const setPaceSeconds = useMemo(
     () => toSeconds(setPaceAmount, setPaceUnit),
     [setPaceAmount, setPaceUnit],
@@ -430,6 +470,77 @@ export default function PaceGridTable({
     () => toSeconds(rebalanceAmount, rebalanceUnit),
     [rebalanceAmount, rebalanceUnit],
   );
+  const sortValuesByProject = useMemo(() => {
+    const values: Record<string, Record<SortableColumnId, SortValue>> = {};
+    for (const project of projects) {
+      const tasks = tasksByProject[project.id] ?? [];
+      const pace = paceByProject[project.id] ?? null;
+      const showComputed = !!pace && !isLoading;
+      const goalBuffer = bufferModifierGoal(tasks, project);
+      values[project.id] = {
+        name: project.name,
+        currentPace: showComputed ? currentPace(tasks, project, pace, now) : null,
+        paceMargin: showComputed ? paceMargin(pace) : null,
+        currentPaceEnd: showComputed
+          ? currentPaceEnd(tasks, project, pace).getTime()
+          : null,
+        buffer: project.buffer_modifier,
+        bufferModifierGoal: goalBuffer,
+        paceToGoal: computePaceToGoalSeconds(tasks, project, pace, now, isLoading),
+      };
+    }
+    return values;
+  }, [projects, tasksByProject, paceByProject, isLoading, now]);
+  const displayedProjects = useMemo(() => {
+    if (!sortColumn) return projects;
+
+    const decorated = projects.map((project, index) => ({ project, index }));
+    decorated.sort((left, right) => {
+      const leftValue = sortValuesByProject[left.project.id]?.[sortColumn] ?? null;
+      const rightValue = sortValuesByProject[right.project.id]?.[sortColumn] ?? null;
+
+      if (leftValue == null && rightValue == null) return left.index - right.index;
+      if (leftValue == null) return 1;
+      if (rightValue == null) return -1;
+
+      let comparison = 0;
+      if (typeof leftValue === 'string' && typeof rightValue === 'string') {
+        comparison = leftValue.localeCompare(rightValue, undefined, {
+          sensitivity: 'base',
+        });
+      } else {
+        comparison = Number(leftValue) - Number(rightValue);
+      }
+      if (comparison !== 0) {
+        return sortDirection === 'asc' ? comparison : -comparison;
+      }
+      return left.index - right.index;
+    });
+
+    return decorated.map(({ project }) => project);
+  }, [projects, sortColumn, sortDirection, sortValuesByProject]);
+
+  const renderSortableHeader = (column: SortableColumnId) => {
+    const isActive = sortColumn === column;
+    const arrow = isActive ? (sortDirection === 'asc' ? '▲' : '▼') : '';
+    const ariaSort = isActive
+      ? sortDirection === 'asc'
+        ? 'ascending'
+        : 'descending'
+      : 'none';
+    return (
+      <th className="px-3 py-2 font-semibold" aria-sort={ariaSort}>
+        <button
+          type="button"
+          className="inline-flex items-center gap-1 hover:text-fg"
+          onClick={() => handleSort(column)}
+        >
+          <span>{COLUMN_LABELS[column]}</span>
+          <span className="inline-block min-w-3 text-[10px]">{arrow}</span>
+        </button>
+      </th>
+    );
+  };
 
   return (
     <div className="space-y-3">
@@ -488,22 +599,24 @@ export default function PaceGridTable({
         <table className="min-w-full text-sm">
           <thead className="bg-surface2/50 text-center text-xs uppercase tracking-wide text-muted">
             <tr>
-              {visibleColumns.has('name') ? <th className="px-3 py-2 font-semibold">Name</th> : null}
+              {visibleColumns.has('name') ? renderSortableHeader('name') : null}
               {visibleColumns.has('currentPace') ? (
-                <th className="px-3 py-2 font-semibold">Current pace</th>
+                renderSortableHeader('currentPace')
               ) : null}
               {visibleColumns.has('paceMargin') ? (
-                <th className="px-3 py-2 font-semibold">Pace margin</th>
+                renderSortableHeader('paceMargin')
               ) : null}
               {visibleColumns.has('currentPaceEnd') ? (
-                <th className="px-3 py-2 font-semibold">{COLUMN_LABELS.currentPaceEnd}</th>
+                renderSortableHeader('currentPaceEnd')
               ) : null}
-              {visibleColumns.has('buffer') ? <th className="px-3 py-2 font-semibold">Buffer</th> : null}
+              {visibleColumns.has('buffer') ? (
+                renderSortableHeader('buffer')
+              ) : null}
               {visibleColumns.has('bufferModifierGoal') ? (
-                <th className="px-3 py-2 font-semibold">{COLUMN_LABELS.bufferModifierGoal}</th>
+                renderSortableHeader('bufferModifierGoal')
               ) : null}
               {visibleColumns.has('paceToGoal') ? (
-                <th className="px-3 py-2 font-semibold">{COLUMN_LABELS.paceToGoal}</th>
+                renderSortableHeader('paceToGoal')
               ) : null}
               {visibleColumns.has('setPace') ? (
                 <th className="px-3 py-2 font-semibold">Set pace</th>
@@ -514,7 +627,7 @@ export default function PaceGridTable({
             </tr>
           </thead>
           <tbody>
-            {projects.map((project) => (
+            {displayedProjects.map((project) => (
               <PaceGridTableRow
                 key={project.id}
                 project={project}
