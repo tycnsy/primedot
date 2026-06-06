@@ -106,13 +106,6 @@
   body {
     @apply bg-bg text-fg font-sans antialiased min-h-screen;
     font-feature-settings: 'cv11', 'ss01', 'ss03';
-    background-image:
-      radial-gradient(
-        ellipse 80% 60% at 50% -10%,
-        rgb(var(--accent) / 0.10),
-        transparent 60%
-      );
-    background-attachment: fixed;
   }
 
   ::selection {
