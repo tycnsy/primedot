@@ -1,13 +1,11 @@
 import { useCallback } from 'react';
-import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
+import { useNavigate, useParams } from 'react-router-dom';
 import { Whiteboard } from '../whiteboard/whiteboard-app';
 
 export default function WhiteboardPage() {
   const { boardId } = useParams<{ boardId: string }>();
-  const [searchParams] = useSearchParams();
   const navigate = useNavigate();
   const id = boardId ?? 'default';
-  const openBackgroundOnLoad = searchParams.get('new') === '1';
   const handleCanonicalSlug = useCallback(
     (resolvedSlug: string) => {
       if (!resolvedSlug || resolvedSlug === id) return;
@@ -21,7 +19,6 @@ export default function WhiteboardPage() {
         key={id}
         boardId={id}
         onCanonicalSlugResolved={handleCanonicalSlug}
-        openBackgroundOnLoad={openBackgroundOnLoad}
       />
     </div>
   );

@@ -57,6 +57,23 @@
     --danger: 251 113 133;
   }
 
+  html.theme-grey {
+    --bg: 30 30 30;
+    --surface: 42 42 42;
+    --surface-2: 54 54 54;
+    --border: 64 64 64;
+    --hairline: 255 255 255;
+    --fg: 235 235 235;
+    --muted: 160 160 160;
+    --subtle: 120 120 120;
+    --accent: 124 134 232;
+    --accent-fg: 255 255 255;
+    --accent-soft: 36 41 75;
+    --success: 52 211 153;
+    --warn: 251 191 36;
+    --danger: 251 113 133;
+  }
+
   html[data-density='cozy'] {
     --pad-card: 20px;
     --row-h: 50px;
@@ -81,7 +98,8 @@
     color-scheme: light;
   }
 
-  html.dark {
+  html.dark,
+  html.theme-grey {
     color-scheme: dark;
   }
 
@@ -111,7 +129,11 @@
 
   /* Tame native datetime/date pickers in dark mode */
   html.dark input[type='date']::-webkit-calendar-picker-indicator,
+  html.theme-grey input[type='date']::-webkit-calendar-picker-indicator,
   html.dark input[type='datetime-local']::-webkit-calendar-picker-indicator {
+    filter: invert(1) opacity(0.7);
+  }
+  html.theme-grey input[type='datetime-local']::-webkit-calendar-picker-indicator {
     filter: invert(1) opacity(0.7);
   }
 }

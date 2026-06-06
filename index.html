@@ -5,7 +5,7 @@
     <link rel="icon" type="image/png" href="/favicon.png" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
     <meta name="theme-color" media="(prefers-color-scheme: light)" content="#fafafb" />
-    <meta name="theme-color" media="(prefers-color-scheme: dark)" content="#08090e" />
+    <meta name="theme-color" media="(prefers-color-scheme: dark)" content="#1e1e1e" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
     <meta name="apple-mobile-web-app-title" content="prime." />
@@ -16,16 +16,22 @@
         try {
           var stored = localStorage.getItem('theme');
           var theme =
-            stored === 'light' || stored === 'dark' || stored === 'system'
+            stored === 'light' ||
+            stored === 'warm' ||
+            stored === 'grey' ||
+            stored === 'dark' ||
+            stored === 'system'
               ? stored
               : 'system';
+          if (theme === 'dark') theme = 'grey';
           var prefersDark =
             window.matchMedia &&
             window.matchMedia('(prefers-color-scheme: dark)').matches;
-          var dark = theme === 'dark' || (theme === 'system' && prefersDark);
+          var useGrey = theme === 'grey' || (theme === 'system' && prefersDark);
           var root = document.documentElement;
-          if (dark) root.classList.add('dark');
-          else root.classList.remove('dark');
+          root.classList.remove('dark');
+          root.classList.toggle('theme-warm', theme === 'warm');
+          root.classList.toggle('theme-grey', useGrey);
         } catch (e) {}
       })();
     </script>

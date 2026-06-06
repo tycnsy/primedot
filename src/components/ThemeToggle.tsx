@@ -38,6 +38,16 @@ const items: { value: Theme; label: string; icon: JSX.Element }[] = [
     ),
   },
   {
+    value: 'grey',
+    label: 'Grey',
+    icon: (
+      <svg viewBox="0 0 24 24" width="14" height="14" fill="none" aria-hidden>
+        <circle cx="12" cy="12" r="8" stroke="currentColor" strokeWidth="1.6" />
+        <path d="M12 4a8 8 0 0 1 0 16" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
+      </svg>
+    ),
+  },
+  {
     value: 'system',
     label: 'System',
     icon: (
@@ -56,20 +66,6 @@ const items: { value: Theme; label: string; icon: JSX.Element }[] = [
           stroke="currentColor"
           strokeWidth="1.6"
           strokeLinecap="round"
-        />
-      </svg>
-    ),
-  },
-  {
-    value: 'dark',
-    label: 'Dark',
-    icon: (
-      <svg viewBox="0 0 24 24" width="14" height="14" fill="none" aria-hidden>
-        <path
-          d="M20 14.5A8 8 0 1 1 9.5 4a6.5 6.5 0 0 0 10.5 10.5z"
-          stroke="currentColor"
-          strokeWidth="1.6"
-          strokeLinejoin="round"
         />
       </svg>
     ),

@@ -19,6 +19,7 @@ import {
 } from './tweaks-panel';
 import { useBoardElements, useBoardPalettes, useBoardViewport } from './useBoardPersistence';
 import { useAuth } from '../contexts/AuthContext';
+import { useTheme } from '../contexts/ThemeContext';
 import { parseYouTubeUrl, uploadBoardImage } from './whiteboardMedia';
 
 // ============= Tweaks =============
@@ -29,7 +30,6 @@ const TWEAK_DEFAULTS = /*EDITMODE-BEGIN*/{
   "showGrid": true,
   "showLibrary": true
 }/*EDITMODE-END*/;
-const DARK_BOARD_PRESET = '#1e1e1e';
 const DEFAULT_STROKE_LIGHT_BG = '#1e1e1e';
 const DEFAULT_STROKE_DARK_BG = '#ffffff';
 
@@ -38,7 +38,26 @@ function normalizeHexColor(color) {
 }
 
 function getDefaultStrokeForBackground(color) {
-  return normalizeHexColor(color) === DARK_BOARD_PRESET ? DEFAULT_STROKE_DARK_BG : DEFAULT_STROKE_LIGHT_BG;
+  const match = normalizeHexColor(color).match(/^#?([0-9a-f]{6})$/i);
+  if (!match) return DEFAULT_STROKE_LIGHT_BG;
+  const value = parseInt(match[1], 16);
+  const r = (value >> 16) & 255;
+  const g = (value >> 8) & 255;
+  const b = value & 255;
+  const brightness = (r * 299 + g * 587 + b * 114) / 1000;
+  return brightness < 128 ? DEFAULT_STROKE_DARK_BG : DEFAULT_STROKE_LIGHT_BG;
+}
+
+function getCanvasBgForTheme(theme, resolvedTheme) {
+  if (theme === 'grey' || theme === 'dark') return '#1e1e1e';
+  if (theme === 'warm') return '#f1efe7';
+  if (theme === 'system') return resolvedTheme === 'dark' ? '#1e1e1e' : '#ffffff';
+  return '#ffffff';
+}
+
+function isReversibleMonoStroke(color) {
+  const normalized = normalizeHexColor(color);
+  return normalized === '#ffffff' || normalized === '#1e1e1e';
 }
 
 function applyTweaks(t) {
@@ -86,46 +105,6 @@ function makeStarterElements() {
     { id: 'st14', type: 'line', x: 200, y: 105, w: 580, h: 0,
       stroke: '#1e1e1e', strokeWidth: 1, roughness: 0.5, fill: 'transparent', seed: seed() },
   ];
-}
-
-// ============= Background picker =============
-function BgPickerModal({ initialColor, onConfirm, onClose, canClose }) {
-  const presets = ['#ffffff', '#fafaf7', '#fff7e6', '#eef5ff', '#eef7ee', '#f1efe6', '#1e1e1e'];
-  const fallbackColor = initialColor || '#ffffff';
-  const [chosen, setChosen] = React.useState(fallbackColor);
-  const [custom, setCustom] = React.useState(fallbackColor);
-  useEffect(() => {
-    const nextColor = initialColor || '#ffffff';
-    setChosen(nextColor);
-    setCustom(nextColor);
-  }, [initialColor]);
-  return (
-    <div className="wb-bgpicker-overlay">
-      <div className="wb-bgpicker-card">
-        <div className="wb-bgpicker-title">Choose a background</div>
-        <div className="wb-bgpicker-sub">Set the canvas color for this whiteboard at any time.</div>
-        <div className="wb-bgpicker-preview" style={{ background: chosen }}/>
-        <div className="wb-bgpicker-presets">
-          {presets.map(p => (
-            <button key={p} className="wb-bgpicker-preset"
-              data-active={chosen === p}
-              style={{ background: p }}
-              onClick={() => setChosen(p)}/>
-          ))}
-        </div>
-        <div className="wb-bgpicker-row">
-          <label className="wb-bgpicker-customlabel">
-            <input type="color" value={custom} onChange={(e) => { setCustom(e.target.value); setChosen(e.target.value); }}/>
-            <span>Custom</span>
-          </label>
-          <div className="wb-bgpicker-actions">
-            {canClose ? <button className="wb-bgpicker-cancel" onClick={onClose}>Cancel</button> : null}
-            <button className="wb-bgpicker-confirm" onClick={() => onConfirm(chosen)}>Apply</button>
-          </div>
-        </div>
-      </div>
-    </div>
-  );
 }
 
 function YouTubeModal({ value, onChange, onConfirm, onClose }) {
@@ -177,8 +156,9 @@ function fileExtFromName(name) {
 }
 
 // ============= App =============
-export function Whiteboard({ boardId, onCanonicalSlugResolved, openBackgroundOnLoad = false }) {
+export function Whiteboard({ boardId, onCanonicalSlugResolved }) {
   const { user } = useAuth();
+  const { theme, resolvedTheme } = useTheme();
   const [tweaks, setTweak] = useTweaks(TWEAK_DEFAULTS);
   useEffect(() => { applyTweaks(tweaks); }, [tweaks]);
 
@@ -196,7 +176,6 @@ export function Whiteboard({ boardId, onCanonicalSlugResolved, openBackgroundOnL
   const canvasRef = useRef(null);
   const imageInputRef = useRef(null);
   const [isEditingText, setIsEditingText] = useState(false);
-  const [bgPickerOpen, setBgPickerOpen] = useState(false);
   const [youtubeModalOpen, setYoutubeModalOpen] = useState(false);
   const [youtubeInput, setYoutubeInput] = useState('');
   const [mediaBusy, setMediaBusy] = useState(false);
@@ -216,9 +195,8 @@ export function Whiteboard({ boardId, onCanonicalSlugResolved, openBackgroundOnL
     setStrokePalette,
     fillPalette,
     setFillPalette,
-    bgColor,
-    commitBgColor: commitBgColorRaw,
   } = useBoardPalettes(boardId, boardRowId);
+  const canvasBg = getCanvasBgForTheme(theme, resolvedTheme);
 
   useEffect(() => {
     if (!canonicalSlug || !onCanonicalSlugResolved) return;
@@ -229,12 +207,6 @@ export function Whiteboard({ boardId, onCanonicalSlugResolved, openBackgroundOnL
   const removeStrokeColor = (c) => setStrokePalette(p => p.filter(x => x !== c));
   const removeFillColor = (c) => setFillPalette(p => p.filter(x => x !== c));
 
-  const showBgPicker = bgPickerOpen;
-  const commitBgColor = (c) => {
-    commitBgColorRaw(c);
-    setStyle((s) => ({ ...s, stroke: getDefaultStrokeForBackground(c) }));
-    setBgPickerOpen(false);
-  };
   useEffect(() => {
     setView(initialView);
   }, [initialView]);
@@ -242,20 +214,80 @@ export function Whiteboard({ boardId, onCanonicalSlugResolved, openBackgroundOnL
     saveView(view);
   }, [saveView, view]);
   useEffect(() => {
-    setStyle((s) => ({ ...s, stroke: getDefaultStrokeForBackground(bgColor) }));
-  }, [bgColor, boardId]);
+    const targetStroke = getDefaultStrokeForBackground(canvasBg);
+    if (!elementsReady) return;
+    let changedCount = 0;
+    setElements((prev) => {
+      if (prev.length === 0) return prev;
+      const next = prev.map((el) => {
+        let changed = false;
+        let nextStroke = el.stroke;
+        if (isReversibleMonoStroke(el.stroke)) {
+          nextStroke = targetStroke;
+          changed = nextStroke !== el.stroke;
+        }
+
+        let nextRuns = el.textRuns;
+        if (Array.isArray(el.textRuns) && el.textRuns.length) {
+          let runsChanged = false;
+          const mapped = el.textRuns.map((run) => {
+            if (!isReversibleMonoStroke(run?.color)) return run;
+            const nextColor = targetStroke;
+            if (nextColor === run.color) return run;
+            runsChanged = true;
+            return { ...run, color: nextColor };
+          });
+          if (runsChanged) {
+            nextRuns = mapped;
+            changed = true;
+          }
+        }
+
+        let nextLines = el.lines;
+        if (Array.isArray(el.lines) && el.lines.length) {
+          let linesChanged = false;
+          const mappedLines = el.lines.map((line) => {
+            if (!Array.isArray(line?.runs) || line.runs.length === 0) return line;
+            let lineRunsChanged = false;
+            const mappedRuns = line.runs.map((run) => {
+              if (!isReversibleMonoStroke(run?.color)) return run;
+              const nextColor = targetStroke;
+              if (nextColor === run.color) return run;
+              lineRunsChanged = true;
+              return { ...run, color: nextColor };
+            });
+            if (!lineRunsChanged) return line;
+            linesChanged = true;
+            return { ...line, runs: mappedRuns };
+          });
+          if (linesChanged) {
+            nextLines = mappedLines;
+            changed = true;
+          }
+        }
+
+        if (!changed) return el;
+        changedCount += 1;
+        return {
+          ...el,
+          stroke: nextStroke,
+          ...(nextRuns !== el.textRuns ? { textRuns: nextRuns } : {}),
+          ...(nextLines !== el.lines ? { lines: nextLines } : {}),
+        };
+      });
+      const result = changedCount > 0 ? next : prev;
+      return result;
+    });
+  }, [boardId, canvasBg, elementsReady, setElements]);
   useEffect(() => {
-    setBgPickerOpen(openBackgroundOnLoad);
-  }, [openBackgroundOnLoad, boardId]);
-  useEffect(() => {
-    const color = bgColor || '#ffffff';
+    const color = canvasBg;
     // convert hex -> r g b for the css variable
     const m = color.match(/^#([0-9a-f]{6})$/i);
     if (m) {
       const r = parseInt(m[1].slice(0,2),16), g = parseInt(m[1].slice(2,4),16), b = parseInt(m[1].slice(4,6),16);
       document.documentElement.style.setProperty('--wb-canvas', `${r} ${g} ${b}`);
     }
-  }, [bgColor]);
+  }, [canvasBg]);
 
   // Sync sketchiness tweak -> style default
   useEffect(() => {
@@ -431,7 +463,7 @@ export function Whiteboard({ boardId, onCanonicalSlugResolved, openBackgroundOnL
   useEffect(() => {
     const onKey = (e) => {
       const target = e.target;
-      if (youtubeModalOpen || bgPickerOpen) return;
+      if (youtubeModalOpen) return;
       if (isEditableTarget(target)) return;
       const k = e.key.toLowerCase();
       if ((e.metaKey || e.ctrlKey) && k === 'z' && !e.shiftKey) { undo(); e.preventDefault(); return; }
@@ -444,12 +476,12 @@ export function Whiteboard({ boardId, onCanonicalSlugResolved, openBackgroundOnL
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [bgPickerOpen, youtubeModalOpen]);
+  }, [youtubeModalOpen]);
 
   useEffect(() => {
     const onPaste = async (e) => {
       const target = e.target;
-      if (youtubeModalOpen || bgPickerOpen || isEditableTarget(target)) return;
+      if (youtubeModalOpen || isEditableTarget(target)) return;
       if (mediaBusy) return;
       const items = Array.from(e.clipboardData?.items || []);
       if (!items.length) return;
@@ -482,7 +514,7 @@ export function Whiteboard({ boardId, onCanonicalSlugResolved, openBackgroundOnL
 
     window.addEventListener('paste', onPaste);
     return () => window.removeEventListener('paste', onPaste);
-  }, [bgPickerOpen, insertImageFromFile, insertYouTubeFromUrl, mediaBusy, youtubeModalOpen]);
+  }, [insertImageFromFile, insertYouTubeFromUrl, mediaBusy, youtubeModalOpen]);
 
   const canUndo = historyRef.current.index > 0;
   const canRedo = historyRef.current.index < historyRef.current.stack.length - 1;
@@ -584,14 +616,6 @@ export function Whiteboard({ boardId, onCanonicalSlugResolved, openBackgroundOnL
         <WBHistoryControls canUndo={canUndo} canRedo={canRedo} onUndo={undo} onRedo={redo}/>
         {tweaks.showLibrary ? <WBBoardSwitcher currentBoardId={boardId}/> : null}
         <WBHint/>
-        {showBgPicker ? (
-          <BgPickerModal
-            initialColor={bgColor || '#ffffff'}
-            canClose={bgColor != null}
-            onClose={() => setBgPickerOpen(false)}
-            onConfirm={commitBgColor}
-          />
-        ) : null}
         {youtubeModalOpen ? (
           <YouTubeModal
             value={youtubeInput}
@@ -616,9 +640,6 @@ export function Whiteboard({ boardId, onCanonicalSlugResolved, openBackgroundOnL
             })();
           }}
         />
-        <button className="wb-new-board-btn" title="Change board background" onClick={() => setBgPickerOpen(true)}>
-          Background
-        </button>
       </div>
 
       <TweaksPanel title="Tweaks">

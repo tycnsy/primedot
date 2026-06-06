@@ -8,7 +8,7 @@ import {
   type ReactNode,
 } from 'react';
 
-export type Theme = 'light' | 'warm' | 'dark' | 'system';
+export type Theme = 'light' | 'warm' | 'grey' | 'system';
 export type ResolvedTheme = 'light' | 'dark';
 
 interface ThemeContextValue {
@@ -25,7 +25,8 @@ function readStoredTheme(): Theme {
   if (typeof window === 'undefined') return 'system';
   try {
     const raw = window.localStorage.getItem(STORAGE_KEY);
-    if (raw === 'light' || raw === 'warm' || raw === 'dark' || raw === 'system') {
+    if (raw === 'dark') return 'grey';
+    if (raw === 'light' || raw === 'warm' || raw === 'grey' || raw === 'system') {
       return raw;
     }
   } catch {
@@ -41,14 +42,16 @@ function systemPrefersDark(): boolean {
 
 function applyResolved(theme: Theme, resolved: ResolvedTheme) {
   const root = document.documentElement;
-  root.classList.toggle('dark', resolved === 'dark');
+  const useGreyTheme = theme === 'grey' || (theme === 'system' && resolved === 'dark');
+  root.classList.remove('dark');
   root.classList.toggle('theme-warm', theme === 'warm');
+  root.classList.toggle('theme-grey', useGreyTheme);
 }
 
 export function ThemeProvider({ children }: { children: ReactNode }) {
   const [theme, setThemeState] = useState<Theme>(() => readStoredTheme());
   const [resolvedTheme, setResolved] = useState<ResolvedTheme>(() =>
-    readStoredTheme() === 'dark' ||
+    readStoredTheme() === 'grey' ||
     (readStoredTheme() === 'system' && systemPrefersDark())
       ? 'dark'
       : 'light',
@@ -57,7 +60,7 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
   // Apply class + listen for system changes when in 'system' mode.
   useEffect(() => {
     const next: ResolvedTheme =
-      theme === 'dark' || (theme === 'system' && systemPrefersDark())
+      theme === 'grey' || (theme === 'system' && systemPrefersDark())
         ? 'dark'
         : 'light';
     setResolved(next);
