@@ -265,6 +265,30 @@ function PaceGridTableRow({
     }
   };
 
+  const handleConvertMarginToPace = async () => {
+    setError(null);
+    if (!pace?.true_deadline) return;
+    if (marginSeconds === 0) return;
+    try {
+      await upsertPace.mutateAsync({
+        target_deadline: pace.true_deadline,
+        true_deadline: pace.true_deadline,
+      });
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Failed to convert margin to pace.');
+    }
+  };
+
+  const marginTextClassName =
+    marginSeconds == null ? 'text-muted' : marginSeconds < 0 ? 'text-danger' : 'text-fg';
+  const marginDisplayText =
+    marginSeconds == null
+      ? isLoading
+        ? 'Loading...'
+        : 'No pace'
+      : formatHMS(marginSeconds);
+  const canConvertMargin = marginSeconds != null && marginSeconds !== 0;
+
   const rowTintClass =
     paceSeconds == null
       ? ''
@@ -289,16 +313,24 @@ function PaceGridTableRow({
         </td>
       ) : null}
       {visibleColumns.has('paceMargin') ? (
-        <td
-          className={`px-3 py-2 text-center font-sans tabular-nums ${
-            marginSeconds == null ? 'text-muted' : marginSeconds < 0 ? 'text-danger' : 'text-fg'
-          }`}
-        >
-          {marginSeconds == null
-            ? isLoading
-              ? 'Loading...'
-              : 'No pace'
-            : formatHMS(marginSeconds)}
+        <td className="px-3 py-2 text-center font-sans tabular-nums">
+          {canConvertMargin ? (
+            <div className="space-y-1">
+              <button
+                type="button"
+                onClick={handleConvertMarginToPace}
+                className={`rounded px-1 hover:bg-surface2/50 hover:underline disabled:cursor-default disabled:opacity-50 ${marginTextClassName}`}
+                aria-label={`Convert margin to pace for ${project.name}`}
+                title="Convert margin to pace"
+                disabled={isMutating}
+              >
+                {marginDisplayText}
+              </button>
+              {error ? <p className="text-xs text-danger">{error}</p> : null}
+            </div>
+          ) : (
+            <span className={marginTextClassName}>{marginDisplayText}</span>
+          )}
         </td>
       ) : null}
       {visibleColumns.has('currentPaceEnd') ? (

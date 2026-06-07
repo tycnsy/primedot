@@ -63,6 +63,7 @@ export default function Layout() {
       { id: 'timer', to: '/timer', label: 'Timer', icon: <TimerIcon /> },
       { id: 'habits', to: '/habits/today', label: 'Habits', icon: <HabitsIcon /> },
       { id: 'goals', to: '/goals', label: 'Goals', icon: <GoalsIcon /> },
+      { id: 'budget', to: '/budget', label: 'Money', icon: <MoneyIcon /> },
       { id: 'whiteboards', to: '/whiteboards', label: 'Whiteboard', icon: <WhiteboardIcon /> },
       {
         id: 'integrations',
@@ -931,6 +932,27 @@ function GoalsIcon() {
       <circle cx="12" cy="12" r="8" />
       <circle cx="12" cy="12" r="3" />
       <path d="M20 4l-5.5 5.5" />
+    </svg>
+  );
+}
+
+function MoneyIcon() {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      width="16"
+      height="16"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.6"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden
+    >
+      <rect x="2.5" y="6" width="19" height="12" rx="2" />
+      <circle cx="12" cy="12" r="2.5" />
+      <path d="M6 9.5v5" />
+      <path d="M18 9.5v5" />
     </svg>
   );
 }

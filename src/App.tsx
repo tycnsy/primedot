@@ -23,6 +23,16 @@ import GoalDetailLong from './pages/GoalDetailLong';
 import GoalDetailDaily from './pages/GoalDetailDaily';
 import Whiteboards from './pages/Whiteboards';
 import Whiteboard from './pages/Whiteboard';
+import BudgetDashboard from './pages/BudgetDashboard';
+import BudgetAccounts from './pages/BudgetAccounts';
+import BudgetAccountDetail from './pages/BudgetAccountDetail';
+import BudgetTransactions from './pages/BudgetTransactions';
+import BudgetCategories from './pages/BudgetCategories';
+import BudgetIncome from './pages/BudgetIncome';
+import BudgetEarnings from './pages/BudgetEarnings';
+import BudgetDebt from './pages/BudgetDebt';
+import BudgetSavings from './pages/BudgetSavings';
+import BudgetReimbursements from './pages/BudgetReimbursements';
 import SettingsIntegrations from './pages/SettingsIntegrations';
 import SettingsSeries from './pages/SettingsSeries';
 import SettingsTags from './pages/SettingsTags';
@@ -114,6 +124,16 @@ export default function App() {
           <Route path="/goals/daily/:goalId" element={<GoalDetailDaily />} />
           <Route path="/whiteboards" element={<Whiteboards />} />
           <Route path="/whiteboards/:boardId" element={<Whiteboard />} />
+          <Route path="/budget" element={<BudgetDashboard />} />
+          <Route path="/budget/accounts" element={<BudgetAccounts />} />
+          <Route path="/budget/transactions" element={<BudgetTransactions />} />
+          <Route path="/budget/accounts/:accountId" element={<BudgetAccountDetail />} />
+          <Route path="/budget/categories" element={<BudgetCategories />} />
+          <Route path="/budget/income" element={<BudgetIncome />} />
+          <Route path="/budget/earnings" element={<BudgetEarnings />} />
+          <Route path="/budget/debt" element={<BudgetDebt />} />
+          <Route path="/budget/savings" element={<BudgetSavings />} />
+          <Route path="/budget/reimbursements" element={<BudgetReimbursements />} />
           <Route path="/projects/:id" element={<ProjectDetail />} />
           <Route path="/projects/:id/timer" element={<Timer />} />
           <Route path="/settings/integrations" element={<SettingsIntegrations />} />

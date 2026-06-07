@@ -149,15 +149,11 @@ export default function PaceDisplay({
   }
 
   const headlineSection = (
-    <div className="card relative overflow-hidden">
-      <div
-        className="pointer-events-none absolute inset-0"
-        style={{
-          background: `radial-gradient(60% 70% at 50% 0%, rgb(var(${glowVar}) / 0.22), transparent 75%)`,
-        }}
-        aria-hidden
-      />
-      <div className="relative flex flex-col items-center text-center">
+    <div
+      className="card"
+      style={{ backgroundColor: `rgb(var(${glowVar}) / 0.12)` }}
+    >
+      <div className="flex flex-col items-center text-center">
         <div className="label">Current pace</div>
         <div
           className={`mt-2 font-sans text-5xl font-semibold leading-tight tabular-nums ${paceColor}`}
