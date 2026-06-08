@@ -150,12 +150,24 @@ export function useHiddenPaceCards() {
     [persistHidden],
   );
 
+  const togglePaceHidden = useCallback(
+    (projectId: string) => {
+      const next = new Set(hiddenProjectIds);
+      if (next.has(projectId)) next.delete(projectId);
+      else next.add(projectId);
+      replaceDraftIfHideMode(next);
+      void persistHidden(next);
+    },
+    [hiddenProjectIds, persistHidden],
+  );
+
   return {
     hiddenProjectIds,
     hideModeProjectIds: snapshot.isHideMode ? snapshot.hideModeProjectIds : hiddenProjectIds,
     isHideMode: snapshot.isHideMode,
     toggleHideMode,
     toggleProjectHidden: toggleProjectHiddenState,
+    togglePaceHidden,
     setHiddenProjectIds,
   };
 }

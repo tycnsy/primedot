@@ -1,3 +1,5 @@
+import { addDays, endOfDay, startOfDay } from 'date-fns';
+
 /**
  * Parse a timestamp string in `hh:mm:ss` or `hh:mm:ss:ff` form into seconds.
  * The optional `:ff` (Premiere Pro frame count) is intentionally ignored per SPEC.
@@ -73,6 +75,77 @@ export function formatTimer(totalSeconds: number): string {
   return Math.abs(totalSeconds) >= 3600
     ? formatHMS(totalSeconds)
     : formatMS(totalSeconds);
+}
+
+const FIFTEEN_MINUTES_SECONDS = 15 * 60;
+const TWENTY_FOUR_HOURS_SECONDS = 24 * 3600;
+
+/**
+ * Hours per day from buffer modifier: 24h / buffer, rounded up to the nearest 15 minutes.
+ */
+export function computeHoursPerDaySeconds(bufferModifier: number): number | null {
+  if (!Number.isFinite(bufferModifier) || bufferModifier <= 0) return null;
+  const rawSeconds = TWENTY_FOUR_HOURS_SECONDS / bufferModifier;
+  return (
+    Math.ceil(rawSeconds / FIFTEEN_MINUTES_SECONDS) * FIFTEEN_MINUTES_SECONDS
+  );
+}
+
+/**
+ * Format seconds as compact `xhym` (e.g. `4h0m`, `3h15m`).
+ */
+export function formatCompactHoursMinutes(totalSeconds: number): string {
+  if (!Number.isFinite(totalSeconds)) return '—';
+  const sign = totalSeconds < 0 ? '-' : '';
+  const abs = Math.floor(Math.abs(totalSeconds));
+  const hours = Math.floor(abs / 3600);
+  const minutes = Math.floor((abs % 3600) / 60);
+  return `${sign}${hours}h${minutes}m`;
+}
+
+export type TimeRemainingOutcome =
+  | { status: 'value'; seconds: number }
+  | { status: 'future' }
+  | { status: 'unavailable' };
+
+/**
+ * Time remaining until end of today from pace end, divided by buffer.
+ * Pace end tomorrow or later yields `future`; missing inputs yield `unavailable`.
+ */
+export function computeTimeRemainingOutcome(
+  paceEnd: Date | null,
+  bufferModifier: number,
+  now: Date,
+): TimeRemainingOutcome {
+  if (
+    paceEnd == null ||
+    !Number.isFinite(bufferModifier) ||
+    bufferModifier <= 0
+  ) {
+    return { status: 'unavailable' };
+  }
+
+  const tomorrowStart = addDays(startOfDay(now), 1);
+  if (paceEnd.getTime() >= tomorrowStart.getTime()) {
+    return { status: 'future' };
+  }
+
+  const secondsUntilEndOfDay =
+    (endOfDay(now).getTime() - paceEnd.getTime()) / 1000;
+  if (secondsUntilEndOfDay <= 0) {
+    return { status: 'value', seconds: 0 };
+  }
+
+  return {
+    status: 'value',
+    seconds: secondsUntilEndOfDay / bufferModifier,
+  };
+}
+
+export function formatTimeRemaining(outcome: TimeRemainingOutcome): string {
+  if (outcome.status === 'future') return '---';
+  if (outcome.status === 'unavailable') return '—';
+  return formatCompactHoursMinutes(outcome.seconds);
 }
 
 /**

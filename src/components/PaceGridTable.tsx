@@ -1,6 +1,7 @@
 import { format, isToday, isTomorrow } from 'date-fns';
 import { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
+import { useHiddenPaceCards } from '../hooks/useHiddenPaceCards';
 import { useUpsertPaceSettings } from '../hooks/usePaceSettings';
 import { useUpdateProject } from '../hooks/useProjects';
 import ModalShell from './goals/ModalShell';
@@ -15,8 +16,16 @@ import {
   buildRebalanceOutcome,
   buildRebalancePredictionOutcome,
 } from '../lib/pace';
-import { formatHMS } from '../lib/time';
+import {
+  computeHoursPerDaySeconds,
+  computeTimeRemainingOutcome,
+  formatCompactHoursMinutes,
+  formatHMS,
+  formatTimeRemaining,
+} from '../lib/time';
 import type { PaceSettings, Project, Task } from '../lib/types';
+import paceEyeSlashIcon from '../assets/pace-eye-slash.png';
+import paceEyeIcon from '../assets/pace-eye.png';
 
 const SET_PACE_AMOUNT_KEY = 'prime:pace-table:set-pace-amount';
 const SET_PACE_UNIT_KEY = 'prime:pace-table:set-pace-unit';
@@ -32,6 +41,8 @@ type PaceColumnId =
   | 'currentPaceEnd'
   | 'buffer'
   | 'bufferModifierGoal'
+  | 'hoursPerDay'
+  | 'timeRemaining'
   | 'paceToGoal'
   | 'setPace'
   | 'rebalance';
@@ -46,6 +57,8 @@ const TABLE_COLUMNS: readonly PaceColumnId[] = [
   'currentPaceEnd',
   'buffer',
   'bufferModifierGoal',
+  'hoursPerDay',
+  'timeRemaining',
   'paceToGoal',
   'setPace',
   'rebalance',
@@ -58,6 +71,8 @@ const COLUMN_LABELS: Record<PaceColumnId, string> = {
   currentPaceEnd: 'Pace Ends @',
   buffer: 'Buffer',
   bufferModifierGoal: 'Buffer Goal',
+  hoursPerDay: 'Hours Per Day',
+  timeRemaining: 'Time remaining',
   paceToGoal: 'Pace for goal',
   setPace: 'Set pace',
   rebalance: 'Rebalance',
@@ -83,6 +98,8 @@ interface PaceGridTableRowProps {
   rebalanceOffsetSeconds: number;
   visibleColumns: Set<PaceColumnId>;
   viewAllMode: boolean;
+  isPaceHidden: boolean;
+  onTogglePaceHidden: (projectId: string) => void;
 }
 
 function formatPaceEnd(date: Date | null): string {
@@ -165,6 +182,8 @@ function PaceGridTableRow({
   rebalanceOffsetSeconds,
   visibleColumns,
   viewAllMode,
+  isPaceHidden,
+  onTogglePaceHidden,
 }: PaceGridTableRowProps) {
   const upsertPace = useUpsertPaceSettings(project.id);
   const updateProject = useUpdateProject();
@@ -192,6 +211,12 @@ function PaceGridTableRow({
       : roundedBuffer < roundedGoal
         ? 'font-semibold text-danger'
         : 'font-semibold text-success';
+  const hoursPerDaySeconds = computeHoursPerDaySeconds(project.buffer_modifier);
+  const timeRemainingOutcome = computeTimeRemainingOutcome(
+    paceEnd,
+    project.buffer_modifier,
+    now,
+  );
 
   const handleSetPace = async () => {
     setError(null);
@@ -288,28 +313,78 @@ function PaceGridTableRow({
         : 'No pace'
       : formatHMS(marginSeconds);
   const canConvertMargin = marginSeconds != null && marginSeconds !== 0;
+  const paceDisplayText =
+    paceSeconds == null
+      ? isLoading
+        ? 'Loading...'
+        : 'No pace'
+      : formatHMS(paceSeconds);
+  const canRebalance = !(viewAllMode && goalBufferModifier == null);
+  const rebalanceActionLabel = viewAllMode ? 'Set buffer to goal' : 'Rebalance';
 
-  const rowTintClass =
+  const paceRowTintClass =
     paceSeconds == null
       ? ''
       : paceSeconds < 0
         ? 'bg-danger/10'
         : paceSeconds < 3600
           ? 'bg-warn/10'
-        : 'bg-success/10';
+          : 'bg-success/10';
+  const hiddenRowClass =
+    viewAllMode && isPaceHidden
+      ? `brightness-[0.82] saturate-[0.88]${paceSeconds == null ? ' bg-surface2/25' : ''}`
+      : '';
+  const rowTintClass = [paceRowTintClass, hiddenRowClass].filter(Boolean).join(' ');
 
   return (
     <tr className={`border-t border-border/60 align-top ${rowTintClass}`}>
       {visibleColumns.has('name') ? (
         <td className="px-3 py-2">
-          <Link to={`/projects/${project.id}?tab=pace`} className="font-medium text-fg hover:underline">
+          <Link
+            to={`/projects/${project.id}?tab=pace`}
+            className="font-medium text-fg hover:underline"
+          >
             {project.name}
           </Link>
         </td>
       ) : null}
+      {viewAllMode ? (
+        <td className="px-3 py-2 text-center">
+          <button
+            type="button"
+            onClick={() => onTogglePaceHidden(project.id)}
+            className="btn-ghost !h-8 !w-8 !p-0"
+            aria-pressed={!isPaceHidden}
+            aria-label={
+              isPaceHidden
+                ? `Show ${project.name} in pace views`
+                : `Hide ${project.name} from pace views`
+            }
+            title={isPaceHidden ? 'Show project' : 'Hide project'}
+          >
+            <img
+              src={isPaceHidden ? paceEyeSlashIcon : paceEyeIcon}
+              alt=""
+              className="mx-auto h-4 w-4 opacity-80 [html.theme-grey_&]:invert [html.theme-grey_&]:brightness-125"
+            />
+          </button>
+        </td>
+      ) : null}
       {visibleColumns.has('currentPace') ? (
-        <td className="px-3 py-2 text-center font-sans tabular-nums text-fg">
-          {paceSeconds == null ? (isLoading ? 'Loading...' : 'No pace') : formatHMS(paceSeconds)}
+        <td className="px-3 py-2 text-center font-sans tabular-nums">
+          <div className="space-y-1">
+            <button
+              type="button"
+              onClick={handleSetPace}
+              className="rounded px-1 text-fg hover:bg-surface2/50 hover:underline disabled:cursor-default disabled:opacity-50"
+              aria-label={`Set pace for ${project.name}`}
+              title="Set pace"
+              disabled={isMutating}
+            >
+              {paceDisplayText}
+            </button>
+            {error ? <p className="text-xs text-danger">{error}</p> : null}
+          </div>
         </td>
       ) : null}
       {visibleColumns.has('paceMargin') ? (
@@ -339,13 +414,43 @@ function PaceGridTableRow({
         </td>
       ) : null}
       {visibleColumns.has('buffer') ? (
-        <td className={`px-3 py-2 text-center font-sans tabular-nums ${bufferClassName}`}>
-          x{project.buffer_modifier.toFixed(2)}
+        <td className="px-3 py-2 text-center font-sans tabular-nums">
+          {canRebalance ? (
+            <div className="space-y-1">
+              <button
+                type="button"
+                onClick={handleRebalance}
+                className={`rounded px-1 hover:bg-surface2/50 hover:underline disabled:cursor-default disabled:opacity-50 ${bufferClassName}`}
+                aria-label={`${rebalanceActionLabel} for ${project.name}`}
+                title={rebalanceActionLabel}
+                disabled={isMutating}
+              >
+                x{project.buffer_modifier.toFixed(2)}
+              </button>
+              {error ? <p className="text-xs text-danger">{error}</p> : null}
+            </div>
+          ) : (
+            <span className={bufferClassName}>x{project.buffer_modifier.toFixed(2)}</span>
+          )}
         </td>
       ) : null}
       {visibleColumns.has('bufferModifierGoal') ? (
         <td className="px-3 py-2 text-center font-sans tabular-nums text-fg">
           {goalBufferModifier == null ? '—' : `x${goalBufferModifier.toFixed(2)}`}
+        </td>
+      ) : null}
+      {visibleColumns.has('hoursPerDay') ? (
+        <td className="px-3 py-2 text-center font-sans tabular-nums text-fg">
+          {hoursPerDaySeconds == null
+            ? '—'
+            : formatCompactHoursMinutes(hoursPerDaySeconds)}
+        </td>
+      ) : null}
+      {visibleColumns.has('timeRemaining') ? (
+        <td className="px-3 py-2 text-center font-sans tabular-nums text-fg">
+          {isLoading || !showComputed
+            ? '—'
+            : formatTimeRemaining(timeRemainingOutcome)}
         </td>
       ) : null}
       {visibleColumns.has('paceToGoal') ? (
@@ -397,6 +502,7 @@ export default function PaceGridTable({
   openColumnsSignal = 0,
   viewAllMode = false,
 }: PaceGridTableProps) {
+  const { hiddenProjectIds, togglePaceHidden } = useHiddenPaceCards();
   const [setPaceAmount, setSetPaceAmount] = useState<string>(() =>
     safeReadLocalStorage(SET_PACE_AMOUNT_KEY, '2'),
   );
@@ -509,15 +615,22 @@ export default function PaceGridTable({
       const pace = paceByProject[project.id] ?? null;
       const showComputed = !!pace && !isLoading;
       const goalBuffer = bufferModifierGoal(tasks, project);
+      const paceEndDate = showComputed && pace ? currentPaceEnd(tasks, project, pace) : null;
+      const timeRemainingOutcome = paceEndDate
+        ? computeTimeRemainingOutcome(paceEndDate, project.buffer_modifier, now)
+        : null;
       values[project.id] = {
         name: project.name,
         currentPace: showComputed ? currentPace(tasks, project, pace, now) : null,
         paceMargin: showComputed ? paceMargin(pace) : null,
-        currentPaceEnd: showComputed
-          ? currentPaceEnd(tasks, project, pace).getTime()
-          : null,
+        currentPaceEnd: paceEndDate?.getTime() ?? null,
         buffer: project.buffer_modifier,
         bufferModifierGoal: goalBuffer,
+        hoursPerDay: computeHoursPerDaySeconds(project.buffer_modifier),
+        timeRemaining:
+          timeRemainingOutcome?.status === 'value'
+            ? timeRemainingOutcome.seconds
+            : null,
         paceToGoal: computePaceToGoalSeconds(tasks, project, pace, now, isLoading),
       };
     }
@@ -551,6 +664,36 @@ export default function PaceGridTable({
 
     return decorated.map(({ project }) => project);
   }, [projects, sortColumn, sortDirection, sortValuesByProject]);
+
+  const footerTotals = useMemo(() => {
+    let hoursPerDayTotal = 0;
+    let timeRemainingTotal = 0;
+    let hasHoursPerDay = false;
+    let hasTimeRemaining = false;
+
+    for (const project of displayedProjects) {
+      if (hiddenProjectIds.has(project.id)) continue;
+      const values = sortValuesByProject[project.id];
+      const hoursPerDay = values?.hoursPerDay;
+      const timeRemaining = values?.timeRemaining;
+      if (typeof hoursPerDay === 'number') {
+        hoursPerDayTotal += hoursPerDay;
+        hasHoursPerDay = true;
+      }
+      if (typeof timeRemaining === 'number') {
+        timeRemainingTotal += timeRemaining;
+        hasTimeRemaining = true;
+      }
+    }
+
+    return {
+      hoursPerDayTotal: hasHoursPerDay ? hoursPerDayTotal : null,
+      timeRemainingTotal: hasTimeRemaining ? timeRemainingTotal : null,
+    };
+  }, [displayedProjects, hiddenProjectIds, sortValuesByProject]);
+
+  const showFooterTotals =
+    visibleColumns.has('hoursPerDay') || visibleColumns.has('timeRemaining');
 
   const renderSortableHeader = (column: SortableColumnId) => {
     const isActive = sortColumn === column;
@@ -632,6 +775,9 @@ export default function PaceGridTable({
           <thead className="bg-surface2/50 text-center text-xs uppercase tracking-wide text-muted">
             <tr>
               {visibleColumns.has('name') ? renderSortableHeader('name') : null}
+              {viewAllMode ? (
+                <th className="px-3 py-2 font-semibold">Visible</th>
+              ) : null}
               {visibleColumns.has('currentPace') ? (
                 renderSortableHeader('currentPace')
               ) : null}
@@ -646,6 +792,12 @@ export default function PaceGridTable({
               ) : null}
               {visibleColumns.has('bufferModifierGoal') ? (
                 renderSortableHeader('bufferModifierGoal')
+              ) : null}
+              {visibleColumns.has('hoursPerDay') ? (
+                renderSortableHeader('hoursPerDay')
+              ) : null}
+              {visibleColumns.has('timeRemaining') ? (
+                renderSortableHeader('timeRemaining')
               ) : null}
               {visibleColumns.has('paceToGoal') ? (
                 renderSortableHeader('paceToGoal')
@@ -671,9 +823,43 @@ export default function PaceGridTable({
                 rebalanceOffsetSeconds={rebalanceOffsetSeconds}
                 visibleColumns={visibleColumns}
                 viewAllMode={viewAllMode}
+                isPaceHidden={hiddenProjectIds.has(project.id)}
+                onTogglePaceHidden={togglePaceHidden}
               />
             ))}
           </tbody>
+          {showFooterTotals ? (
+            <tfoot className="border-t border-border bg-surface2/50 text-center text-sm font-semibold text-fg">
+              <tr>
+                {visibleColumns.has('name') ? (
+                  <td className="px-3 py-2 text-left">Total</td>
+                ) : null}
+                {viewAllMode ? <td className="px-3 py-2" /> : null}
+                {visibleColumns.has('currentPace') ? <td className="px-3 py-2" /> : null}
+                {visibleColumns.has('paceMargin') ? <td className="px-3 py-2" /> : null}
+                {visibleColumns.has('currentPaceEnd') ? <td className="px-3 py-2" /> : null}
+                {visibleColumns.has('buffer') ? <td className="px-3 py-2" /> : null}
+                {visibleColumns.has('bufferModifierGoal') ? <td className="px-3 py-2" /> : null}
+                {visibleColumns.has('hoursPerDay') ? (
+                  <td className="px-3 py-2 font-sans tabular-nums">
+                    {footerTotals.hoursPerDayTotal == null
+                      ? '—'
+                      : formatCompactHoursMinutes(footerTotals.hoursPerDayTotal)}
+                  </td>
+                ) : null}
+                {visibleColumns.has('timeRemaining') ? (
+                  <td className="px-3 py-2 font-sans tabular-nums">
+                    {footerTotals.timeRemainingTotal == null
+                      ? '—'
+                      : formatCompactHoursMinutes(footerTotals.timeRemainingTotal)}
+                  </td>
+                ) : null}
+                {visibleColumns.has('paceToGoal') ? <td className="px-3 py-2" /> : null}
+                {visibleColumns.has('setPace') ? <td className="px-3 py-2" /> : null}
+                {visibleColumns.has('rebalance') ? <td className="px-3 py-2" /> : null}
+              </tr>
+            </tfoot>
+          ) : null}
         </table>
       </div>
       <ModalShell

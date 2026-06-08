@@ -1,5 +1,16 @@
 import { describe, expect, it } from 'vitest';
-import { formatHMS, formatMS, formatTimer, parseHMS, parseTimecode } from './time';
+import { endOfDay } from 'date-fns';
+import {
+  computeHoursPerDaySeconds,
+  computeTimeRemainingOutcome,
+  formatCompactHoursMinutes,
+  formatHMS,
+  formatMS,
+  formatTimeRemaining,
+  formatTimer,
+  parseHMS,
+  parseTimecode,
+} from './time';
 
 describe('parseTimecode', () => {
   it('parses hh:mm:ss', () => {
@@ -43,6 +54,60 @@ describe('formatHMS', () => {
   it('formats negative with leading minus', () => {
     expect(formatHMS(-1)).toBe('-00:00:01');
     expect(formatHMS(-(2 * 3600 + 14 * 60 + 33))).toBe('-02:14:33');
+  });
+});
+
+describe('computeHoursPerDaySeconds', () => {
+  it('computes 24h / buffer rounded up to 15 minutes', () => {
+    expect(computeHoursPerDaySeconds(6)).toBe(4 * 3600);
+    expect(computeHoursPerDaySeconds(5)).toBe(5 * 3600);
+    expect(computeHoursPerDaySeconds(8)).toBe(3 * 3600);
+  });
+
+  it('returns null for invalid buffer', () => {
+    expect(computeHoursPerDaySeconds(0)).toBeNull();
+    expect(computeHoursPerDaySeconds(-1)).toBeNull();
+  });
+});
+
+describe('formatCompactHoursMinutes', () => {
+  it('formats as xhym', () => {
+    expect(formatCompactHoursMinutes(4 * 3600)).toBe('4h0m');
+    expect(formatCompactHoursMinutes(3 * 3600 + 15 * 60)).toBe('3h15m');
+  });
+});
+
+describe('computeTimeRemainingOutcome', () => {
+  const now = new Date('2026-06-08T12:00:00');
+
+  it('returns future when pace ends tomorrow or later', () => {
+    expect(
+      computeTimeRemainingOutcome(
+        new Date('2026-06-09T10:00:00'),
+        6,
+        now,
+      ).status,
+    ).toBe('future');
+    expect(formatTimeRemaining({ status: 'future' })).toBe('---');
+  });
+
+  it('uses end of today minus pace end, divided by buffer', () => {
+    const paceEnd = new Date('2026-06-08T18:00:00');
+    const outcome = computeTimeRemainingOutcome(paceEnd, 6, now);
+    const expectedSeconds =
+      (endOfDay(now).getTime() - paceEnd.getTime()) / 1000 / 6;
+    expect(outcome).toEqual({ status: 'value', seconds: expectedSeconds });
+    expect(formatTimeRemaining(outcome)).toBe(
+      formatCompactHoursMinutes(expectedSeconds),
+    );
+  });
+
+  it('uses end of today when pace ended yesterday or earlier', () => {
+    const paceEnd = new Date('2026-06-07T15:00:00');
+    const outcome = computeTimeRemainingOutcome(paceEnd, 2, now);
+    const expectedSeconds =
+      (endOfDay(now).getTime() - paceEnd.getTime()) / 1000 / 2;
+    expect(outcome).toEqual({ status: 'value', seconds: expectedSeconds });
   });
 });
 
