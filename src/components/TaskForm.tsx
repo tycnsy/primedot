@@ -63,8 +63,20 @@ export default function TaskForm({
       : formatHMS(initial.current_progress);
   });
   const [fields, setFields] = useState<FieldsState>(() => defaults(initial));
+  const [excludeFromGroupings, setExcludeFromGroupings] = useState(
+    () => initial?.groupable === false,
+  );
+  const [groupingProgressStr, setGroupingProgressStr] = useState<string>(() => {
+    if (initial?.grouping_progress == null) return '';
+    return initial.type === 'custom'
+      ? String(initial.grouping_progress)
+      : formatHMS(initial.grouping_progress);
+  });
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+
+  const showGroupings =
+    !initial?.parent_id && initial?.complex_mode !== 'expanded';
 
   useEffect(() => {
     if (initial) return;
@@ -117,6 +129,8 @@ export default function TaskForm({
       manual_length: null,
       parent_id: initial?.parent_id ?? null,
       complex_mode: initial?.complex_mode ?? null,
+      grouping_progress: null,
+      groupable: true,
     };
 
     if (type === 'scaling') {
@@ -145,6 +159,28 @@ export default function TaskForm({
       const len = parseHMS(fields.manual_length_hms);
       if (len == null) return setError('Manual length must be hh:mm:ss.');
       input.manual_length = len;
+    }
+
+    input.groupable = !excludeFromGroupings;
+    if (excludeFromGroupings) {
+      input.grouping_progress = null;
+    } else if (showGroupings) {
+      if (type === 'custom') {
+        const n = Number.parseInt(groupingProgressStr, 10);
+        if (!Number.isFinite(n) || n <= 0) {
+          return setError('Progress per grouping must be a positive whole number.');
+        }
+        input.grouping_progress = n;
+      } else {
+        const sec = parseHMS(groupingProgressStr);
+        if (sec == null || sec <= 0) {
+          return setError('Progress per grouping must be hh:mm:ss and > 0.');
+        }
+        input.grouping_progress = sec;
+      }
+    } else {
+      input.grouping_progress = initial?.grouping_progress ?? null;
+      input.groupable = initial?.groupable ?? true;
     }
 
     setBusy(true);
@@ -274,6 +310,37 @@ export default function TaskForm({
           />
         </div>
       </div>
+
+      {showGroupings ? (
+        <div className="space-y-3 rounded-lg border border-border p-4">
+          <h4 className="text-sm font-semibold text-fg">Groupings (censaySplit)</h4>
+          <p className="text-xs text-subtle">
+            Default progress increment per grouping run. censaySplit reads these
+            settings when building a groupings run.
+          </p>
+          <label className="flex items-center gap-2 text-sm text-fg">
+            <input
+              type="checkbox"
+              checked={excludeFromGroupings}
+              onChange={(e) => setExcludeFromGroupings(e.target.checked)}
+            />
+            Exclude from groupings
+          </label>
+          <div className="space-y-1">
+            <label className="label">
+              Progress per grouping{' '}
+              {type === 'custom' ? '(units)' : '(hh:mm:ss)'}
+            </label>
+            <input
+              className={`input ${type === 'custom' ? '' : 'font-sans'}`}
+              value={groupingProgressStr}
+              onChange={(e) => setGroupingProgressStr(e.target.value)}
+              disabled={excludeFromGroupings}
+              placeholder={type === 'custom' ? '6' : '00:03:00'}
+            />
+          </div>
+        </div>
+      ) : null}
 
       <p className="text-xs text-subtle">{helpText}</p>
       {error ? <p className="text-xs text-danger">{error}</p> : null}

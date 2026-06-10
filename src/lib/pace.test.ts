@@ -37,6 +37,8 @@ const baseTask: Task = {
   sort_order: 0,
   parent_id: null,
   complex_mode: null,
+  grouping_progress: null,
+  groupable: true,
   created_at: '2026-01-01T00:00:00Z',
 };
 

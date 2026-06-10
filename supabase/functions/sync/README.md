@@ -52,11 +52,25 @@ curl -i \
 
 Expected: `200 OK` with `{ "user_id": "...", "email": "..." }`.
 
+## Task fields for censaySplit groupings
+
+Each task in `GET /projects` includes grouping settings for censaySplit's
+"groupings" run-segment mode:
+
+| Field | Type | Notes |
+|-------|------|-------|
+| `groupable` | boolean | When `false`, exclude this task from grouping runs. |
+| `grouping_progress` | integer \| null | Progress increment per grouping. Same units as `current_progress`: seconds for `scaling` / `scripting` / `manual`; whole units for `custom`. `null` when not groupable. |
+
+Use `sort_order` to determine grouping sequence. For each groupable task,
+censaySplit can target `current_progress + grouping_progress`.
+
 ## Database dependency
 
 This function relies on:
 
 - `public.projects` and `public.tasks` (created by `001_init.sql`).
 - `public.integration_tokens` (created by `014_integration_tokens.sql`).
+- `037_task_grouping.sql` — `grouping_progress` and `groupable` on tasks.
 
 Run the migrations in the Supabase SQL editor before invoking the function.

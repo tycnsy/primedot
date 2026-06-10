@@ -11,6 +11,8 @@ export interface TemplateTaskFormInput {
   unit_count: number | null;
   unit_length: number | null;
   manual_length: number | null;
+  grouping_progress: number | null;
+  groupable: boolean;
 }
 
 interface Props {
@@ -56,6 +58,15 @@ export default function TemplateTaskForm({
   const [name, setName] = useState(initial?.name ?? '');
   const [type, setType] = useState<TaskType>(initial?.type ?? 'scaling');
   const [fields, setFields] = useState<FieldsState>(() => defaults(initial));
+  const [excludeFromGroupings, setExcludeFromGroupings] = useState(
+    () => initial?.groupable === false,
+  );
+  const [groupingProgressStr, setGroupingProgressStr] = useState<string>(() => {
+    if (initial?.grouping_progress == null) return '';
+    return initial.type === 'custom'
+      ? String(initial.grouping_progress)
+      : formatHMS(initial.grouping_progress);
+  });
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
@@ -89,6 +100,8 @@ export default function TemplateTaskForm({
       unit_count: null,
       unit_length: null,
       manual_length: null,
+      grouping_progress: null,
+      groupable: true,
     };
 
     if (type === 'scaling') {
@@ -121,6 +134,23 @@ export default function TemplateTaskForm({
       const manualLength = parseHMS(fields.manual_length_hms);
       if (manualLength == null) return setError('Manual length must be hh:mm:ss.');
       input.manual_length = manualLength;
+    }
+
+    input.groupable = !excludeFromGroupings;
+    if (excludeFromGroupings) {
+      input.grouping_progress = null;
+    } else if (type === 'custom') {
+      const n = Number.parseInt(groupingProgressStr, 10);
+      if (!Number.isFinite(n) || n <= 0) {
+        return setError('Progress per grouping must be a positive whole number.');
+      }
+      input.grouping_progress = n;
+    } else {
+      const sec = parseHMS(groupingProgressStr);
+      if (sec == null || sec <= 0) {
+        return setError('Progress per grouping must be hh:mm:ss and > 0.');
+      }
+      input.grouping_progress = sec;
     }
 
     setBusy(true);
@@ -236,6 +266,34 @@ export default function TemplateTaskForm({
             />
           </div>
         ) : null}
+      </div>
+
+      <div className="space-y-3 rounded-lg border border-border p-4">
+        <h4 className="text-sm font-semibold text-fg">Groupings (censaySplit)</h4>
+        <p className="text-xs text-subtle">
+          Default progress increment per grouping run. New projects created from
+          this template inherit these settings.
+        </p>
+        <label className="flex items-center gap-2 text-sm text-fg">
+          <input
+            type="checkbox"
+            checked={excludeFromGroupings}
+            onChange={(event) => setExcludeFromGroupings(event.target.checked)}
+          />
+          Exclude from groupings
+        </label>
+        <div className="space-y-1">
+          <label className="label">
+            Progress per grouping {type === 'custom' ? '(units)' : '(hh:mm:ss)'}
+          </label>
+          <input
+            className={`input ${type === 'custom' ? '' : 'font-sans'}`}
+            value={groupingProgressStr}
+            onChange={(event) => setGroupingProgressStr(event.target.value)}
+            disabled={excludeFromGroupings}
+            placeholder={type === 'custom' ? '6' : '00:03:00'}
+          />
+        </div>
       </div>
 
       <p className="text-xs text-subtle">{helpText}</p>

@@ -255,6 +255,8 @@ export function useCreateTemplateFromProject() {
           unit_length: task.unit_length,
           manual_length: task.manual_length,
           sort_order: task.sort_order,
+          grouping_progress: task.grouping_progress,
+          groupable: task.groupable,
         }));
         const { error: tasksError } = await supabase
           .from('template_tasks')
@@ -345,6 +347,8 @@ export function useCreateProjectFromTemplate() {
           unit_length: task.unit_length,
           manual_length: task.manual_length,
           sort_order: index,
+          grouping_progress: task.grouping_progress,
+          groupable: task.groupable,
         }));
         const { error: tasksInsertError } = await supabase
           .from('tasks')
