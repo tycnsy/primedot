@@ -6,3 +6,4 @@ export * from './incomeProjection';
 export * from './payoff';
 export * from './savings';
 export * from './earnings';
+export * from './dailySpending';

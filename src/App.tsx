@@ -28,6 +28,7 @@ import BudgetAccounts from './pages/BudgetAccounts';
 import BudgetAccountDetail from './pages/BudgetAccountDetail';
 import BudgetTransactions from './pages/BudgetTransactions';
 import BudgetCategories from './pages/BudgetCategories';
+import BudgetSpending from './pages/BudgetSpending';
 import BudgetIncome from './pages/BudgetIncome';
 import BudgetEarnings from './pages/BudgetEarnings';
 import BudgetDebt from './pages/BudgetDebt';
@@ -129,6 +130,7 @@ export default function App() {
           <Route path="/budget/transactions" element={<BudgetTransactions />} />
           <Route path="/budget/accounts/:accountId" element={<BudgetAccountDetail />} />
           <Route path="/budget/categories" element={<BudgetCategories />} />
+          <Route path="/budget/spending" element={<BudgetSpending />} />
           <Route path="/budget/income" element={<BudgetIncome />} />
           <Route path="/budget/earnings" element={<BudgetEarnings />} />
           <Route path="/budget/debt" element={<BudgetDebt />} />

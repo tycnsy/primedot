@@ -10,6 +10,9 @@ interface TransactionRowProps {
   currency: string;
   onEdit?: () => void;
   onDelete?: () => void;
+  selectable?: boolean;
+  selected?: boolean;
+  onSelectToggle?: () => void;
 }
 
 const TYPE_LABEL: Record<Transaction['type'], string> = {
@@ -51,6 +54,9 @@ export default function TransactionRow({
   currency,
   onEdit,
   onDelete,
+  selectable = false,
+  selected = false,
+  onSelectToggle,
 }: TransactionRowProps) {
   const signed = account
     ? displaySignedAmount(
@@ -66,8 +72,37 @@ export default function TransactionRow({
         ? -transaction.amount
         : transaction.amount;
 
+  const showActions = !selectable && (onEdit || onDelete);
+
   return (
-    <div className="flex items-center gap-3 rounded-lg border border-border bg-surface px-3 py-2">
+    <div
+      className={`flex items-center gap-3 rounded-lg border border-border bg-surface px-3 py-2 ${
+        selectable ? 'cursor-pointer' : ''
+      } ${selectable && selected ? 'border-accent bg-accent/5' : ''}`}
+      onClick={selectable ? onSelectToggle : undefined}
+      onKeyDown={
+        selectable
+          ? (event) => {
+              if (event.key === 'Enter' || event.key === ' ') {
+                event.preventDefault();
+                onSelectToggle?.();
+              }
+            }
+          : undefined
+      }
+      role={selectable ? 'button' : undefined}
+      tabIndex={selectable ? 0 : undefined}
+    >
+      {selectable ? (
+        <input
+          type="checkbox"
+          className="h-4 w-4 shrink-0 accent-accent"
+          checked={selected}
+          onChange={onSelectToggle}
+          onClick={(event) => event.stopPropagation()}
+          aria-label={`Select ${rowTitle(transaction, category, account, counterpartAccount)}`}
+        />
+      ) : null}
       <div className="min-w-0 flex-1">
         <div className="flex items-center gap-2">
           <p className="truncate text-sm font-medium text-fg">
@@ -95,7 +130,7 @@ export default function TransactionRow({
       >
         {formatMoney(signed, currency)}
       </p>
-      {onEdit || onDelete ? (
+      {showActions ? (
         <div className="flex shrink-0 items-center gap-0.5">
           {onEdit ? (
             <button

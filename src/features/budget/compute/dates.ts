@@ -1,5 +1,18 @@
 /** Shared date helpers for the budgeting module. All dates are YYYY-MM-DD. */
 
+/** Budget day boundaries use US Eastern (EST/EDT). */
+export const BUDGET_TIME_ZONE = 'America/New_York';
+
+/** Calendar date (YYYY-MM-DD) for `now` in the budget timezone. */
+export function todayInBudgetTimeZone(now = new Date()): string {
+  return new Intl.DateTimeFormat('en-CA', {
+    timeZone: BUDGET_TIME_ZONE,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).format(now);
+}
+
 export function monthKey(date: Date | string): string {
   if (typeof date === 'string') {
     // Normalize ISO timestamps (e.g. 2026-06-01T00:00:00+00:00) to YYYY-MM-DD.

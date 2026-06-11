@@ -1,5 +1,6 @@
 export * from './types';
 export * from './format';
+export * from './budgetTabs';
 export * from './preferences';
 export * from './compute';
 export * from './useAccounts';

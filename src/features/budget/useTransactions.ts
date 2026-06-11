@@ -105,6 +105,26 @@ export function useTransactions() {
     onSuccess: invalidate,
   });
 
+  const bulkUpdateCategoryMutation = useMutation({
+    mutationFn: async ({
+      ids,
+      categoryId,
+    }: {
+      ids: string[];
+      categoryId: string | null;
+    }) => {
+      if (!user) throw new Error('Not signed in');
+      if (ids.length === 0) return;
+      const { error } = await supabase
+        .from('budget_transactions')
+        .update({ category_id: categoryId })
+        .in('id', ids)
+        .eq('user_id', user.id);
+      if (error) throw error;
+    },
+    onSuccess: invalidate,
+  });
+
   const createTransferMutation = useMutation({
     mutationFn: async (input: NewTransferInput) => {
       if (!user) throw new Error('Not signed in');
@@ -238,6 +258,8 @@ export function useTransactions() {
     updateTransaction: (id: string, patch: Partial<Transaction>) =>
       updateMutation.mutateAsync({ id, patch }),
     deleteTransaction: (id: string) => deleteMutation.mutateAsync(id),
+    bulkUpdateCategory: (ids: string[], categoryId: string | null) =>
+      bulkUpdateCategoryMutation.mutateAsync({ ids, categoryId }),
     createTransfer: (input: NewTransferInput) => createTransferMutation.mutateAsync(input),
     updateTransfer: (groupId: string, input: NewTransferInput) =>
       updateTransferMutation.mutateAsync({ groupId, input }),
