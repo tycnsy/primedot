@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import type { CategoryBudget, Transaction } from '../types';
+import type { Transaction } from '../types';
+import type { CategoryBudget } from './budgetMath';
 import {
   categorySpendOnDay,
   computeCategoryDailyState,
