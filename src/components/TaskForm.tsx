@@ -75,8 +75,7 @@ export default function TaskForm({
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
-  const showGroupings =
-    !initial?.parent_id && initial?.complex_mode !== 'expanded';
+  const showGroupings = initial?.complex_mode !== 'expanded';
 
   useEffect(() => {
     if (initial) return;
