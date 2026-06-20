@@ -80,6 +80,166 @@ async function ensureProjectSeries(
   if (error) throw error;
 }
 
+type TemplateTaskInsertRow = {
+  template_id: string;
+  name: string;
+  type: Task['type'];
+  scaling_modifier: number | null;
+  scripting_modifier: number | null;
+  script_length: number | null;
+  unit_count: number | null;
+  unit_length: number | null;
+  manual_length: number | null;
+  sort_order: number;
+  parent_id?: string | null;
+  complex_mode: Task['complex_mode'];
+  grouping_progress: number | null;
+  groupable: boolean;
+};
+
+type ProjectTaskInsertRow = {
+  project_id: string;
+  name: string;
+  status: 'not_started';
+  type: Task['type'];
+  current_progress: 0;
+  scaling_modifier: number | null;
+  scripting_modifier: number | null;
+  script_length: number | null;
+  unit_count: number | null;
+  unit_length: number | null;
+  manual_length: number | null;
+  sort_order: number;
+  parent_id?: string | null;
+  complex_mode: Task['complex_mode'];
+  grouping_progress: number | null;
+  groupable: boolean;
+};
+
+function templateTaskRowFromTask(
+  templateId: string,
+  task: Task,
+  parentId?: string | null,
+): TemplateTaskInsertRow {
+  return {
+    template_id: templateId,
+    name: task.name,
+    type: task.type,
+    scaling_modifier: task.scaling_modifier,
+    scripting_modifier: task.scripting_modifier,
+    script_length: task.script_length,
+    unit_count: task.unit_count,
+    unit_length: task.unit_length,
+    manual_length: task.manual_length,
+    sort_order: task.sort_order,
+    ...(parentId === undefined ? {} : { parent_id: parentId }),
+    complex_mode: task.complex_mode,
+    grouping_progress: task.grouping_progress,
+    groupable: task.groupable,
+  };
+}
+
+function projectTaskRowFromTemplate(
+  projectId: string,
+  task: TemplateTask,
+  parentId?: string | null,
+): ProjectTaskInsertRow {
+  return {
+    project_id: projectId,
+    name: task.name,
+    status: 'not_started',
+    type: task.type,
+    current_progress: 0,
+    scaling_modifier: task.scaling_modifier,
+    scripting_modifier: task.scripting_modifier,
+    script_length: task.script_length,
+    unit_count: task.unit_count,
+    unit_length: task.unit_length,
+    manual_length: task.manual_length,
+    sort_order: task.sort_order,
+    ...(parentId === undefined ? {} : { parent_id: parentId }),
+    complex_mode: task.complex_mode,
+    grouping_progress: task.grouping_progress,
+    groupable: task.groupable,
+  };
+}
+
+async function insertTemplateTasksFromProjectTasks(
+  templateId: string,
+  tasks: Task[],
+): Promise<void> {
+  if (tasks.length === 0) return;
+
+  const parents = tasks.filter((task) => !task.parent_id);
+  const subtasks = tasks.filter((task) => task.parent_id);
+
+  const { data: insertedParents, error: parentsError } = await supabase
+    .from('template_tasks')
+    .insert(parents.map((task) => templateTaskRowFromTask(templateId, task)))
+    .select('id');
+  if (parentsError) throw parentsError;
+
+  const idMap = new Map<string, string>();
+  parents.forEach((task, index) => {
+    const inserted = insertedParents?.[index];
+    if (!inserted) {
+      throw new Error('Failed to save template tasks: parent insert missing id.');
+    }
+    idMap.set(task.id, inserted.id);
+  });
+
+  if (subtasks.length === 0) return;
+
+  const subtaskRows = subtasks.map((task) => {
+    const parentId = idMap.get(task.parent_id!);
+    if (!parentId) {
+      throw new Error('Failed to save template tasks: subtask parent not found.');
+    }
+    return templateTaskRowFromTask(templateId, task, parentId);
+  });
+
+  const { error: subtasksError } = await supabase.from('template_tasks').insert(subtaskRows);
+  if (subtasksError) throw subtasksError;
+}
+
+async function insertProjectTasksFromTemplateTasks(
+  projectId: string,
+  templateTasks: TemplateTask[],
+): Promise<void> {
+  if (templateTasks.length === 0) return;
+
+  const parents = templateTasks.filter((task) => !task.parent_id);
+  const subtasks = templateTasks.filter((task) => task.parent_id);
+
+  const { data: insertedParents, error: parentsError } = await supabase
+    .from('tasks')
+    .insert(parents.map((task) => projectTaskRowFromTemplate(projectId, task)))
+    .select('id');
+  if (parentsError) throw parentsError;
+
+  const idMap = new Map<string, string>();
+  parents.forEach((task, index) => {
+    const inserted = insertedParents?.[index];
+    if (!inserted) {
+      throw new Error('Failed to create project tasks: parent insert missing id.');
+    }
+    idMap.set(task.id, inserted.id);
+  });
+
+  if (subtasks.length === 0) return;
+
+  const subtaskRows = subtasks.map((task) => {
+    const parentId = idMap.get(task.parent_id!);
+    if (!parentId) {
+      throw new Error('Failed to create project tasks: subtask parent not found.');
+    }
+    return projectTaskRowFromTemplate(projectId, task, parentId);
+  });
+
+  const { error: subtasksError } = await supabase.from('tasks').insert(subtaskRows);
+  if (subtasksError) throw subtasksError;
+}
+
 export function useTemplates() {
   const { user } = useAuth();
   return useQuery({
@@ -244,24 +404,7 @@ export function useCreateTemplateFromProject() {
 
       const templateId = (template as ProjectTemplate).id;
       if (tasks.length > 0) {
-        const templateTasks = tasks.map((task) => ({
-          template_id: templateId,
-          name: task.name,
-          type: task.type,
-          scaling_modifier: task.scaling_modifier,
-          scripting_modifier: task.scripting_modifier,
-          script_length: task.script_length,
-          unit_count: task.unit_count,
-          unit_length: task.unit_length,
-          manual_length: task.manual_length,
-          sort_order: task.sort_order,
-          grouping_progress: task.grouping_progress,
-          groupable: task.groupable,
-        }));
-        const { error: tasksError } = await supabase
-          .from('template_tasks')
-          .insert(templateTasks);
-        if (tasksError) throw tasksError;
+        await insertTemplateTasksFromProjectTasks(templateId, tasks);
       }
 
       return template as ProjectTemplate;
@@ -334,26 +477,10 @@ export function useCreateProjectFromTemplate() {
       if (readTemplateTasksError) throw readTemplateTasksError;
 
       if ((templateTasks ?? []).length > 0) {
-        const tasksToInsert = (templateTasks as TemplateTask[]).map((task, index) => ({
-          project_id: projectId,
-          name: task.name,
-          status: 'not_started',
-          type: task.type,
-          current_progress: 0,
-          scaling_modifier: task.scaling_modifier,
-          scripting_modifier: task.scripting_modifier,
-          script_length: task.script_length,
-          unit_count: task.unit_count,
-          unit_length: task.unit_length,
-          manual_length: task.manual_length,
-          sort_order: index,
-          grouping_progress: task.grouping_progress,
-          groupable: task.groupable,
-        }));
-        const { error: tasksInsertError } = await supabase
-          .from('tasks')
-          .insert(tasksToInsert);
-        if (tasksInsertError) throw tasksInsertError;
+        await insertProjectTasksFromTemplateTasks(
+          projectId,
+          templateTasks as TemplateTask[],
+        );
       }
 
       if (

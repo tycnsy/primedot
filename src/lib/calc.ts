@@ -22,8 +22,10 @@ type TaskProgressSource = Pick<
 
 // ---------- Complex task helpers ----------
 
+type SubtaskLike = { id: string; parent_id?: string | null; sort_order: number };
+
 /** Subtasks of a complex parent, ordered by sort_order. */
-export function getSubtasks(parentId: string, allTasks: Task[]): Task[] {
+export function getSubtasks<T extends SubtaskLike>(parentId: string, allTasks: T[]): T[] {
   return allTasks
     .filter((t) => t.parent_id === parentId)
     .sort((a, b) => a.sort_order - b.sort_order);

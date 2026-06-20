@@ -101,6 +101,8 @@ export interface TemplateTask {
   unit_length: number | null;
   manual_length: number | null;
   sort_order: number;
+  parent_id: string | null;
+  complex_mode: ComplexMode | null;
   grouping_progress: number | null;
   groupable: boolean;
   created_at: string;

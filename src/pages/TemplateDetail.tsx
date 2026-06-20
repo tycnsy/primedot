@@ -15,6 +15,7 @@ import {
   useUpdateTemplateTask,
 } from '../hooks/useTemplates';
 import { formatHMS, parseHMS } from '../lib/time';
+import { getSubtasks } from '../lib/calc';
 import type { TemplateTask } from '../lib/types';
 
 function move<T>(items: T[], from: number, to: number): T[] {
@@ -34,7 +35,25 @@ interface TemplateDraft {
 }
 
 function toTaskCreateInput(input: TemplateTaskFormInput, sortOrder: number) {
-  return { ...input, sort_order: sortOrder };
+  return {
+    ...input,
+    sort_order: sortOrder,
+    parent_id: null,
+    complex_mode: null,
+  };
+}
+
+function mergeTopLevelWithSubtasks(
+  topLevel: TemplateTask[],
+  subtasksByParent: Map<string, TemplateTask[]>,
+): TemplateTask[] {
+  const merged: TemplateTask[] = [];
+  for (const top of topLevel) {
+    merged.push(top);
+    const subs = subtasksByParent.get(top.id);
+    if (subs) merged.push(...subs);
+  }
+  return merged;
 }
 
 export default function TemplateDetail() {
@@ -78,6 +97,24 @@ export default function TemplateDetail() {
   useEffect(() => {
     setOrderedTasks(tasksQ.data ?? []);
   }, [tasksQ.data]);
+
+  const topLevelTasks = useMemo(
+    () => orderedTasks.filter((task) => !task.parent_id),
+    [orderedTasks],
+  );
+  const subtasksByParent = useMemo(() => {
+    const map = new Map<string, TemplateTask[]>();
+    for (const task of orderedTasks) {
+      if (!task.parent_id) continue;
+      const subs = map.get(task.parent_id) ?? [];
+      subs.push(task);
+      map.set(task.parent_id, subs);
+    }
+    for (const subs of map.values()) {
+      subs.sort((a, b) => a.sort_order - b.sort_order);
+    }
+    return map;
+  }, [orderedTasks]);
 
   const tagColorByName = useMemo(
     () => new Map((tagsQ.data ?? []).map((tag) => [tag.name, tag.color] as const)),
@@ -206,18 +243,17 @@ export default function TemplateDetail() {
     }
   };
 
-  const handleMoveTask = async (taskIndex: number, delta: -1 | 1) => {
+  const handleMoveTopLevelTask = async (taskIndex: number, delta: -1 | 1) => {
     const nextIndex = taskIndex + delta;
-    if (nextIndex < 0 || nextIndex >= orderedTasks.length) return;
+    if (nextIndex < 0 || nextIndex >= topLevelTasks.length) return;
     const previous = orderedTasks;
-    const reordered = move(orderedTasks, taskIndex, nextIndex).map((task, index) => ({
-      ...task,
-      sort_order: index,
-    }));
-    setOrderedTasks(reordered);
+    const reorderedTop = move(topLevelTasks, taskIndex, nextIndex);
+    const merged = mergeTopLevelWithSubtasks(reorderedTop, subtasksByParent);
+    const withSortOrder = merged.map((task, index) => ({ ...task, sort_order: index }));
+    setOrderedTasks(withSortOrder);
     setReorderError(null);
     try {
-      await reorderTasks.mutateAsync(reordered.map((task) => task.id));
+      await reorderTasks.mutateAsync(merged.map((task) => task.id));
     } catch (error) {
       setOrderedTasks(previous);
       setReorderError(error instanceof Error ? error.message : 'Failed to reorder tasks.');
@@ -406,56 +442,117 @@ export default function TemplateDetail() {
         {taskError ? <p className="text-xs text-danger">{taskError}</p> : null}
         {reorderError ? <p className="text-xs text-danger">{reorderError}</p> : null}
 
-        {orderedTasks.length === 0 ? (
+        {topLevelTasks.length === 0 ? (
           <p className="text-sm text-muted">
             No template tasks yet. Add tasks to shape this blueprint.
           </p>
         ) : (
           <ul className="space-y-2">
-            {orderedTasks.map((task, index) => (
-              <li key={task.id} className="card flex flex-wrap items-center justify-between gap-3">
-                <div className="min-w-0 space-y-1">
-                  <div className="flex flex-wrap items-center gap-2">
-                    <span className="pill">{task.type}</span>
-                    <h3 className="text-sm font-medium text-fg">{task.name}</h3>
-                  </div>
-                  <TaskDetail task={task} />
-                </div>
-                <div className="flex items-center gap-2">
-                  <button
-                    type="button"
-                    className="btn-ghost !px-2"
-                    onClick={() => {
-                      void handleMoveTask(index, -1);
+            {topLevelTasks.map((task, index) => {
+              const isComplexParent =
+                task.complex_mode === 'compressed' || task.complex_mode === 'expanded';
+              const subs = getSubtasks(task.id, orderedTasks);
+
+              return (
+                <li key={task.id} className="space-y-2">
+                  <TemplateTaskRow
+                    task={task}
+                    isComplexParent={isComplexParent}
+                    showReorder
+                    moveUpDisabled={index === 0 || reorderTasks.isPending}
+                    moveDownDisabled={
+                      index === topLevelTasks.length - 1 || reorderTasks.isPending
+                    }
+                    onMoveUp={() => {
+                      void handleMoveTopLevelTask(index, -1);
                     }}
-                    disabled={index === 0 || reorderTasks.isPending}
-                    title="Move up"
-                  >
-                    ↑
-                  </button>
-                  <button
-                    type="button"
-                    className="btn-ghost !px-2"
-                    onClick={() => {
-                      void handleMoveTask(index, 1);
+                    onMoveDown={() => {
+                      void handleMoveTopLevelTask(index, 1);
                     }}
-                    disabled={index === orderedTasks.length - 1 || reorderTasks.isPending}
-                    title="Move down"
-                  >
-                    ↓
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setEditingTask(task)}
-                    className="btn-ghost"
-                  >
-                    Edit
-                  </button>
-                </div>
-              </li>
-            ))}
+                    onEdit={() => setEditingTask(task)}
+                  />
+                  {subs.map((sub) => (
+                    <TemplateTaskRow
+                      key={sub.id}
+                      task={sub}
+                      isSubtask
+                      onEdit={() => setEditingTask(sub)}
+                    />
+                  ))}
+                </li>
+              );
+            })}
           </ul>
         )}
+      </div>
+    </div>
+  );
+}
+
+function TemplateTaskRow({
+  task,
+  isComplexParent = false,
+  isSubtask = false,
+  showReorder = false,
+  moveUpDisabled = false,
+  moveDownDisabled = false,
+  onMoveUp,
+  onMoveDown,
+  onEdit,
+}: {
+  task: TemplateTask;
+  isComplexParent?: boolean;
+  isSubtask?: boolean;
+  showReorder?: boolean;
+  moveUpDisabled?: boolean;
+  moveDownDisabled?: boolean;
+  onMoveUp?: () => void;
+  onMoveDown?: () => void;
+  onEdit: () => void;
+}) {
+  return (
+    <div
+      className={`card flex flex-wrap items-center justify-between gap-3 ${
+        isSubtask ? 'ml-6 border-l-2 border-border' : ''
+      }`}
+    >
+      <div className="min-w-0 space-y-1">
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="pill">{task.type}</span>
+          {isComplexParent && task.complex_mode ? (
+            <span className="pill">{task.complex_mode}</span>
+          ) : null}
+          {isSubtask ? <span className="text-xs text-muted">subtask</span> : null}
+          <h3 className="text-sm font-medium text-fg">{task.name}</h3>
+        </div>
+        <TaskDetail task={task} />
+      </div>
+      <div className="flex items-center gap-2">
+        {showReorder ? (
+          <>
+            <button
+              type="button"
+              className="btn-ghost !px-2"
+              onClick={onMoveUp}
+              disabled={moveUpDisabled}
+              title="Move up"
+            >
+              ↑
+            </button>
+            <button
+              type="button"
+              className="btn-ghost !px-2"
+              onClick={onMoveDown}
+              disabled={moveDownDisabled}
+              title="Move down"
+            >
+              ↓
+            </button>
+          </>
+        ) : null}
+        <button type="button" onClick={onEdit} className="btn-ghost">
+          Edit
+        </button>
       </div>
     </div>
   );

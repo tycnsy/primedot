@@ -54,6 +54,7 @@ export default function Templates() {
   const templateTasksQ = useTemplateTasksForTemplates(templateIds);
   const taskCountByTemplate = useMemo(() => {
     return (templateTasksQ.data ?? []).reduce<Record<string, number>>((acc, task) => {
+      if (task.parent_id) return acc;
       acc[task.template_id] = (acc[task.template_id] ?? 0) + 1;
       return acc;
     }, {});
