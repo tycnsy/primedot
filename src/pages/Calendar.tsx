@@ -14,6 +14,7 @@ import {
   useUpdateProject,
 } from '../hooks/useProjects';
 import { useTasksForProjects } from '../hooks/useTasks';
+import { parentProjects } from '../lib/projects';
 import type { Project } from '../lib/types';
 
 type CalendarCell = {
@@ -29,6 +30,32 @@ type CalendarWeek = {
 };
 
 type CalendarView = 'due' | 'start';
+
+const CALENDAR_VIEW_STORAGE_KEY = 'prime:calendar-view';
+
+function readShowSubprojectsPref(): boolean {
+  if (typeof window === 'undefined') return false;
+  try {
+    const raw = window.localStorage.getItem(CALENDAR_VIEW_STORAGE_KEY);
+    if (!raw) return false;
+    const parsed = JSON.parse(raw) as { showSubprojects?: boolean };
+    return parsed.showSubprojects === true;
+  } catch {
+    return false;
+  }
+}
+
+function writeShowSubprojectsPref(showSubprojects: boolean) {
+  if (typeof window === 'undefined') return;
+  try {
+    window.localStorage.setItem(
+      CALENDAR_VIEW_STORAGE_KEY,
+      JSON.stringify({ showSubprojects }),
+    );
+  } catch {
+    // ignore localStorage write failures
+  }
+}
 
 const WEEKDAY_LABELS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 
@@ -152,7 +179,16 @@ function formatDurationUntilEnd(
 }
 
 export default function Calendar() {
-  const { data: projects = [], isLoading, error } = useAllProjectsIncludingArchived();
+  const { data: allProjects = [], isLoading, error } = useAllProjectsIncludingArchived();
+  const [showSubprojects, setShowSubprojects] = useState(readShowSubprojectsPref);
+  const parentNameById = useMemo(
+    () => new Map(parentProjects(allProjects).map((project) => [project.id, project.name])),
+    [allProjects],
+  );
+  const projects = useMemo(
+    () => (showSubprojects ? allProjects : parentProjects(allProjects)),
+    [allProjects, showSubprojects],
+  );
   const { data: projectTags = [] } = useProjectTags();
   const { data: tasks = [] } = useTasksForProjects(projects.map((project) => project.id));
   const updateProject = useUpdateProject();
@@ -368,6 +404,21 @@ export default function Calendar() {
               Load future
             </button>
           </div>
+          <div className="segmented">
+            <button
+              type="button"
+              data-active={showSubprojects}
+              onClick={() => {
+                setShowSubprojects((prev) => {
+                  const next = !prev;
+                  writeShowSubprojectsPref(next);
+                  return next;
+                });
+              }}
+            >
+              Show subprojects
+            </button>
+          </div>
         </div>
       </div>
 
@@ -396,6 +447,11 @@ export default function Calendar() {
                 <ProjectChip
                   key={project.id}
                   project={project}
+                  parentName={
+                    project.parent_id
+                      ? (parentNameById.get(project.parent_id) ?? null)
+                      : null
+                  }
                   tagColor={project.tag ? (tagColorByName.get(project.tag) ?? null) : null}
                   draggable
                   draggingProjectId={draggingProjectId}
@@ -484,6 +540,11 @@ export default function Calendar() {
                         <ProjectChip
                           key={project.id}
                           project={project}
+                          parentName={
+                            project.parent_id
+                              ? (parentNameById.get(project.parent_id) ?? null)
+                              : null
+                          }
                           tagColor={project.tag ? (tagColorByName.get(project.tag) ?? null) : null}
                           draggable
                           endInfo={
@@ -517,6 +578,7 @@ export default function Calendar() {
 
 function ProjectChip({
   project,
+  parentName,
   tagColor,
   draggable,
   endInfo,
@@ -526,6 +588,7 @@ function ProjectChip({
   onDragEnd,
 }: {
   project: Project;
+  parentName?: string | null;
   tagColor: string | null;
   draggable: boolean;
   endInfo?: { endLabel: string | null; durationLabel: string | null };
@@ -568,6 +631,9 @@ function ProjectChip({
         >
           {project.name}
         </Link>
+        {parentName ? (
+          <span className="block truncate text-[10px] text-muted">{parentName}</span>
+        ) : null}
         {typeof bufferGoal === 'number' ? (
           <span className="shrink-0 font-sans text-[10px] text-muted" title="Buffer modifier goal">
             x{bufferGoal.toFixed(2)} goal

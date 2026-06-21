@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import {
   Link,
   Navigate,
@@ -8,11 +8,13 @@ import {
 } from 'react-router-dom';
 import {
   useArchiveProject,
+  useCreateProject,
   useDeleteProject,
   useProject,
   useProjectSeries,
   useProjectTags,
   useRestoreProject,
+  useSubprojects,
   useUpdateProject,
 } from '../hooks/useProjects';
 import {
@@ -22,6 +24,7 @@ import {
   useReorderTasks,
   useSaveComplexSettings,
   useTasks,
+  useTasksForProjects,
   useToggleComplexMode,
   useUpdateTask,
 } from '../hooks/useTasks';
@@ -46,6 +49,7 @@ import {
   subtasksHaveProgressMismatch,
   totalTaskLength,
 } from '../lib/calc';
+import { isParentProject, resolvedProjectTagSeries } from '../lib/projects';
 import { formatHMS } from '../lib/time';
 import type { ComplexMode, Task } from '../lib/types';
 
@@ -92,6 +96,29 @@ export default function ProjectDetail() {
   const requestedTab = searchParams.get('tab');
   const navigate = useNavigate();
   const project = useProject(id);
+  const parentProject = useProject(project.data?.parent_id ?? undefined);
+  const subprojectsQuery = useSubprojects(
+    project.data && isParentProject(project.data) ? project.data.id : undefined,
+  );
+  const subprojects = subprojectsQuery.data ?? [];
+  const subprojectIds = useMemo(
+    () => subprojects.map((subproject) => subproject.id),
+    [subprojects],
+  );
+  const subprojectTasksQuery = useTasksForProjects(subprojectIds);
+  const subprojectTasksById = useMemo(() => {
+    const byProject = new Map<string, Task[]>();
+    for (const task of subprojectTasksQuery.data ?? []) {
+      const existing = byProject.get(task.project_id);
+      if (existing) {
+        existing.push(task);
+      } else {
+        byProject.set(task.project_id, [task]);
+      }
+    }
+    return byProject;
+  }, [subprojectTasksQuery.data]);
+  const createSubproject = useCreateProject();
   const projectTags = useProjectTags();
   const projectSeries = useProjectSeries();
   const tasks = useTasks(id);
@@ -116,6 +143,8 @@ export default function ProjectDetail() {
   const [notesDraft, setNotesDraft] = useState('');
   const [notesError, setNotesError] = useState<string | null>(null);
   const [showTemplateForm, setShowTemplateForm] = useState(false);
+  const [showNewSubproject, setShowNewSubproject] = useState(false);
+  const [subprojectError, setSubprojectError] = useState<string | null>(null);
   const [templateName, setTemplateName] = useState('');
   const [templateError, setTemplateError] = useState<string | null>(null);
   const [orderedTasks, setOrderedTasks] = useState<Task[]>([]);
@@ -129,6 +158,7 @@ export default function ProjectDetail() {
   const [collapseConflictFor, setCollapseConflictFor] = useState<Task | null>(
     null,
   );
+  const [bufferVisibility, setBufferVisibility] = useState(false);
   const allTasks = tasks.data ?? EMPTY_TASKS;
   const tagColorByName = new Map(
     (projectTags.data ?? []).map((tag) => [tag.name, tag.color] as const),
@@ -309,9 +339,16 @@ export default function ProjectDetail() {
   }
 
   const p = project.data;
-  const totalLen = totalTaskLength(allTasks, p);
-  const progress = projectProgress(allTasks, p);
-  const remaining = remainingProgress(allTasks, p);
+  const { tag: displayTag, series: displaySeries } = resolvedProjectTagSeries(
+    p,
+    parentProject.data,
+  );
+  const displayProject = bufferVisibility
+    ? { ...p, buffer_modifier: 1 }
+    : p;
+  const totalLen = totalTaskLength(allTasks, displayProject);
+  const progress = projectProgress(allTasks, displayProject);
+  const remaining = remainingProgress(allTasks, displayProject);
   const overallPct = totalLen > 0 ? Math.min(100, (progress / totalLen) * 100) : 0;
   const bufferGoal = bufferModifierGoal(allTasks, p);
   const startLabel = formatDueDateTime(p.start_date);
@@ -332,10 +369,11 @@ export default function ProjectDetail() {
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div className="space-y-1">
           <Link
-            to="/projects"
+            to={p.parent_id ? `/projects/${p.parent_id}` : '/projects'}
             className="inline-flex items-center gap-1 text-xs text-muted transition-colors hover:text-fg"
           >
-            <span aria-hidden>←</span> Projects
+            <span aria-hidden>←</span>{' '}
+            {p.parent_id ? (parentProject.data?.name ?? 'Parent project') : 'Projects'}
           </Link>
           <h1 className="text-3xl font-semibold tracking-tight text-fg">
             {p.name}
@@ -345,9 +383,11 @@ export default function ProjectDetail() {
             <span className="pill">×{p.buffer_modifier} buffer</span>
             {startLabel ? <span className="pill">start {startLabel}</span> : null}
             {dueLabel ? <span className="pill">due {dueLabel}</span> : null}
-            {p.tag ? <TagPill name={p.tag} color={tagColorByName.get(p.tag)} /> : null}
-            {p.series ? (
-              <TagPill name={p.series} color={seriesColorByName.get(p.series)} />
+            {displayTag ? (
+              <TagPill name={displayTag} color={tagColorByName.get(displayTag)} />
+            ) : null}
+            {displaySeries ? (
+              <TagPill name={displaySeries} color={seriesColorByName.get(displaySeries)} />
             ) : null}
           </div>
         </div>
@@ -427,6 +467,11 @@ export default function ProjectDetail() {
           <h2 className="text-lg font-semibold text-fg">Save as template</h2>
           <p className="text-sm text-muted">
             This captures your project settings and task blueprint for future projects.
+            {isParentProject(p) && subprojects.length > 0
+              ? ` Saves this project and ${subprojects.length} subproject${
+                  subprojects.length === 1 ? '' : 's'
+                } as a reusable template.`
+              : null}
           </p>
           <div className="space-y-1">
             <label className="label" htmlFor="template-name">
@@ -461,13 +506,22 @@ export default function ProjectDetail() {
                   return;
                 }
                 try {
-                  await createTemplate.mutateAsync({
+                  const subprojectPayload =
+                    isParentProject(p) && subprojects.length > 0
+                      ? subprojects.map((subproject) => ({
+                          project: subproject,
+                          tasks: subprojectTasksById.get(subproject.id) ?? [],
+                        }))
+                      : undefined;
+                  const template = await createTemplate.mutateAsync({
                     name: templateName.trim(),
                     project: p,
                     tasks: allTasks,
+                    subprojects: subprojectPayload,
                   });
                   setShowTemplateForm(false);
                   setTemplateError(null);
+                  navigate(`/templates/${template.id}`);
                 } catch (err) {
                   setTemplateError(
                     err instanceof Error ? err.message : 'Failed to save template.',
@@ -489,6 +543,9 @@ export default function ProjectDetail() {
             initial={p}
             tagItems={projectTags.data ?? []}
             seriesItems={projectSeries.data ?? []}
+            tagSeriesParent={p.parent_id ? parentProject.data : null}
+            tagColorByName={tagColorByName}
+            seriesColorByName={seriesColorByName}
             submitLabel="Save"
             onCancel={() => setEditingProject(false)}
             onSubmit={async (input) => {
@@ -523,11 +580,27 @@ export default function ProjectDetail() {
       {activeTab === 'overview' ? (
         <>
           <div className="card space-y-4">
-            <div className="flex items-baseline justify-between">
+            <div className="flex flex-wrap items-baseline justify-between gap-2">
               <h2 className="text-base font-semibold text-fg">Project totals</h2>
-              <span className="text-[11px] uppercase tracking-wider text-subtle">
-                computed at read time
-              </span>
+              <div className="flex flex-wrap items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => setBufferVisibility((v) => !v)}
+                  aria-pressed={bufferVisibility}
+                  className={`btn-ghost text-xs ${
+                    bufferVisibility
+                      ? 'bg-accent/10 text-accent ring-1 ring-inset ring-accent/40'
+                      : ''
+                  }`}
+                >
+                  Buffer visibility
+                </button>
+                <span className="text-[11px] uppercase tracking-wider text-subtle">
+                  {bufferVisibility
+                    ? 'realtime (×1.00)'
+                    : 'computed at read time'}
+                </span>
+              </div>
             </div>
             <div className="grid grid-cols-2 gap-4 sm:grid-cols-3">
               <Stat label="Total task length" value={formatHMS(totalLen)} mono />
@@ -555,6 +628,122 @@ export default function ProjectDetail() {
               </div>
             </div>
           </div>
+
+          {isParentProject(p) ? (
+            <div className="space-y-4">
+              <div className="flex items-center justify-between gap-3">
+                <h2 className="text-lg font-semibold text-fg">Subprojects</h2>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setSubprojectError(null);
+                    setShowNewSubproject((value) => !value);
+                  }}
+                  className="btn-primary"
+                >
+                  {showNewSubproject ? 'Close' : 'Add subproject'}
+                </button>
+              </div>
+
+              {showNewSubproject ? (
+                <div className="card animate-fade-in">
+                  <h3 className="mb-3 text-sm font-semibold text-fg">Create subproject</h3>
+                  <ProjectForm
+                    tagItems={projectTags.data ?? []}
+                    seriesItems={projectSeries.data ?? []}
+                    tagSeriesParent={p}
+                    tagColorByName={tagColorByName}
+                    seriesColorByName={seriesColorByName}
+                    submitLabel="Create"
+                    onCancel={() => setShowNewSubproject(false)}
+                    onSubmit={async (input) => {
+                      try {
+                        await createSubproject.mutateAsync({
+                          ...input,
+                          parent_id: p.id,
+                        });
+                        setShowNewSubproject(false);
+                        setSubprojectError(null);
+                      } catch (err) {
+                        setSubprojectError(
+                          err instanceof Error
+                            ? err.message
+                            : 'Failed to create subproject.',
+                        );
+                      }
+                    }}
+                  />
+                  {subprojectError ? (
+                    <p className="mt-2 text-xs text-danger">{subprojectError}</p>
+                  ) : null}
+                </div>
+              ) : null}
+
+              {subprojectsQuery.isLoading ? (
+                <p className="text-sm text-muted">Loading subprojects…</p>
+              ) : subprojects.length === 0 ? (
+                <p className="text-sm text-muted">
+                  No subprojects yet. Add subprojects to track pace and tasks separately.
+                </p>
+              ) : (
+                <ul className="space-y-2">
+                  {subprojects.map((subproject) => {
+                    const subTasks = subprojectTasksById.get(subproject.id) ?? [];
+                    const subTotalLen = totalTaskLength(subTasks, subproject);
+                    const subProgress = projectProgress(subTasks, subproject);
+                    const subPct =
+                      subTotalLen > 0
+                        ? Math.min(100, (subProgress / subTotalLen) * 100)
+                        : 0;
+                    return (
+                      <li key={subproject.id} className="card flex flex-wrap items-center gap-3">
+                        <div className="min-w-0 flex-1 space-y-1">
+                          <Link
+                            to={`/projects/${subproject.id}`}
+                            className="font-medium text-fg transition-colors hover:text-accent"
+                          >
+                            {subproject.name}
+                          </Link>
+                          <p className="text-xs text-muted">
+                            {formatDueDateTime(subproject.due_date) ?? 'No due date'} ·{' '}
+                            {subPct.toFixed(1)}% complete
+                          </p>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <button
+                            type="button"
+                            className="btn-ghost text-xs"
+                            onClick={async () => {
+                              if (!confirm(`Archive "${subproject.name}"?`)) return;
+                              await archiveProject.mutateAsync(subproject.id);
+                            }}
+                          >
+                            Archive
+                          </button>
+                          <button
+                            type="button"
+                            className="btn-danger text-xs"
+                            onClick={async () => {
+                              if (
+                                !confirm(
+                                  `Delete "${subproject.name}" and all its tasks?`,
+                                )
+                              ) {
+                                return;
+                              }
+                              await deleteProject.mutateAsync(subproject.id);
+                            }}
+                          >
+                            Delete
+                          </button>
+                        </div>
+                      </li>
+                    );
+                  })}
+                </ul>
+              )}
+            </div>
+          ) : null}
 
           <div className="space-y-4">
             <div className="flex items-center justify-between gap-3">
@@ -670,7 +859,7 @@ export default function ProjectDetail() {
                         >
                           <TaskRow
                             task={t}
-                            project={p}
+                            project={displayProject}
                             allTasks={allTasks}
                             onUpdateProgress={
                               isExpandedParent
@@ -754,7 +943,7 @@ export default function ProjectDetail() {
                               >
                                 <TaskRow
                                   task={sub}
-                                  project={p}
+                                  project={displayProject}
                                   allTasks={allTasks}
                                   isSubtask
                                   onUpdateProgress={async (taskId, nextProgress) => {

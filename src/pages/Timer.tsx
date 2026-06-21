@@ -18,6 +18,7 @@ import { buildPacePatchFromBufferSeconds } from '../lib/pace';
 import { formatHMS, parseHMS, parseHMSWithOptionalFrames } from '../lib/time';
 import { playPasteChime } from '../lib/chime';
 import type { PaceSettings, Project, Task } from '../lib/types';
+import { paceEligibleProjects } from '../lib/projects';
 
 type SessionMode = 'idle' | 'project' | 'bulk';
 const GOAL_DELTA_STORAGE_KEY = 'prime.timer.show_goal_delta';
@@ -39,12 +40,13 @@ export default function Timer() {
   const timer = useTimer();
   const projectsQ = useProjects();
   const projects = projectsQ.data ?? [];
+  const paceProjects = useMemo(() => paceEligibleProjects(projects), [projects]);
   const { hiddenProjectIds } = useHiddenPaceCards();
   const visibleProjects = useMemo(
-    () => projects.filter((project) => !hiddenProjectIds.has(project.id)),
-    [projects, hiddenProjectIds],
+    () => paceProjects.filter((project) => !hiddenProjectIds.has(project.id)),
+    [paceProjects, hiddenProjectIds],
   );
-  const projectIds = useMemo(() => projects.map((project) => project.id), [projects]);
+  const projectIds = useMemo(() => paceProjects.map((project) => project.id), [paceProjects]);
   const tasksQ = useTasksForProjects(projectIds);
   const paceByProjectQ = usePaceSettingsForProjects(projectIds);
   const updateTask = useUpdateAnyTask(projectIds);

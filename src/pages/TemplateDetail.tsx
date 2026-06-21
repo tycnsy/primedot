@@ -6,16 +6,21 @@ import TemplateTaskForm, {
 import TagPill from '../components/TagPill';
 import { useProjectSeries, useProjectTags } from '../hooks/useProjects';
 import {
+  useCreateSubtemplate,
   useCreateTemplateTask,
+  useDeleteTemplate,
   useDeleteTemplateTask,
   useReplaceTemplateTasksOrder,
+  useSubtemplates,
   useTemplate,
   useTemplateTasks,
+  useTemplateTasksForTemplates,
   useUpdateTemplate,
   useUpdateTemplateTask,
 } from '../hooks/useTemplates';
 import { formatHMS, parseHMS } from '../lib/time';
 import { getSubtasks } from '../lib/calc';
+import { isParentItem } from '../lib/parentChild';
 import type { TemplateTask } from '../lib/types';
 
 function move<T>(items: T[], from: number, to: number): T[] {
@@ -59,15 +64,44 @@ function mergeTopLevelWithSubtasks(
 export default function TemplateDetail() {
   const { templateId } = useParams();
   const templateQ = useTemplate(templateId);
+  const parentTemplateQ = useTemplate(templateQ.data?.parent_id ?? undefined);
+  const subtemplatesQuery = useSubtemplates(
+    templateQ.data && isParentItem(templateQ.data) ? templateQ.data.id : undefined,
+  );
+  const subtemplates = subtemplatesQuery.data ?? [];
+  const subtemplateIds = useMemo(
+    () => subtemplates.map((subtemplate) => subtemplate.id),
+    [subtemplates],
+  );
+  const subtemplateTasksQuery = useTemplateTasksForTemplates(subtemplateIds);
+  const subtemplateTaskCountById = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const task of subtemplateTasksQuery.data ?? []) {
+      if (task.parent_id) continue;
+      counts.set(task.template_id, (counts.get(task.template_id) ?? 0) + 1);
+    }
+    return counts;
+  }, [subtemplateTasksQuery.data]);
   const tasksQ = useTemplateTasks(templateId);
   const tagsQ = useProjectTags();
   const seriesQ = useProjectSeries();
   const updateTemplate = useUpdateTemplate();
+  const createSubtemplate = useCreateSubtemplate(templateId ?? '');
+  const deleteTemplate = useDeleteTemplate();
   const createTask = useCreateTemplateTask(templateId ?? '');
   const updateTask = useUpdateTemplateTask(templateId ?? '');
   const deleteTask = useDeleteTemplateTask(templateId ?? '');
   const reorderTasks = useReplaceTemplateTasksOrder(templateId ?? '');
 
+  const [showNewSubtemplate, setShowNewSubtemplate] = useState(false);
+  const [subtemplateError, setSubtemplateError] = useState<string | null>(null);
+  const [subtemplateDraft, setSubtemplateDraft] = useState<TemplateDraft>({
+    name: '',
+    videoLengthHms: '00:10:00',
+    bufferModifier: '1',
+    tag: '',
+    series: '',
+  });
   const [editingTemplate, setEditingTemplate] = useState(false);
   const [showNewTask, setShowNewTask] = useState(false);
   const [editingTask, setEditingTask] = useState<TemplateTask | null>(null);
@@ -265,10 +299,13 @@ export default function TemplateDetail() {
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div className="space-y-1">
           <Link
-            to="/templates"
+            to={template.parent_id ? `/templates/${template.parent_id}` : '/templates'}
             className="inline-flex items-center gap-1 text-xs text-muted transition-colors hover:text-fg"
           >
-            <span aria-hidden>←</span> Templates
+            <span aria-hidden>←</span>{' '}
+            {template.parent_id
+              ? (parentTemplateQ.data?.name ?? 'Parent template')
+              : 'Templates'}
           </Link>
           <h1 className="text-3xl font-semibold tracking-tight text-fg">{template.name}</h1>
           <div className="mt-1 flex flex-wrap items-center gap-2">
@@ -397,6 +434,172 @@ export default function TemplateDetail() {
               {updateTemplate.isPending ? 'Saving…' : 'Save template'}
             </button>
           </div>
+        </div>
+      ) : null}
+
+      {isParentItem(template) ? (
+        <div className="space-y-4">
+          <div className="flex items-center justify-between gap-3">
+            <h2 className="text-lg font-semibold text-fg">Sub-templates</h2>
+            <button
+              type="button"
+              onClick={() => {
+                setSubtemplateError(null);
+                setSubtemplateDraft({
+                  name: '',
+                  videoLengthHms: '00:10:00',
+                  bufferModifier: String(template.buffer_modifier),
+                  tag: template.tag ?? '',
+                  series: template.series ?? '',
+                });
+                setShowNewSubtemplate((value) => !value);
+              }}
+              className="btn-primary"
+            >
+              {showNewSubtemplate ? 'Close' : 'Add sub-template'}
+            </button>
+          </div>
+
+          {showNewSubtemplate ? (
+            <div className="card animate-fade-in space-y-4">
+              <h3 className="text-sm font-semibold text-fg">Create sub-template</h3>
+              <div className="grid gap-4 sm:grid-cols-2">
+                <div className="space-y-1 sm:col-span-2">
+                  <label className="label">Name</label>
+                  <input
+                    className="input"
+                    value={subtemplateDraft.name}
+                    onChange={(event) =>
+                      setSubtemplateDraft((prev) => ({ ...prev, name: event.target.value }))
+                    }
+                  />
+                </div>
+                <div className="space-y-1">
+                  <label className="label">Video length (hh:mm:ss)</label>
+                  <input
+                    className="input font-sans"
+                    value={subtemplateDraft.videoLengthHms}
+                    onChange={(event) =>
+                      setSubtemplateDraft((prev) => ({
+                        ...prev,
+                        videoLengthHms: event.target.value,
+                      }))
+                    }
+                  />
+                </div>
+                <div className="space-y-1">
+                  <label className="label">Buffer modifier</label>
+                  <input
+                    type="number"
+                    min="0"
+                    step="0.1"
+                    className="input"
+                    value={subtemplateDraft.bufferModifier}
+                    onChange={(event) =>
+                      setSubtemplateDraft((prev) => ({
+                        ...prev,
+                        bufferModifier: event.target.value,
+                      }))
+                    }
+                  />
+                </div>
+              </div>
+              {subtemplateError ? (
+                <p className="text-xs text-danger">{subtemplateError}</p>
+              ) : null}
+              <div className="flex justify-end gap-2">
+                <button
+                  type="button"
+                  onClick={() => setShowNewSubtemplate(false)}
+                  className="btn-ghost"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  disabled={createSubtemplate.isPending}
+                  onClick={async () => {
+                    if (!subtemplateDraft.name.trim()) {
+                      setSubtemplateError('Name is required.');
+                      return;
+                    }
+                    const videoLength = parseHMS(subtemplateDraft.videoLengthHms);
+                    if (videoLength == null) {
+                      setSubtemplateError('Video length must be hh:mm:ss.');
+                      return;
+                    }
+                    const bufferModifier = Number.parseFloat(subtemplateDraft.bufferModifier);
+                    if (!Number.isFinite(bufferModifier) || bufferModifier <= 0) {
+                      setSubtemplateError('Buffer modifier must be > 0.');
+                      return;
+                    }
+                    try {
+                      await createSubtemplate.mutateAsync({
+                        name: subtemplateDraft.name.trim(),
+                        video_length: videoLength,
+                        buffer_modifier: bufferModifier,
+                        tag: subtemplateDraft.tag || template.tag,
+                        series: subtemplateDraft.series || template.series,
+                        target_deadline_offset_seconds: null,
+                        true_deadline_offset_seconds: null,
+                      });
+                      setShowNewSubtemplate(false);
+                      setSubtemplateError(null);
+                    } catch (error) {
+                      setSubtemplateError(
+                        error instanceof Error
+                          ? error.message
+                          : 'Failed to create sub-template.',
+                      );
+                    }
+                  }}
+                  className="btn-primary"
+                >
+                  {createSubtemplate.isPending ? 'Creating…' : 'Create sub-template'}
+                </button>
+              </div>
+            </div>
+          ) : null}
+
+          {subtemplatesQuery.isLoading ? (
+            <p className="text-sm text-muted">Loading sub-templates…</p>
+          ) : subtemplates.length === 0 ? (
+            <p className="text-sm text-muted">
+              No sub-templates yet. Add sub-templates for separate pace and task blueprints.
+            </p>
+          ) : (
+            <ul className="space-y-2">
+              {subtemplates.map((subtemplate) => (
+                <li
+                  key={subtemplate.id}
+                  className="card flex flex-wrap items-center gap-3"
+                >
+                  <div className="min-w-0 flex-1 space-y-1">
+                    <Link
+                      to={`/templates/${subtemplate.id}`}
+                      className="font-medium text-fg transition-colors hover:text-accent"
+                    >
+                      {subtemplate.name}
+                    </Link>
+                    <p className="text-xs text-muted">
+                      ×{subtemplate.buffer_modifier} buffer ·{' '}
+                      {subtemplateTaskCountById.get(subtemplate.id) ?? 0} tasks
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    className="btn-danger text-xs"
+                    onClick={async () => {
+                      if (!confirm(`Delete sub-template "${subtemplate.name}"?`)) return;
+                      await deleteTemplate.mutateAsync(subtemplate.id);
+                    }}
+                  >
+                    Delete
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
         </div>
       ) : null}
 

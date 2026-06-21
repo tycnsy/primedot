@@ -7,6 +7,7 @@ import {
   useProjectTags,
   useRestoreProject,
 } from '../hooks/useProjects';
+import { parentItems, projectTreeLabel } from '../lib/projects';
 
 function formatDateTime(iso: string | null): string {
   if (!iso) return '—';
@@ -34,6 +35,10 @@ export default function ProjectsArchive() {
   const seriesColorByName = useMemo(
     () => new Map(projectSeries.map((series) => [series.name, series.color] as const)),
     [projectSeries],
+  );
+  const parentNameById = useMemo(
+    () => new Map(parentItems(projects).map((project) => [project.id, project.name])),
+    [projects],
   );
 
   return (
@@ -87,9 +92,11 @@ export default function ProjectsArchive() {
                     <td className="border-b border-border/70 px-2 py-2 text-sm text-fg">
                       <Link
                         to={`/projects/${project.id}`}
-                        className="block w-full rounded-md px-1 py-1 font-medium text-fg transition-colors hover:bg-surface2/70 hover:text-accent"
+                        className={`block w-full rounded-md px-1 py-1 font-medium text-fg transition-colors hover:bg-surface2/70 hover:text-accent ${
+                          project.parent_id ? 'pl-4' : ''
+                        }`}
                       >
-                        {project.name}
+                        {projectTreeLabel(project, parentNameById)}
                       </Link>
                     </td>
                     <td className="border-b border-border/70 px-2 py-2 text-sm">

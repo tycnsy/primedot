@@ -16,6 +16,8 @@ import {
   type ProjectGroupBy,
   type ProjectSortBy,
 } from '../lib/projectGrouping';
+import { childCountByParent } from '../lib/parentChild';
+import { parentProjects } from '../lib/projects';
 import { formatHMS } from '../lib/time';
 
 type ProjectsViewTab = 'cards' | 'table';
@@ -90,9 +92,14 @@ export default function Projects() {
   const [showForm, setShowForm] = useState(false);
   const [viewPref, setViewPref] = useState(readProjectsViewPref);
 
+  const allProjects = data ?? [];
+  const subprojectCountByParent = useMemo(
+    () => childCountByParent(allProjects),
+    [allProjects],
+  );
   const projects = useMemo(
-    () => sortProjects(data ?? [], viewPref.sortBy),
-    [data, viewPref.sortBy],
+    () => sortProjects(parentProjects(allProjects), viewPref.sortBy),
+    [allProjects, viewPref.sortBy],
   );
   const tagColorByName = useMemo(
     () => new Map((projectTags.data ?? []).map((tag) => [tag.name, tag.color] as const)),
@@ -193,7 +200,7 @@ export default function Projects() {
         </p>
       ) : null}
 
-      {data && data.length === 0 && !showForm ? (
+      {data && parentProjects(data).length === 0 && !showForm ? (
         <div className="card text-center text-sm text-muted">
           No projects yet. Create your first one.
         </div>
@@ -205,9 +212,16 @@ export default function Projects() {
             <li key={project.id} className="rounded-xl">
               <Link to={`/projects/${project.id}`} className="card-interactive block group">
                 <div className="flex items-start justify-between gap-3">
-                  <h3 className="font-medium text-fg transition-colors group-hover:text-accent">
-                    {project.name}
-                  </h3>
+                  <div className="space-y-1">
+                    <h3 className="font-medium text-fg transition-colors group-hover:text-accent">
+                      {project.name}
+                    </h3>
+                    {subprojectCountByParent.get(project.id) ? (
+                      <span className="pill text-xs">
+                        {subprojectCountByParent.get(project.id)} subprojects
+                      </span>
+                    ) : null}
+                  </div>
                   <div className="flex flex-wrap items-center justify-end gap-2">
                     {project.tag ? (
                       <TagPill

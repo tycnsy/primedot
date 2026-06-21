@@ -10,6 +10,7 @@ import {
 } from '../hooks/useTemplates';
 import { useProjectSeries, useProjectTags } from '../hooks/useProjects';
 import TagPill from '../components/TagPill';
+import { childCountByParent, parentItems } from '../lib/parentChild';
 import type { ProjectTemplate } from '../lib/types';
 import { formatHMS } from '../lib/time';
 
@@ -33,8 +34,17 @@ export default function Templates() {
   const archiveTemplate = useArchiveTemplate();
   const reorderTemplates = useReorderTemplates();
   useEffect(() => {
-    setOrderedTemplates(templatesQ.data ?? []);
+    setOrderedTemplates(parentItems(templatesQ.data ?? []));
   }, [templatesQ.data]);
+
+  const allTemplates = templatesQ.data ?? [];
+  const subtemplateCountByParent = useMemo(
+    () => childCountByParent(allTemplates),
+    [allTemplates],
+  );
+  const activeSubtemplateCount = activeTemplate
+    ? (subtemplateCountByParent.get(activeTemplate.id) ?? 0)
+    : 0;
 
   const tagColorByName = useMemo(
     () => new Map((projectTags.data ?? []).map((tag) => [tag.name, tag.color] as const)),
@@ -112,6 +122,14 @@ export default function Templates() {
           <h2 className="text-lg font-semibold text-fg">
             Create project from "{activeTemplate.name}"
           </h2>
+          <p className="text-sm text-muted">
+            Creates a new project from this template blueprint.
+            {activeSubtemplateCount > 0
+              ? ` Includes ${activeSubtemplateCount} subproject${
+                  activeSubtemplateCount === 1 ? '' : 's'
+                }.`
+              : null}
+          </p>
           <div className="space-y-1">
             <label className="label" htmlFor="template-project-name">
               Project name
@@ -208,7 +226,14 @@ export default function Templates() {
             onDragEnd={() => setDraggedTemplateId(null)}
           >
             <div className="flex items-start justify-between gap-3">
-              <h3 className="font-medium text-fg">{template.name}</h3>
+              <div className="space-y-1">
+                <h3 className="font-medium text-fg">{template.name}</h3>
+                {subtemplateCountByParent.get(template.id) ? (
+                  <span className="pill text-xs">
+                    {subtemplateCountByParent.get(template.id)} sub-templates
+                  </span>
+                ) : null}
+              </div>
               <div className="flex flex-wrap items-center justify-end gap-2">
                 {template.tag ? (
                   <TagPill

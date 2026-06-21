@@ -32,6 +32,7 @@ const baseProject: Project = {
   start_date: '2026-01-01T05:00:00Z',
   archived_at: null,
   pace_hidden: false,
+  parent_id: null,
 };
 
 const baseTask = (overrides: Partial<Task>): Task => ({

@@ -3,6 +3,17 @@ import { Link } from 'react-router-dom';
 import TagPill from '../components/TagPill';
 import { useProjectSeries, useProjectTags } from '../hooks/useProjects';
 import { useArchivedTemplates, useRestoreTemplate } from '../hooks/useTemplates';
+import { parentItems } from '../lib/parentChild';
+import type { ProjectTemplate } from '../lib/types';
+
+function templateTreeLabel(
+  template: Pick<ProjectTemplate, 'name' | 'parent_id'>,
+  parentNameById: Map<string, string>,
+): string {
+  if (!template.parent_id) return template.name;
+  const parentName = parentNameById.get(template.parent_id);
+  return parentName ? `${template.name} (${parentName})` : template.name;
+}
 
 function formatDateTime(iso: string | null): string {
   if (!iso) return '—';
@@ -30,6 +41,13 @@ export default function TemplatesArchive() {
   const seriesColorByName = useMemo(
     () => new Map(projectSeries.map((series) => [series.name, series.color] as const)),
     [projectSeries],
+  );
+  const parentNameById = useMemo(
+    () =>
+      new Map(
+        parentItems(templates).map((template) => [template.id, template.name] as const),
+      ),
+    [templates],
   );
 
   return (
@@ -83,9 +101,11 @@ export default function TemplatesArchive() {
                     <td className="border-b border-border/70 px-2 py-2 text-sm text-fg">
                       <Link
                         to={`/templates/${template.id}`}
-                        className="block w-full rounded-md px-1 py-1 font-medium text-fg transition-colors hover:bg-surface2/70 hover:text-accent"
+                        className={`block w-full rounded-md px-1 py-1 font-medium text-fg transition-colors hover:bg-surface2/70 hover:text-accent ${
+                          template.parent_id ? 'pl-4' : ''
+                        }`}
                       >
-                        {template.name}
+                        {templateTreeLabel(template, parentNameById)}
                       </Link>
                     </td>
                     <td className="border-b border-border/70 px-2 py-2 text-sm">

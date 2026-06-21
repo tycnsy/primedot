@@ -8,6 +8,7 @@ import { useTasksForProjects } from '../hooks/useTasks';
 import { useTicker } from '../hooks/useTicker';
 import { currentPace, currentPaceEnd, paceMargin } from '../lib/calc';
 import { sortProjects } from '../lib/projectGrouping';
+import { paceEligibleProjects } from '../lib/projects';
 import { formatHMS } from '../lib/time';
 import type { Task } from '../lib/types';
 import { useEffect, useMemo, useState } from 'react';
@@ -50,7 +51,7 @@ export default function ProjectsPace() {
   const { data: projects = [], isLoading: projectsLoading, error: projectsError } =
     useProjects();
   const sortedProjects = useMemo(
-    () => sortProjects(projects, 'due_date'),
+    () => sortProjects(paceEligibleProjects(projects), 'due_date'),
     [projects],
   );
   const projectIds = sortedProjects.map((project) => project.id);

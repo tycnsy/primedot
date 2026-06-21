@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom';
 import { format } from 'date-fns';
 import { currentPace, currentPaceEnd, paceMargin } from '../lib/calc';
 import { sortProjects } from '../lib/projectGrouping';
+import { paceEligibleProjects } from '../lib/projects';
 import { formatHMS } from '../lib/time';
 import { useProjects } from '../hooks/useProjects';
 import { usePaceSettingsForProjects } from '../hooks/usePaceSettings';
@@ -38,7 +39,7 @@ export default function RightPaceSidebar({
   const { data: projects = [], isLoading: projectsLoading, error: projectsError } =
     useProjects();
   const sortedProjects = useMemo(
-    () => sortProjects(projects, 'due_date'),
+    () => sortProjects(paceEligibleProjects(projects), 'due_date'),
     [projects],
   );
   const { hideModeProjectIds, hiddenProjectIds, toggleProjectHidden } =

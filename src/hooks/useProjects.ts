@@ -18,6 +18,8 @@ const archivedProjectsKey = (userId: string | undefined) =>
 const allProjectsKey = (userId: string | undefined) =>
   ['projects', 'all', userId] as const;
 const projectKey = (id: string) => ['project', id] as const;
+const subprojectsKey = (parentId: string | undefined) =>
+  ['subprojects', parentId] as const;
 const projectTagsKey = (userId: string | undefined) =>
   ['project_tags', userId] as const;
 const projectSeriesKey = (userId: string | undefined) =>
@@ -250,37 +252,98 @@ export function useProjectSeries() {
   });
 }
 
+export function useSubprojects(parentId: string | undefined) {
+  return useQuery({
+    queryKey: subprojectsKey(parentId),
+    enabled: !!parentId,
+    queryFn: async (): Promise<Project[]> => {
+      const { data, error } = await supabase
+        .from('projects')
+        .select('*')
+        .eq('parent_id', parentId!)
+        .is('archived_at', null)
+        .order('sort_order', { ascending: true })
+        .order('created_at', { ascending: true });
+      if (error) throw error;
+      return (data ?? []) as Project[];
+    },
+    ...paceRefreshQueryOptions,
+  });
+}
+
+async function getParentTagSeries(
+  parentId: string,
+): Promise<{ tag: string | null; series: string | null }> {
+  const { data, error } = await supabase
+    .from('projects')
+    .select('tag, series')
+    .eq('id', parentId)
+    .single();
+  if (error) throw error;
+  return {
+    tag: normalizeTag(data?.tag),
+    series: normalizeSeries(data?.series),
+  };
+}
+
+async function syncSubprojectTagSeries(
+  parentId: string,
+  tag: string | null,
+  series: string | null,
+): Promise<void> {
+  const { error } = await supabase
+    .from('projects')
+    .update({ tag, series })
+    .eq('parent_id', parentId);
+  if (error) throw error;
+}
+
 export function useCreateProject() {
   const qc = useQueryClient();
   const { user } = useAuth();
   return useMutation({
     mutationFn: async (input: ProjectInput) => {
       if (!user) throw new Error('Not signed in');
-      const tag = normalizeTag(input.tag);
-      const series = normalizeSeries(input.series);
+      const parentId = input.parent_id ?? null;
+      let tag = normalizeTag(input.tag);
+      let series = normalizeSeries(input.series);
+      if (parentId) {
+        const inherited = await getParentTagSeries(parentId);
+        tag = inherited.tag;
+        series = inherited.series;
+      }
       const notes = normalizeNotes(input.notes);
       await ensureProjectTag(user.id, tag);
       await ensureProjectSeries(user.id, series);
-      const { data: lastProject, error: lastProjectError } = await supabase
+
+      let sortOrderQuery = supabase
         .from('projects')
         .select('sort_order')
-        .eq('user_id', user.id)
+        .eq('user_id', user.id);
+      if (parentId) {
+        sortOrderQuery = sortOrderQuery.eq('parent_id', parentId);
+      } else {
+        sortOrderQuery = sortOrderQuery.is('parent_id', null);
+      }
+      const { data: lastProject, error: lastProjectError } = await sortOrderQuery
         .order('sort_order', { ascending: false })
         .limit(1)
         .maybeSingle();
       const isLegacyDb = isMissingSortOrderColumn(lastProjectError);
       if (lastProjectError && !isLegacyDb) throw lastProjectError;
 
+      const { parent_id: _ignored, ...projectFields } = input;
       const { data, error } = await supabase
         .from('projects')
         .insert({
-          ...input,
+          ...projectFields,
           sync_true_deadline_with_due_date:
             input.sync_true_deadline_with_due_date ?? true,
           tag,
           series,
           notes,
           user_id: user.id,
+          parent_id: parentId,
           ...(isLegacyDb ? {} : { sort_order: (lastProject?.sort_order ?? -1) + 1 }),
         })
         .select()
@@ -288,12 +351,15 @@ export function useCreateProject() {
       if (error) throw error;
       return data as Project;
     },
-    onSuccess: () => {
+    onSuccess: (project) => {
       qc.invalidateQueries({ queryKey: projectsKey(user?.id) });
       qc.invalidateQueries({ queryKey: archivedProjectsKey(user?.id) });
       qc.invalidateQueries({ queryKey: allProjectsKey(user?.id) });
       qc.invalidateQueries({ queryKey: projectTagsKey(user?.id) });
       qc.invalidateQueries({ queryKey: projectSeriesKey(user?.id) });
+      if (project.parent_id) {
+        qc.invalidateQueries({ queryKey: subprojectsKey(project.parent_id) });
+      }
     },
   });
 }
@@ -318,6 +384,20 @@ export function useUpdateProject() {
         ...(patch.notes === undefined ? {} : { notes: normalizeNotes(patch.notes) }),
       };
       if (!user) throw new Error('Not signed in');
+
+      const { data: existing, error: existingError } = await supabase
+        .from('projects')
+        .select('id, parent_id')
+        .eq('id', id)
+        .single();
+      if (existingError) throw existingError;
+
+      if (existing.parent_id) {
+        const inherited = await getParentTagSeries(existing.parent_id);
+        normalizedPatch.tag = inherited.tag;
+        normalizedPatch.series = inherited.series;
+      }
+
       await ensureProjectTag(user.id, normalizedPatch.tag ?? null);
       await ensureProjectSeries(user.id, normalizedPatch.series ?? null);
       const { data, error } = await supabase
@@ -328,6 +408,14 @@ export function useUpdateProject() {
         .single();
       if (error) throw error;
       const project = data as Project;
+
+      const tagOrSeriesChanged =
+        !existing.parent_id &&
+        (Object.prototype.hasOwnProperty.call(patch, 'tag') ||
+          Object.prototype.hasOwnProperty.call(patch, 'series'));
+      if (tagOrSeriesChanged) {
+        await syncSubprojectTagSeries(project.id, project.tag, project.series);
+      }
       const dueDateProvided = Object.prototype.hasOwnProperty.call(
         normalizedPatch,
         'due_date',
@@ -347,6 +435,9 @@ export function useUpdateProject() {
       qc.invalidateQueries({ queryKey: projectKey(project.id) });
       qc.invalidateQueries({ queryKey: projectTagsKey(user?.id) });
       qc.invalidateQueries({ queryKey: projectSeriesKey(user?.id) });
+      if (!project.parent_id) {
+        qc.invalidateQueries({ queryKey: subprojectsKey(project.id) });
+      }
       if (syncedPace === undefined) return;
       if (syncedPace) {
         qc.setQueryData<PaceSettings | null>(paceKey(project.id), syncedPace);
@@ -402,6 +493,11 @@ export function useArchiveProject() {
         .select()
         .single();
       if (error) throw error;
+      const { error: childrenError } = await supabase
+        .from('projects')
+        .update({ archived_at: archivedAt })
+        .eq('parent_id', id);
+      if (childrenError) throw childrenError;
       return data as Project;
     },
     onSuccess: (project) => {
@@ -409,6 +505,7 @@ export function useArchiveProject() {
       qc.invalidateQueries({ queryKey: archivedProjectsKey(user?.id) });
       qc.invalidateQueries({ queryKey: allProjectsKey(user?.id) });
       qc.invalidateQueries({ queryKey: projectKey(project.id) });
+      qc.invalidateQueries({ queryKey: subprojectsKey(project.id) });
     },
   });
 }
@@ -425,6 +522,11 @@ export function useRestoreProject() {
         .select()
         .single();
       if (error) throw error;
+      const { error: childrenError } = await supabase
+        .from('projects')
+        .update({ archived_at: null })
+        .eq('parent_id', id);
+      if (childrenError) throw childrenError;
       return data as Project;
     },
     onSuccess: (project) => {
@@ -432,6 +534,7 @@ export function useRestoreProject() {
       qc.invalidateQueries({ queryKey: archivedProjectsKey(user?.id) });
       qc.invalidateQueries({ queryKey: allProjectsKey(user?.id) });
       qc.invalidateQueries({ queryKey: projectKey(project.id) });
+      qc.invalidateQueries({ queryKey: subprojectsKey(project.id) });
     },
   });
 }

@@ -1,4 +1,5 @@
 import { useMemo, useState, type FormEvent } from 'react';
+import TagPill from './TagPill';
 import type {
   Project,
   ProjectInput,
@@ -11,6 +12,9 @@ interface Props {
   initial?: Project | null;
   tagItems?: ProjectTag[];
   seriesItems?: ProjectSeries[];
+  tagSeriesParent?: Pick<Project, 'tag' | 'series'> | null;
+  tagColorByName?: Map<string, string>;
+  seriesColorByName?: Map<string, string>;
   onSubmit: (input: ProjectInput) => Promise<void> | void;
   onCancel?: () => void;
   submitLabel?: string;
@@ -41,10 +45,15 @@ export default function ProjectForm({
   initial,
   tagItems = [],
   seriesItems = [],
+  tagSeriesParent = null,
+  tagColorByName,
+  seriesColorByName,
   onSubmit,
   onCancel,
   submitLabel = 'Save',
 }: Props) {
+  const inheritedTag = tagSeriesParent?.tag ?? null;
+  const inheritedSeries = tagSeriesParent?.series ?? null;
   const [name, setName] = useState(initial?.name ?? '');
   const [videoLengthStr, setVideoLengthStr] = useState(
     initial ? formatHMS(initial.video_length) : '00:10:00',
@@ -118,8 +127,8 @@ export default function ProjectForm({
           initial?.sync_true_deadline_with_due_date ?? true,
         start_date: fromLocalDateTimeInput(startDateLocal),
         buffer_modifier: buffer,
-        tag: tag.trim() || null,
-        series: series.trim() || null,
+        tag: tagSeriesParent ? inheritedTag : tag.trim() || null,
+        series: tagSeriesParent ? inheritedSeries : series.trim() || null,
         notes: initial?.notes ?? null,
       });
     } catch (err) {
@@ -196,41 +205,67 @@ export default function ProjectForm({
             onChange={(e) => setDueDateLocal(e.target.value)}
           />
         </div>
-        <div className="space-y-1">
-          <label className="label" htmlFor="proj-tag">
-            Tag
-          </label>
-          <input
-            id="proj-tag"
-            className="input"
-            value={tag}
-            onChange={(e) => setTag(e.target.value)}
-            placeholder="optional"
-            list="project-tag-options"
-          />
-          <datalist id="project-tag-options">
-            {tagOptions.map((option) => (
-              <option key={option} value={option} />
-            ))}
-          </datalist>
-        </div>
-        <div className="space-y-1">
-          <label className="label" htmlFor="proj-series">
-            Series
-          </label>
-          <input
-            id="proj-series"
-            className="input"
-            value={series}
-            onChange={(e) => handleSeriesChange(e.target.value)}
-            placeholder="optional"
-            list="project-series-options"
-          />
-          <datalist id="project-series-options">
-            {seriesOptions.map((option) => (
-              <option key={option} value={option} />
-            ))}
-          </datalist>
+        <div className="space-y-1 sm:col-span-2">
+          {tagSeriesParent ? (
+            <div className="space-y-2 rounded-lg border border-border/70 bg-surface2/40 px-3 py-2">
+              <p className="text-xs text-muted">Tag and series are inherited from the parent project.</p>
+              <div className="flex flex-wrap items-center gap-2">
+                {inheritedTag ? (
+                  <TagPill
+                    name={inheritedTag}
+                    color={tagColorByName?.get(inheritedTag) ?? null}
+                  />
+                ) : (
+                  <span className="text-sm text-muted">No tag</span>
+                )}
+                {inheritedSeries ? (
+                  <TagPill
+                    name={inheritedSeries}
+                    color={seriesColorByName?.get(inheritedSeries) ?? null}
+                  />
+                ) : null}
+              </div>
+            </div>
+          ) : (
+            <>
+              <div className="space-y-1">
+                <label className="label" htmlFor="proj-tag">
+                  Tag
+                </label>
+                <input
+                  id="proj-tag"
+                  className="input"
+                  value={tag}
+                  onChange={(e) => setTag(e.target.value)}
+                  placeholder="optional"
+                  list="project-tag-options"
+                />
+                <datalist id="project-tag-options">
+                  {tagOptions.map((option) => (
+                    <option key={option} value={option} />
+                  ))}
+                </datalist>
+              </div>
+              <div className="space-y-1">
+                <label className="label" htmlFor="proj-series">
+                  Series
+                </label>
+                <input
+                  id="proj-series"
+                  className="input"
+                  value={series}
+                  onChange={(e) => handleSeriesChange(e.target.value)}
+                  placeholder="optional"
+                  list="project-series-options"
+                />
+                <datalist id="project-series-options">
+                  {seriesOptions.map((option) => (
+                    <option key={option} value={option} />
+                  ))}
+                </datalist>
+              </div>
+            </>
+          )}
         </div>
       </div>
 

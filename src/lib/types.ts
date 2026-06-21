@@ -18,6 +18,7 @@ export interface Project {
   start_date: string;
   archived_at: string | null;
   pace_hidden: boolean;
+  parent_id: string | null;
 }
 
 export interface ProjectTag {
@@ -87,6 +88,7 @@ export interface ProjectTemplate {
   archived_at: string | null;
   sort_order: number;
   created_at: string;
+  parent_id: string | null;
 }
 
 export interface TemplateTask {
@@ -119,7 +121,9 @@ export type ProjectInput = Pick<
   | 'tag'
   | 'series'
   | 'notes'
->;
+> & {
+  parent_id?: string | null;
+};
 
 export type ProjectUpdateInput = Partial<
   Pick<
@@ -152,7 +156,9 @@ export type ProjectTemplateInput = Pick<
   | 'series'
   | 'target_deadline_offset_seconds'
   | 'true_deadline_offset_seconds'
->;
+> & {
+  parent_id?: string | null;
+};
 
 export type TemplateTaskInput = Omit<TemplateTask, 'id' | 'created_at'>;
 export type ProjectTemplateUpdateInput = Partial<ProjectTemplateInput>;

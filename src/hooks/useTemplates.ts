@@ -20,6 +20,8 @@ const archivedTemplatesKey = (userId: string | undefined) =>
 const allTemplatesKey = (userId: string | undefined) =>
   ['project_templates', 'all', userId] as const;
 const templateKey = (templateId: string) => ['project_templates', templateId] as const;
+const subtemplatesKey = (parentTemplateId: string | undefined) =>
+  ['subtemplates', parentTemplateId] as const;
 const templateTasksManyKey = (templateIds: string[]) =>
   ['template_tasks', 'many', ...templateIds] as const;
 const templateTasksKey = (templateId: string) =>
@@ -240,6 +242,182 @@ async function insertProjectTasksFromTemplateTasks(
   if (subtasksError) throw subtasksError;
 }
 
+async function paceOffsetsFromProject(projectId: string): Promise<{
+  target_deadline_offset_seconds: number | null;
+  true_deadline_offset_seconds: number | null;
+}> {
+  const { data, error } = await supabase
+    .from('pace_settings')
+    .select('target_deadline,true_deadline')
+    .eq('project_id', projectId)
+    .maybeSingle();
+  if (error) throw error;
+  if (!data) {
+    return {
+      target_deadline_offset_seconds: null,
+      true_deadline_offset_seconds: null,
+    };
+  }
+  const now = Date.now();
+  return {
+    target_deadline_offset_seconds: Math.round(
+      (new Date(data.target_deadline).getTime() - now) / 1000,
+    ),
+    true_deadline_offset_seconds: Math.round(
+      (new Date(data.true_deadline).getTime() - now) / 1000,
+    ),
+  };
+}
+
+async function nextTemplateSortOrder(
+  userId: string,
+  parentId: string | null,
+): Promise<{ sortOrder: number; isLegacyDb: boolean }> {
+  let query = supabase
+    .from('project_templates')
+    .select('sort_order')
+    .eq('user_id', userId);
+  if (parentId) {
+    query = query.eq('parent_id', parentId);
+  } else {
+    query = query.is('parent_id', null);
+  }
+  const { data: lastTemplate, error: lastTemplateError } = await query
+    .order('sort_order', { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  const isLegacyDb = isMissingSortOrderColumn(lastTemplateError);
+  if (lastTemplateError && !isLegacyDb) throw lastTemplateError;
+  return {
+    sortOrder: (lastTemplate?.sort_order ?? -1) + 1,
+    isLegacyDb,
+  };
+}
+
+async function insertTemplateRow(
+  userId: string,
+  input: ProjectTemplateInput,
+  parentId: string | null,
+): Promise<ProjectTemplate> {
+  const { sortOrder, isLegacyDb } = await nextTemplateSortOrder(userId, parentId);
+  const { parent_id: _ignored, ...templateFields } = input;
+  const { data, error } = await supabase
+    .from('project_templates')
+    .insert({
+      ...templateFields,
+      user_id: userId,
+      archived_at: null,
+      parent_id: parentId,
+      ...(isLegacyDb ? {} : { sort_order: sortOrder }),
+    })
+    .select()
+    .single();
+  if (error) throw error;
+  return data as ProjectTemplate;
+}
+
+async function createProjectFromTemplateRecord(
+  userId: string,
+  template: ProjectTemplate,
+  projectInput: Partial<ProjectInput> | undefined,
+  parentProjectId: string | null,
+): Promise<Project> {
+  const now = Date.now();
+  const resolvedInput: ProjectInput = {
+    name: projectInput?.name?.trim() || template.name,
+    video_length: projectInput?.video_length ?? template.video_length,
+    due_date:
+      projectInput?.due_date === undefined ? null : projectInput.due_date ?? null,
+    sync_true_deadline_with_due_date:
+      projectInput?.sync_true_deadline_with_due_date ?? true,
+    start_date: projectInput?.start_date ?? defaultStartDateIso(),
+    buffer_modifier: projectInput?.buffer_modifier ?? template.buffer_modifier,
+    tag:
+      projectInput?.tag === undefined
+        ? normalizeTag(template.tag)
+        : normalizeTag(projectInput.tag),
+    series:
+      projectInput?.series === undefined
+        ? normalizeTag(template.series)
+        : normalizeTag(projectInput.series),
+    notes:
+      projectInput?.notes === undefined ? null : normalizeNotes(projectInput.notes),
+  };
+
+  if (parentProjectId) {
+    const { data: parentProject, error: parentError } = await supabase
+      .from('projects')
+      .select('tag, series')
+      .eq('id', parentProjectId)
+      .single();
+    if (parentError) throw parentError;
+    resolvedInput.tag = normalizeTag(parentProject?.tag);
+    resolvedInput.series = normalizeTag(parentProject?.series);
+  }
+
+  await ensureProjectTag(userId, resolvedInput.tag);
+  await ensureProjectSeries(userId, resolvedInput.series);
+
+  let sortOrder = 0;
+  if (parentProjectId) {
+    const { data: lastProject, error: lastProjectError } = await supabase
+      .from('projects')
+      .select('sort_order')
+      .eq('parent_id', parentProjectId)
+      .order('sort_order', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    if (lastProjectError) throw lastProjectError;
+    sortOrder = (lastProject?.sort_order ?? -1) + 1;
+  }
+
+  const { data: project, error: projectError } = await supabase
+    .from('projects')
+    .insert({
+      ...resolvedInput,
+      user_id: userId,
+      parent_id: parentProjectId,
+      sort_order: sortOrder,
+    })
+    .select()
+    .single();
+  if (projectError) throw projectError;
+  const projectId = (project as Project).id;
+
+  const { data: templateTasks, error: readTemplateTasksError } = await supabase
+    .from('template_tasks')
+    .select('*')
+    .eq('template_id', template.id)
+    .order('sort_order', { ascending: true })
+    .order('created_at', { ascending: true });
+  if (readTemplateTasksError) throw readTemplateTasksError;
+
+  if ((templateTasks ?? []).length > 0) {
+    await insertProjectTasksFromTemplateTasks(
+      projectId,
+      templateTasks as TemplateTask[],
+    );
+  }
+
+  if (
+    template.target_deadline_offset_seconds != null &&
+    template.true_deadline_offset_seconds != null
+  ) {
+    const { error: paceInsertError } = await supabase.from('pace_settings').insert({
+      project_id: projectId,
+      target_deadline: new Date(
+        now + template.target_deadline_offset_seconds * 1000,
+      ).toISOString(),
+      true_deadline: new Date(
+        now + template.true_deadline_offset_seconds * 1000,
+      ).toISOString(),
+    });
+    if (paceInsertError) throw paceInsertError;
+  }
+
+  return project as Project;
+}
+
 export function useTemplates() {
   const { user } = useAuth();
   return useQuery({
@@ -355,6 +533,24 @@ export function useTemplateTasks(templateId: string | undefined) {
   });
 }
 
+export function useSubtemplates(parentTemplateId: string | undefined) {
+  return useQuery({
+    queryKey: subtemplatesKey(parentTemplateId),
+    enabled: !!parentTemplateId,
+    queryFn: async (): Promise<ProjectTemplate[]> => {
+      const { data, error } = await supabase
+        .from('project_templates')
+        .select('*')
+        .eq('parent_id', parentTemplateId!)
+        .is('archived_at', null)
+        .order('sort_order', { ascending: true })
+        .order('created_at', { ascending: true });
+      if (error) throw error;
+      return (data ?? []) as ProjectTemplate[];
+    },
+  });
+}
+
 export function useCreateTemplateFromProject() {
   const qc = useQueryClient();
   const { user } = useAuth();
@@ -363,57 +559,93 @@ export function useCreateTemplateFromProject() {
       name,
       project,
       tasks,
+      subprojects,
     }: {
       name: string;
       project: Project;
       tasks: Task[];
+      subprojects?: { project: Project; tasks: Task[] }[];
     }) => {
       if (!user) throw new Error('Not signed in');
-      const { data: lastTemplate, error: lastTemplateError } = await supabase
-        .from('project_templates')
-        .select('sort_order')
-        .eq('user_id', user.id)
-        .is('archived_at', null)
-        .order('sort_order', { ascending: false })
-        .limit(1)
-        .maybeSingle();
-      const isLegacyDb = isMissingSortOrderColumn(lastTemplateError);
-      if (lastTemplateError && !isLegacyDb) throw lastTemplateError;
 
-      const templateInput: ProjectTemplateInput = {
-        name: name.trim(),
-        video_length: project.video_length,
-        buffer_modifier: project.buffer_modifier,
-        tag: project.tag,
-        series: project.series,
-        target_deadline_offset_seconds: null,
-        true_deadline_offset_seconds: null,
-      };
+      const template = await insertTemplateRow(
+        user.id,
+        {
+          name: name.trim(),
+          video_length: project.video_length,
+          buffer_modifier: project.buffer_modifier,
+          tag: project.tag,
+          series: project.series,
+          target_deadline_offset_seconds: null,
+          true_deadline_offset_seconds: null,
+        },
+        null,
+      );
 
-      const { data: template, error: templateError } = await supabase
-        .from('project_templates')
-        .insert({
-          ...templateInput,
-          user_id: user.id,
-          archived_at: null,
-          ...(isLegacyDb ? {} : { sort_order: (lastTemplate?.sort_order ?? -1) + 1 }),
-        })
-        .select()
-        .single();
-      if (templateError) throw templateError;
-
-      const templateId = (template as ProjectTemplate).id;
       if (tasks.length > 0) {
-        await insertTemplateTasksFromProjectTasks(templateId, tasks);
+        await insertTemplateTasksFromProjectTasks(template.id, tasks);
       }
 
-      return template as ProjectTemplate;
+      if (subprojects?.length) {
+        for (const subproject of subprojects) {
+          const offsets = await paceOffsetsFromProject(subproject.project.id);
+          const childTemplate = await insertTemplateRow(
+            user.id,
+            {
+              name: subproject.project.name,
+              video_length: subproject.project.video_length,
+              buffer_modifier: subproject.project.buffer_modifier,
+              tag: subproject.project.tag,
+              series: subproject.project.series,
+              target_deadline_offset_seconds: offsets.target_deadline_offset_seconds,
+              true_deadline_offset_seconds: offsets.true_deadline_offset_seconds,
+              parent_id: template.id,
+            },
+            template.id,
+          );
+          if (subproject.tasks.length > 0) {
+            await insertTemplateTasksFromProjectTasks(
+              childTemplate.id,
+              subproject.tasks,
+            );
+          }
+        }
+      }
+
+      return template;
+    },
+    onSuccess: (template) => {
+      qc.invalidateQueries({ queryKey: templatesKey(user?.id) });
+      qc.invalidateQueries({ queryKey: archivedTemplatesKey(user?.id) });
+      qc.invalidateQueries({ queryKey: allTemplatesKey(user?.id) });
+      qc.invalidateQueries({ queryKey: subtemplatesKey(template.id) });
+      qc.invalidateQueries({ queryKey: ['template_tasks'] });
+    },
+  });
+}
+
+export function useCreateSubtemplate(parentTemplateId: string) {
+  const qc = useQueryClient();
+  const { user } = useAuth();
+  return useMutation({
+    mutationFn: async (input: ProjectTemplateInput) => {
+      if (!user) throw new Error('Not signed in');
+      const template = await insertTemplateRow(
+        user.id,
+        {
+          ...input,
+          parent_id: parentTemplateId,
+        },
+        parentTemplateId,
+      );
+      return template;
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: templatesKey(user?.id) });
       qc.invalidateQueries({ queryKey: archivedTemplatesKey(user?.id) });
       qc.invalidateQueries({ queryKey: allTemplatesKey(user?.id) });
-      qc.invalidateQueries({ queryKey: ['template_tasks'] });
+      qc.invalidateQueries({ queryKey: subtemplatesKey(parentTemplateId) });
+      qc.invalidateQueries({ queryKey: templateKey(parentTemplateId) });
     },
   });
 }
@@ -430,78 +662,31 @@ export function useCreateProjectFromTemplate() {
       projectInput?: Partial<ProjectInput>;
     }) => {
       if (!user) throw new Error('Not signed in');
-      const now = Date.now();
-      const resolvedInput: ProjectInput = {
-        name: projectInput?.name?.trim() || template.name,
-        video_length: projectInput?.video_length ?? template.video_length,
-        due_date:
-          projectInput?.due_date === undefined
-            ? null
-            : projectInput.due_date ?? null,
-        sync_true_deadline_with_due_date:
-          projectInput?.sync_true_deadline_with_due_date ?? true,
-        start_date: projectInput?.start_date ?? defaultStartDateIso(),
-        buffer_modifier:
-          projectInput?.buffer_modifier ?? template.buffer_modifier,
-        tag:
-          projectInput?.tag === undefined
-            ? normalizeTag(template.tag)
-            : normalizeTag(projectInput.tag),
-        series:
-          projectInput?.series === undefined
-            ? normalizeTag(template.series)
-            : normalizeTag(projectInput.series),
-        notes:
-          projectInput?.notes === undefined
-            ? null
-            : normalizeNotes(projectInput.notes),
-      };
+      const project = await createProjectFromTemplateRecord(
+        user.id,
+        template,
+        projectInput,
+        null,
+      );
 
-      await ensureProjectTag(user.id, resolvedInput.tag);
-      await ensureProjectSeries(user.id, resolvedInput.series);
-
-      const { data: project, error: projectError } = await supabase
-        .from('projects')
-        .insert({ ...resolvedInput, user_id: user.id })
-        .select()
-        .single();
-      if (projectError) throw projectError;
-      const projectId = (project as Project).id;
-
-      const { data: templateTasks, error: readTemplateTasksError } = await supabase
-        .from('template_tasks')
+      const { data: childTemplates, error: childTemplatesError } = await supabase
+        .from('project_templates')
         .select('*')
-        .eq('template_id', template.id)
+        .eq('parent_id', template.id)
         .order('sort_order', { ascending: true })
         .order('created_at', { ascending: true });
-      if (readTemplateTasksError) throw readTemplateTasksError;
+      if (childTemplatesError) throw childTemplatesError;
 
-      if ((templateTasks ?? []).length > 0) {
-        await insertProjectTasksFromTemplateTasks(
-          projectId,
-          templateTasks as TemplateTask[],
+      for (const childTemplate of (childTemplates ?? []) as ProjectTemplate[]) {
+        await createProjectFromTemplateRecord(
+          user.id,
+          childTemplate,
+          { name: childTemplate.name },
+          project.id,
         );
       }
 
-      if (
-        template.target_deadline_offset_seconds != null &&
-        template.true_deadline_offset_seconds != null
-      ) {
-        const { error: paceInsertError } = await supabase
-          .from('pace_settings')
-          .insert({
-            project_id: projectId,
-            target_deadline: new Date(
-              now + template.target_deadline_offset_seconds * 1000,
-            ).toISOString(),
-            true_deadline: new Date(
-              now + template.true_deadline_offset_seconds * 1000,
-            ).toISOString(),
-          });
-        if (paceInsertError) throw paceInsertError;
-      }
-
-      return project as Project;
+      return project;
     },
     onSuccess: (project) => {
       qc.invalidateQueries({ queryKey: projectsKey(user?.id) });
@@ -509,6 +694,7 @@ export function useCreateProjectFromTemplate() {
       qc.invalidateQueries({ queryKey: paceKey(project.id) });
       qc.invalidateQueries({ queryKey: projectTagsKey(user?.id) });
       qc.invalidateQueries({ queryKey: projectSeriesKey(user?.id) });
+      qc.invalidateQueries({ queryKey: ['subprojects', project.id] });
     },
   });
 }
@@ -588,6 +774,11 @@ export function useArchiveTemplate() {
         .select('*')
         .single();
       if (error) throw error;
+      const { error: childrenError } = await supabase
+        .from('project_templates')
+        .update({ archived_at: archivedAt })
+        .eq('parent_id', id);
+      if (childrenError) throw childrenError;
       return data as ProjectTemplate;
     },
     onSuccess: (template) => {
@@ -595,6 +786,7 @@ export function useArchiveTemplate() {
       qc.invalidateQueries({ queryKey: archivedTemplatesKey(user?.id) });
       qc.invalidateQueries({ queryKey: allTemplatesKey(user?.id) });
       qc.invalidateQueries({ queryKey: templateKey(template.id) });
+      qc.invalidateQueries({ queryKey: subtemplatesKey(template.id) });
     },
   });
 }
@@ -611,6 +803,11 @@ export function useRestoreTemplate() {
         .select('*')
         .single();
       if (error) throw error;
+      const { error: childrenError } = await supabase
+        .from('project_templates')
+        .update({ archived_at: null })
+        .eq('parent_id', id);
+      if (childrenError) throw childrenError;
       return data as ProjectTemplate;
     },
     onSuccess: (template) => {
@@ -618,6 +815,7 @@ export function useRestoreTemplate() {
       qc.invalidateQueries({ queryKey: archivedTemplatesKey(user?.id) });
       qc.invalidateQueries({ queryKey: allTemplatesKey(user?.id) });
       qc.invalidateQueries({ queryKey: templateKey(template.id) });
+      qc.invalidateQueries({ queryKey: subtemplatesKey(template.id) });
     },
   });
 }

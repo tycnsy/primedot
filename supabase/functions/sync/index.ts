@@ -104,12 +104,13 @@ async function handleListProjects(userId: string): Promise<Response> {
     created_at: string;
     archived_at: string | null;
     pace_hidden: boolean | number | null;
+    parent_id: string | null;
   };
 
   const projectsResUnknown = await admin
     .from('projects')
     .select(
-      'id,name,video_length,due_date,buffer_modifier,tag,series,notes,sort_order,created_at,archived_at,pace_hidden',
+      'id,name,video_length,due_date,buffer_modifier,tag,series,notes,sort_order,created_at,archived_at,pace_hidden,parent_id',
     )
     .eq('user_id', userId)
     .is('archived_at', null)

@@ -32,7 +32,14 @@ All time values are stored as **integers representing total seconds**. The UI co
 | `due_date` | timestamptz (nullable) | Optional project deadline with date and time. |
 | `buffer_modifier` | numeric | Multiplier (e.g. `1.2`, `2.5`, `12`). See Buffer Modifier section. |
 | `tag` | text (nullable) | Optional select-style tag. |
+| `parent_id` | uuid (FK → projects, nullable) | When set, this row is a subproject. Single-level nesting only. |
 | `created_at` | timestamptz | |
+
+Parent projects (`parent_id IS NULL`) appear in the Projects table/cards. Subprojects have their own tasks, pace settings, and due dates, and inherit their parent's tag and series.
+
+### `project_templates`
+
+Mirrors the project hierarchy: top-level templates can have child templates via `parent_id` (single-level). Saving a parent project with subprojects as a template captures the full tree. Creating a project from a parent template also creates its subprojects.
 
 ### Project — calculated properties (computed at read time, not stored)
 
