@@ -1,5 +1,4 @@
 import { useEffect, useMemo, useState } from 'react';
-import { subDays } from 'date-fns';
 import {
   Link,
   Navigate,
@@ -60,7 +59,6 @@ import type { ComplexMode, Project, Task } from '../lib/types';
 
 const NOTES_AUTOSAVE_DELAY_MS = 700;
 const EMPTY_TASKS: Task[] = [];
-const PROJECT_HEATMAP_WEEKS = 52;
 const PROJECT_LOGS_DEFAULT_LIMIT = 250;
 
 function formatDueDateTime(iso: string | null): string | null {
@@ -207,7 +205,7 @@ export default function ProjectDetail() {
   }, [tasks.data]);
 
   const heatmapSince = useMemo(
-    () => subDays(new Date(), PROJECT_HEATMAP_WEEKS * 7).toISOString(),
+    () => new Date(new Date().getFullYear(), 0, 1).toISOString(),
     [],
   );
   const projectHeatmapLogsQuery = useRealtimeLogs({
@@ -1333,7 +1331,6 @@ export default function ProjectDetail() {
               ) : (
                 <HeatmapGrid
                   logs={projectHeatmapLogsQuery.data ?? []}
-                  weeks={PROJECT_HEATMAP_WEEKS}
                   compact
                 />
               )}

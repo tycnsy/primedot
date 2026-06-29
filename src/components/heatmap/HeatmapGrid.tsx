@@ -1,9 +1,9 @@
-import { addDays, format, getDay } from 'date-fns';
+import { format, getDay } from 'date-fns';
 import { useMemo, useState, type MouseEvent } from 'react';
 import {
   DEFAULT_COLOR_OPTIONS,
-  buildHeatmapGrid,
   buildHeatmapRange,
+  buildYearGrid,
   getViewRange,
   rollingWindowSize,
   viewRangeLabel,
@@ -30,7 +30,7 @@ const WEEKDAYS = [0, 1, 2, 3, 4, 5, 6].map((i) => weekdayLabel(i));
 
 interface HeatmapGridProps {
   logs: RealtimeLog[];
-  weeks?: number;
+  year?: number;
   compact?: boolean;
   view?: HeatmapView;
   colorMode?: HeatmapColorMode;
@@ -107,7 +107,7 @@ function interactionClasses(
   selectedDateKey: string | null | undefined,
   onSelectDay: ((cell: HeatmapDayCell) => void) | undefined,
 ): string {
-  if (cell.preStart) return '';
+  if (cell.preStart || cell.future) return '';
   const selected = selectedDateKey != null && cell.dateKey === selectedDateKey;
   return [
     onSelectDay ? 'cursor-pointer hover:ring-1 hover:ring-fg/40' : '',
@@ -135,17 +135,19 @@ function SummaryHeader({
   view,
   color,
   range,
+  year,
 }: {
   totalSeconds: number;
   view: HeatmapView;
   color: HeatmapColorOptions;
   range?: { start: Date; end: Date };
+  year?: number;
 }) {
   return (
     <div className="flex flex-wrap items-center justify-between gap-2 text-sm text-muted">
       <span>
         <span className="font-medium text-fg">{formatHMS(Math.round(totalSeconds))}</span>{' '}
-        realtime {viewRangeLabel(view, range)}
+        realtime {viewRangeLabel(view, range, year)}
         {color.mode === 'goal' && color.goalSecondsPerDay > 0 ? (
           <>
             {' · '}
@@ -188,16 +190,14 @@ function CellHoverTooltip({
 /** Full year, GitHub-style: week columns × Sun–Sat rows (the "Yearly" view). */
 function YearGrid({
   logs,
-  weeks,
-  compact,
+  year,
   color,
   selectedDateKey,
   onSelectDay,
   yearlyStartDate,
 }: {
   logs: RealtimeLog[];
-  weeks: number;
-  compact?: boolean;
+  year: number;
   color: HeatmapColorOptions;
   selectedDateKey?: string | null;
   onSelectDay?: (cell: HeatmapDayCell) => void;
@@ -206,33 +206,23 @@ function YearGrid({
   const [hoverTooltip, setHoverTooltip] = useState<HoverTooltipState | null>(null);
 
   const grid = useMemo(
-    () => buildHeatmapGrid(logs, weeks, new Date(), color, yearlyStartDate ?? null),
-    [logs, weeks, color, yearlyStartDate],
+    () => buildYearGrid(logs, year, new Date(), color, yearlyStartDate ?? null),
+    [logs, year, color, yearlyStartDate],
   );
 
   const monthLabels = useMemo(() => {
     let previousMonth = -1;
     return grid.weeks.map((week) => {
-      const sunday = addDays(week.weekStart, -getDay(week.weekStart));
-      const month = sunday.getMonth();
+      const firstInYearDay = week.days.find((cell) => cell != null);
+      if (!firstInYearDay) return '';
+      const month = firstInYearDay.date.getMonth();
       if (month !== previousMonth) {
         previousMonth = month;
-        return format(sunday, 'MMM');
+        return format(firstInYearDay.date, 'MMM');
       }
       return '';
     });
   }, [grid.weeks]);
-
-  const isGoal = showGoalPercent(color);
-  const cellSize = isGoal
-    ? compact
-      ? 'h-4 w-4'
-      : 'h-5 w-5'
-    : compact
-      ? 'h-3 w-3'
-      : 'h-3.5 w-3.5';
-  const colWidth = isGoal ? (compact ? 'w-4' : 'w-5') : compact ? 'w-3' : 'w-3.5';
-  const gutterWidth = 'w-9';
 
   const handleCellMouseEnter = (
     cell: HeatmapDayCell,
@@ -242,7 +232,11 @@ function YearGrid({
   };
 
   const renderCell = (cell: HeatmapDayCell) => {
-    const className = `flex items-center justify-center rounded-sm border ${cell.preStart ? PRE_START_CLASSES : LEVEL_CLASSES[cell.level]} ${cellSize} transition-colors ${interactionClasses(cell, selectedDateKey, onSelectDay)}`;
+    if (cell.future) {
+      return <div key={cell.dateKey} className="aspect-square w-full" aria-hidden />;
+    }
+
+    const className = `flex aspect-square w-full items-center justify-center rounded-sm border ${cell.preStart ? PRE_START_CLASSES : LEVEL_CLASSES[cell.level]} transition-colors ${interactionClasses(cell, selectedDateKey, onSelectDay)}`;
 
     if (cell.preStart) {
       return (
@@ -265,59 +259,50 @@ function YearGrid({
         onMouseEnter={(e) => handleCellMouseEnter(cell, e)}
         onMouseLeave={() => setHoverTooltip(null)}
         aria-label={dayTooltip(cell, color)}
-      >
-        <GoalPercentLabel
-          cell={cell}
-          color={color}
-          className={isGoal ? (compact ? 'text-[7px]' : 'text-[8px]') : ''}
-        />
-      </button>
+      />
     );
   };
 
+  const weekCount = grid.weeks.length;
+
   return (
     <div className="space-y-3">
-      <SummaryHeader totalSeconds={grid.totalSeconds} view="yearly" color={color} />
+      <SummaryHeader totalSeconds={grid.totalSeconds} view="yearly" color={color} year={year} />
 
-      <div className="overflow-x-auto pb-1">
-        <div className="inline-flex flex-col gap-1">
-          <div className="flex gap-1">
-            <div className={`${gutterWidth} shrink-0`} />
-            {monthLabels.map((label, index) => (
-              <div
-                key={grid.weeks[index].weekStart.toISOString()}
-                className={`${colWidth} shrink-0 whitespace-nowrap text-[10px] leading-none text-muted`}
-              >
-                {label}
-              </div>
-            ))}
+      <div
+        className="grid w-full gap-[2px]"
+        style={{ gridTemplateColumns: `2.25rem repeat(${weekCount}, minmax(0, 1fr))` }}
+      >
+        <div />
+        {monthLabels.map((label, index) => (
+          <div
+            key={grid.weeks[index].weekStart.toISOString()}
+            className="overflow-visible whitespace-nowrap text-[10px] leading-none text-muted"
+          >
+            {label}
           </div>
+        ))}
 
-          <div className="flex gap-1">
-            <div className={`${gutterWidth} shrink-0 flex flex-col gap-1 text-[10px] text-muted`}>
-              {[0, 1, 2, 3, 4, 5, 6].map((row) => (
-                <div key={row} className={`flex ${cellSize} items-center leading-none`}>
-                  {row % 2 === 1 ? weekdayLabel(row) : ''}
-                </div>
-              ))}
+        {[0, 1, 2, 3, 4, 5, 6].map((row) => (
+          <div key={row} className="contents">
+            <div className="flex items-center text-[10px] leading-none text-muted">
+              {row % 2 === 1 ? weekdayLabel(row) : ''}
             </div>
-
-            {grid.weeks.map((week) => (
-              <div key={week.weekStart.toISOString()} className="flex flex-col gap-1">
-                {week.days.map((cell, rowIndex) =>
-                  cell ? (
-                    renderCell(cell)
-                  ) : (
-                    <div
-                      key={`empty-${week.weekStart.toISOString()}-${rowIndex}`}
-                      className={cellSize}
-                    />
-                  ),
-                )}
-              </div>
-            ))}
+            {grid.weeks.map((week) => {
+              const cell = week.days[row];
+              if (cell) {
+                return renderCell(cell);
+              }
+              return (
+                <div
+                  key={`empty-${week.weekStart.toISOString()}-${row}`}
+                  className="aspect-square w-full"
+                  aria-hidden
+                />
+              );
+            })}
           </div>
-        </div>
+        ))}
       </div>
 
       {hoverTooltip ? <CellHoverTooltip tooltip={hoverTooltip} color={color} /> : null}
@@ -515,8 +500,7 @@ function DayCards({
 
 export default function HeatmapGrid({
   logs,
-  weeks = 52,
-  compact,
+  year = new Date().getFullYear(),
   view = 'yearly',
   colorMode = 'relative',
   goalSecondsPerDay = 0,
@@ -561,8 +545,7 @@ export default function HeatmapGrid({
   return (
     <YearGrid
       logs={logs}
-      weeks={weeks}
-      compact={compact}
+      year={year}
       color={color}
       selectedDateKey={selectedDateKey}
       onSelectDay={onSelectDay}

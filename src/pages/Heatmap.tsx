@@ -42,6 +42,8 @@ export default function HeatmapPage() {
   const [selectedDateKey, setSelectedDateKey] = useState<string | null>(null);
   const [limit, setLimit] = useState(DEFAULT_LIMIT);
   const [rollingOffset, setRollingOffset] = useState(0);
+  const [selectedYear, setSelectedYear] = useState(() => new Date().getFullYear());
+  const currentCalendarYear = new Date().getFullYear();
 
   useEffect(() => {
     setActiveTab(tabFromUrl);
@@ -122,8 +124,13 @@ export default function HeatmapPage() {
   };
 
   const handleSelectDay = (cell: HeatmapDayCell) => {
-    if (cell.preStart) return;
+    if (cell.preStart || cell.future) return;
     setSelectedDateKey((current) => (current === cell.dateKey ? null : cell.dateKey));
+  };
+
+  const handleYearChange = (delta: number) => {
+    setSelectedYear((current) => current + delta);
+    setSelectedDateKey(null);
   };
 
   const handleShiftDays = (delta: number) => {
@@ -131,12 +138,22 @@ export default function HeatmapPage() {
     setSelectedDateKey(null);
   };
 
-  const heatmapSince = useMemo(
-    () => subDays(new Date(), HEATMAP_WEEKS * 7).toISOString(),
-    [],
-  );
+  const heatmapLogRange = useMemo(() => {
+    if (view === 'yearly') {
+      const since = new Date(selectedYear, 0, 1).toISOString();
+      const until =
+        selectedYear < currentCalendarYear
+          ? new Date(selectedYear, 11, 31, 23, 59, 59, 999).toISOString()
+          : undefined;
+      return { since, until };
+    }
+    return {
+      since: subDays(new Date(), HEATMAP_WEEKS * 7).toISOString(),
+      until: undefined as string | undefined,
+    };
+  }, [view, selectedYear, currentCalendarYear]);
 
-  const heatmapLogsQuery = useRealtimeLogs({ since: heatmapSince });
+  const heatmapLogsQuery = useRealtimeLogs(heatmapLogRange);
   const logsQuery = useRealtimeLogs({ limit });
   const tagsQuery = useProjectTags();
   const goalsQuery = useTagGoals();
@@ -302,21 +319,47 @@ export default function HeatmapPage() {
                   </select>
                 </label>
                 {view === 'yearly' ? (
-                  <label className="flex items-center gap-2 text-sm text-muted">
-                    Start date
-                    <input
-                      type="date"
-                      className="input py-1"
-                      value={settingsQuery.data?.yearly_start_date ?? ''}
-                      onChange={(e) => {
-                        const value = e.target.value;
-                        void upsertSettings.mutateAsync({
-                          yearlyStartDate: value || null,
-                        });
-                      }}
-                      disabled={upsertSettings.isPending}
-                    />
-                  </label>
+                  <>
+                    <div className="flex items-center gap-1 text-sm text-muted">
+                      <button
+                        type="button"
+                        className="btn-ghost px-2 py-1"
+                        onClick={() => handleYearChange(-1)}
+                        aria-label="Previous year"
+                        title="Previous year"
+                      >
+                        ‹
+                      </button>
+                      <span className="min-w-[3ch] text-center font-medium text-fg tabular-nums">
+                        {selectedYear}
+                      </span>
+                      <button
+                        type="button"
+                        className="btn-ghost px-2 py-1"
+                        onClick={() => handleYearChange(1)}
+                        disabled={selectedYear >= currentCalendarYear}
+                        aria-label="Next year"
+                        title="Next year"
+                      >
+                        ›
+                      </button>
+                    </div>
+                    <label className="flex items-center gap-2 text-sm text-muted">
+                      Start date
+                      <input
+                        type="date"
+                        className="input py-1"
+                        value={settingsQuery.data?.yearly_start_date ?? ''}
+                        onChange={(e) => {
+                          const value = e.target.value;
+                          void upsertSettings.mutateAsync({
+                            yearlyStartDate: value || null,
+                          });
+                        }}
+                        disabled={upsertSettings.isPending}
+                      />
+                    </label>
+                  </>
                 ) : null}
               </div>
             </div>
@@ -344,7 +387,7 @@ export default function HeatmapPage() {
             ) : (
               <HeatmapGrid
                 logs={filteredLogs}
-                weeks={HEATMAP_WEEKS}
+                year={selectedYear}
                 view={view}
                 colorMode={colorMode}
                 goalSecondsPerDay={goalSecondsPerDay}

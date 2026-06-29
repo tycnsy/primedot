@@ -130,6 +130,8 @@ export interface HeatmapDayCell {
   level: 0 | 1 | 2 | 3 | 4;
   /** True when the day falls before the user's yearly tracking start date. */
   preStart?: boolean;
+  /** True when the day is after today (future dates in the current year). */
+  future?: boolean;
 }
 
 export interface HeatmapWeekColumn {
@@ -274,6 +276,80 @@ export function buildHeatmapGrid(
   return { weeks: weeksOut, maxSeconds, totalSeconds };
 }
 
+/** Inclusive calendar-year span (Jan 1 – Dec 31). */
+export function getYearRange(year: number): { start: Date; end: Date } {
+  return {
+    start: startOfDay(new Date(year, 0, 1)),
+    end: startOfDay(new Date(year, 11, 31)),
+  };
+}
+
+/**
+ * Build a GitHub-style calendar grid for a full calendar year (Jan–Dec).
+ * Future days (after `now`) are marked but excluded from totals and coloring.
+ */
+export function buildYearGrid(
+  logs: RealtimeLog[],
+  year: number,
+  now: Date = new Date(),
+  color: HeatmapColorOptions = DEFAULT_COLOR_OPTIONS,
+  yearlyStart: Date | null = null,
+): HeatmapGridData {
+  const { start, end } = getYearRange(year);
+  const today = startOfDay(now);
+  const dayBuckets = bucketLogsByLocalDay(logs);
+  const startBoundary = yearlyStart ? startOfDay(yearlyStart) : null;
+
+  const allDays = eachDayOfInterval({ start, end });
+  let maxSeconds = 0;
+  let totalSeconds = 0;
+
+  const cellsByKey = new Map<string, HeatmapDayCell>();
+  for (const day of allDays) {
+    const cell = makeDayCell(day, dayBuckets);
+    const isFuture = startOfDay(day) > today;
+    const isPreStart = startBoundary != null && startOfDay(day) < startBoundary;
+
+    if (isFuture) {
+      cell.future = true;
+      cell.level = 0;
+    } else if (isPreStart) {
+      cell.preStart = true;
+      cell.level = 0;
+    } else {
+      if (cell.totalSeconds > maxSeconds) maxSeconds = cell.totalSeconds;
+      totalSeconds += cell.totalSeconds;
+    }
+    cellsByKey.set(cell.dateKey, cell);
+  }
+
+  for (const cell of cellsByKey.values()) {
+    if (!cell.preStart && !cell.future) {
+      cell.level = cellLevel(cell.totalSeconds, maxSeconds, color);
+    }
+  }
+
+  const weeksOut: HeatmapWeekColumn[] = [];
+  const lastWeekStart = startOfWeek(end, { weekStartsOn: 0 });
+  let cursor = startOfWeek(start, { weekStartsOn: 0 });
+  while (cursor <= lastWeekStart) {
+    const weekStart = cursor;
+    const days: (HeatmapDayCell | null)[] = [];
+    for (let row = 0; row < 7; row += 1) {
+      const day = addDays(weekStart, row);
+      if (day < start || day > end) {
+        days.push(null);
+      } else {
+        days.push(cellsByKey.get(localDayKey(day)) ?? null);
+      }
+    }
+    weeksOut.push({ weekStart, days });
+    cursor = addDays(cursor, 7);
+  }
+
+  return { weeks: weeksOut, maxSeconds, totalSeconds };
+}
+
 /**
  * The inclusive date span a view covers. The shorter views show a small,
  * recent window so the grid renders fewer (and larger) squares.
@@ -340,6 +416,7 @@ export function buildHeatmapRange(
 export function viewRangeLabel(
   view: HeatmapView,
   range?: { start: Date; end: Date },
+  year?: number,
 ): string {
   if (range && (view === 'rolling3' || view === 'rolling5')) {
     const startLabel = format(range.start, 'MMM d');
@@ -356,8 +433,9 @@ export function viewRangeLabel(
     case 'monthly':
       return 'this month';
     case 'yearly':
+      return year != null ? `in ${year}` : 'this year';
     default:
-      return 'in the last 52 weeks';
+      return 'this year';
   }
 }
 

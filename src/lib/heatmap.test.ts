@@ -3,6 +3,7 @@ import {
   ALL_CHANNELS,
   UNTAGGED_CHANNEL,
   buildHeatmapGrid,
+  buildYearGrid,
   bucketLogsByLocalDay,
   dailyGoalSecondsForChannel,
   getViewRange,
@@ -134,5 +135,22 @@ describe('heatmap', () => {
     const range = getViewRange('rolling3', now, -1);
     expect(range.end.toISOString().slice(0, 10)).toBe('2026-06-27');
     expect(range.start.toISOString().slice(0, 10)).toBe('2026-06-25');
+  });
+
+  it('builds a full calendar year grid with future days excluded from totals', () => {
+    const now = new Date('2026-06-28T12:00:00.000Z');
+    const grid = buildYearGrid(
+      [makeLog({ logged_at: now.toISOString(), realtime_delta_seconds: 600 })],
+      2026,
+      now,
+    );
+    expect(grid.totalSeconds).toBe(600);
+    expect(grid.weeks.length).toBeGreaterThanOrEqual(52);
+
+    const futureCell = grid.weeks
+      .flatMap((week) => week.days)
+      .find((day) => day?.dateKey === '2026-12-31');
+    expect(futureCell?.future).toBe(true);
+    expect(futureCell?.level).toBe(0);
   });
 });

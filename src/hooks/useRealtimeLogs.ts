@@ -8,7 +8,16 @@ const realtimeLogsKey = (
   projectId: string | undefined,
   limit: number | undefined,
   since: string | undefined,
-) => ['realtime_logs', userId, projectId ?? 'all', limit ?? 'all', since ?? 'all'] as const;
+  until: string | undefined,
+) =>
+  [
+    'realtime_logs',
+    userId,
+    projectId ?? 'all',
+    limit ?? 'all',
+    since ?? 'all',
+    until ?? 'all',
+  ] as const;
 
 export interface UseRealtimeLogsOptions {
   projectId?: string;
@@ -16,18 +25,21 @@ export interface UseRealtimeLogsOptions {
   limit?: number;
   /** ISO timestamp — only logs on or after this instant. */
   since?: string;
+  /** ISO timestamp — only logs on or before this instant. */
+  until?: string;
 }
 
 export function useRealtimeLogs({
   projectId,
   limit,
   since,
+  until,
 }: UseRealtimeLogsOptions = {}) {
   const { user } = useAuth();
   const effectiveLimit = limit ?? (since ? undefined : 250);
 
   return useQuery({
-    queryKey: realtimeLogsKey(user?.id, projectId, effectiveLimit, since),
+    queryKey: realtimeLogsKey(user?.id, projectId, effectiveLimit, since, until),
     enabled: !!user && (projectId === undefined || projectId.length > 0),
     queryFn: async (): Promise<RealtimeLog[]> => {
       let request = supabase
@@ -40,6 +52,9 @@ export function useRealtimeLogs({
       }
       if (since) {
         request = request.gte('logged_at', since);
+      }
+      if (until) {
+        request = request.lte('logged_at', until);
       }
       if (typeof effectiveLimit === 'number') {
         request = request.limit(effectiveLimit);
