@@ -51,6 +51,7 @@ export default function Layout() {
     () => [
       { id: 'projects', to: '/projects', label: 'Projects', icon: <ProjectsIcon /> },
       { id: 'pace', to: '/projects/pace', label: 'Pace Grid', icon: <PaceGridIcon /> },
+      { id: 'heatmap', to: '/heatmap', label: 'Heatmap', icon: <HeatmapIcon /> },
       { id: 'templates', to: '/templates', label: 'Templates', icon: <TemplatesIcon /> },
       { id: 'calendar', to: '/calendar', label: 'Calendar', icon: <CalendarIcon /> },
       {
@@ -802,6 +803,28 @@ function PaceGridIcon() {
       <path d="M3 16h18" />
       <path d="M9 4v16" />
       <path d="M15 4v16" />
+    </svg>
+  );
+}
+
+function HeatmapIcon() {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      width="16"
+      height="16"
+      fill="currentColor"
+      aria-hidden
+    >
+      <rect x="3" y="3" width="4" height="4" rx="0.8" opacity="0.35" />
+      <rect x="9" y="3" width="4" height="4" rx="0.8" opacity="0.55" />
+      <rect x="15" y="3" width="4" height="4" rx="0.8" opacity="0.85" />
+      <rect x="3" y="9" width="4" height="4" rx="0.8" opacity="0.55" />
+      <rect x="9" y="9" width="4" height="4" rx="0.8" opacity="0.85" />
+      <rect x="15" y="9" width="4" height="4" rx="0.8" opacity="0.35" />
+      <rect x="3" y="15" width="4" height="4" rx="0.8" opacity="0.85" />
+      <rect x="9" y="15" width="4" height="4" rx="0.8" opacity="0.35" />
+      <rect x="15" y="15" width="4" height="4" rx="0.8" opacity="0.55" />
     </svg>
   );
 }

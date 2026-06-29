@@ -40,6 +40,22 @@ export interface ProjectSeries {
   created_at: string;
 }
 
+export interface TagGoal {
+  id: string;
+  user_id: string;
+  tag_name: string;
+  daily_goal_seconds: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface HeatmapSettings {
+  user_id: string;
+  yearly_start_date: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
 export interface Task {
   id: string;
   project_id: string;
@@ -176,3 +192,47 @@ export interface IntegrationToken {
   last_used_at: string | null;
   revoked_at: string | null;
 }
+
+export type RealtimeLogChangeKind =
+  | 'current_progress'
+  | 'task_name'
+  | 'task_type'
+  | 'scaling_modifier'
+  | 'scripting_modifier'
+  | 'script_length'
+  | 'unit_count'
+  | 'unit_length'
+  | 'video_length'
+  | 'project_name'
+  | 'project_tag'
+  | 'project_series'
+  | 'task_created'
+  | 'task_deleted';
+
+export interface RealtimeLog {
+  id: string;
+  user_id: string;
+  project_id: string;
+  task_id: string | null;
+  change_kind: RealtimeLogChangeKind;
+  old_value: string | null;
+  new_value: string | null;
+  realtime_delta_seconds: number;
+  task_name: string | null;
+  task_type: string | null;
+  project_name: string;
+  project_tag: string | null;
+  project_series: string | null;
+  video_length: number | null;
+  scaling_modifier: number | null;
+  scripting_modifier: number | null;
+  script_length: number | null;
+  unit_count: number | null;
+  unit_length: number | null;
+  current_progress: number | null;
+  logged_at: string;
+}
+
+export type RealtimeLogUpdateInput = Partial<
+  Pick<RealtimeLog, 'realtime_delta_seconds' | 'old_value' | 'new_value'>
+>;

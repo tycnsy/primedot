@@ -2,6 +2,8 @@ import { useEffect } from 'react';
 import { App as CapacitorApp } from '@capacitor/app';
 import { Capacitor, type PluginListenerHandle } from '@capacitor/core';
 import { Navigate, Route, Routes, useNavigate } from 'react-router-dom';
+import Heatmap from './pages/Heatmap';
+import HeatmapGoals from './pages/HeatmapGoals';
 import Login from './pages/Login';
 import Projects from './pages/Projects';
 import ProjectsArchive from './pages/ProjectsArchive';
@@ -112,6 +114,8 @@ export default function App() {
           <Route path="/calendar" element={<Calendar />} />
           <Route path="/todos" element={<Todos />} />
           <Route path="/projects/pace" element={<ProjectsPace />} />
+          <Route path="/heatmap" element={<Heatmap />} />
+          <Route path="/heatmap/goals" element={<HeatmapGoals />} />
           <Route path="/templates" element={<Templates />} />
           <Route path="/templates/archive" element={<TemplatesArchive />} />
           <Route path="/templates/:templateId" element={<TemplateDetail />} />

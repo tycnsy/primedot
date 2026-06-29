@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
+import { subDays } from 'date-fns';
 import {
   Link,
   Navigate,
@@ -26,9 +27,11 @@ import {
   useTasks,
   useTasksForProjects,
   useToggleComplexMode,
+  useUpdateAnyTask,
   useUpdateTask,
 } from '../hooks/useTasks';
 import { usePaceSettings } from '../hooks/usePaceSettings';
+import { useRealtimeLogs } from '../hooks/useRealtimeLogs';
 import { useCreateTemplateFromProject } from '../hooks/useTemplates';
 import ProjectForm from '../components/ProjectForm';
 import TagPill from '../components/TagPill';
@@ -39,6 +42,8 @@ import PaceSettingsForm from '../components/PaceSettingsForm';
 import RebalanceModal from '../components/RebalanceModal';
 import ComplexTaskSettingsModal from '../components/ComplexTaskSettingsModal';
 import ComplexCollapseConflictModal from '../components/ComplexCollapseConflictModal';
+import HeatmapGrid from '../components/heatmap/HeatmapGrid';
+import RealtimeLogsTab from '../components/heatmap/RealtimeLogsTab';
 import {
   bufferModifierGoal,
   deriveTaskStatus,
@@ -51,10 +56,12 @@ import {
 } from '../lib/calc';
 import { isParentProject, resolvedProjectTagSeries } from '../lib/projects';
 import { formatHMS } from '../lib/time';
-import type { ComplexMode, Task } from '../lib/types';
+import type { ComplexMode, Project, Task } from '../lib/types';
 
 const NOTES_AUTOSAVE_DELAY_MS = 700;
 const EMPTY_TASKS: Task[] = [];
+const PROJECT_HEATMAP_WEEKS = 52;
+const PROJECT_LOGS_DEFAULT_LIMIT = 250;
 
 function formatDueDateTime(iso: string | null): string | null {
   if (!iso) return null;
@@ -90,6 +97,26 @@ function hasSameTaskIds(a: Task[], b: Task[]): boolean {
   return true;
 }
 
+function topLevelTasksOf(tasks: Task[]): Task[] {
+  return tasks
+    .filter((task) => !task.parent_id)
+    .sort((a, b) => a.sort_order - b.sort_order || a.created_at.localeCompare(b.created_at));
+}
+
+function subtasksByParentOf(tasks: Task[]): Map<string, Task[]> {
+  const map = new Map<string, Task[]>();
+  for (const task of tasks) {
+    if (!task.parent_id) continue;
+    const arr = map.get(task.parent_id) ?? [];
+    arr.push(task);
+    map.set(task.parent_id, arr);
+  }
+  for (const arr of map.values()) {
+    arr.sort((a, b) => a.sort_order - b.sort_order);
+  }
+  return map;
+}
+
 export default function ProjectDetail() {
   const { id } = useParams();
   const [searchParams, setSearchParams] = useSearchParams();
@@ -106,6 +133,7 @@ export default function ProjectDetail() {
     [subprojects],
   );
   const subprojectTasksQuery = useTasksForProjects(subprojectIds);
+  const updateAnySubprojectTask = useUpdateAnyTask(subprojectIds);
   const subprojectTasksById = useMemo(() => {
     const byProject = new Map<string, Task[]>();
     for (const task of subprojectTasksQuery.data ?? []) {
@@ -139,7 +167,14 @@ export default function ProjectDetail() {
   const [editingProject, setEditingProject] = useState(false);
   const [showNewTask, setShowNewTask] = useState(false);
   const [editingTask, setEditingTask] = useState<Task | null>(null);
-  const [activeTab, setActiveTab] = useState<'overview' | 'notes' | 'pace'>('overview');
+  const [editingTaskProject, setEditingTaskProject] = useState<Project | null>(null);
+  const [activeTab, setActiveTab] = useState<'overview' | 'notes' | 'pace' | 'heatmap'>(
+    'overview',
+  );
+  const [projectHeatmapSubTab, setProjectHeatmapSubTab] = useState<'heatmap' | 'logs'>(
+    'heatmap',
+  );
+  const [projectLogsLimit, setProjectLogsLimit] = useState(PROJECT_LOGS_DEFAULT_LIMIT);
   const [notesDraft, setNotesDraft] = useState('');
   const [notesError, setNotesError] = useState<string | null>(null);
   const [showTemplateForm, setShowTemplateForm] = useState(false);
@@ -171,9 +206,26 @@ export default function ProjectDetail() {
     setOrderedTasks(tasks.data ?? EMPTY_TASKS);
   }, [tasks.data]);
 
+  const heatmapSince = useMemo(
+    () => subDays(new Date(), PROJECT_HEATMAP_WEEKS * 7).toISOString(),
+    [],
+  );
+  const projectHeatmapLogsQuery = useRealtimeLogs({
+    projectId: id,
+    since: heatmapSince,
+  });
+  const projectLogsQuery = useRealtimeLogs({
+    projectId: id,
+    limit: projectLogsLimit,
+  });
+
   useEffect(() => {
     const nextTab =
-      requestedTab === 'pace' || requestedTab === 'notes' ? requestedTab : 'overview';
+      requestedTab === 'pace' ||
+      requestedTab === 'notes' ||
+      requestedTab === 'heatmap'
+        ? requestedTab
+        : 'overview';
     setActiveTab(nextTab);
   }, [id, requestedTab]);
 
@@ -290,7 +342,7 @@ export default function ProjectDetail() {
     attemptCompress(parent);
   };
 
-  const handleTabChange = (nextTab: 'overview' | 'notes' | 'pace') => {
+  const handleTabChange = (nextTab: 'overview' | 'notes' | 'pace' | 'heatmap') => {
     setSearchParams((prev) => {
       const next = new URLSearchParams(prev);
       next.set('tab', nextTab);
@@ -324,7 +376,16 @@ export default function ProjectDetail() {
   }, [notesDraft, project.data, updateProject]);
 
   if (!id) return <Navigate to="/projects" replace />;
-  if (project.isLoading || tasks.isLoading) {
+  const isParentWithSubprojectsLoading =
+    project.data &&
+    isParentProject(project.data) &&
+    subprojectsQuery.isLoading;
+  if (
+    project.isLoading ||
+    tasks.isLoading ||
+    isParentWithSubprojectsLoading ||
+    (subprojectIds.length > 0 && subprojectTasksQuery.isLoading)
+  ) {
     return <p className="text-muted">Loading…</p>;
   }
   if (!project.data) {
@@ -339,6 +400,8 @@ export default function ProjectDetail() {
   }
 
   const p = project.data;
+  const isParentWithSubprojects =
+    isParentProject(p) && subprojects.length > 0;
   const { tag: displayTag, series: displaySeries } = resolvedProjectTagSeries(
     p,
     parentProject.data,
@@ -346,9 +409,21 @@ export default function ProjectDetail() {
   const displayProject = bufferVisibility
     ? { ...p, buffer_modifier: 1 }
     : p;
-  const totalLen = totalTaskLength(allTasks, displayProject);
-  const progress = projectProgress(allTasks, displayProject);
-  const remaining = remainingProgress(allTasks, displayProject);
+  let totalLen = 0;
+  let progress = 0;
+  let remaining = 0;
+  if (isParentWithSubprojects) {
+    for (const subproject of subprojects) {
+      const subTasks = subprojectTasksById.get(subproject.id) ?? [];
+      totalLen += totalTaskLength(subTasks, subproject);
+      progress += projectProgress(subTasks, subproject);
+      remaining += remainingProgress(subTasks, subproject);
+    }
+  } else {
+    totalLen = totalTaskLength(allTasks, displayProject);
+    progress = projectProgress(allTasks, displayProject);
+    remaining = remainingProgress(allTasks, displayProject);
+  }
   const overallPct = totalLen > 0 ? Math.min(100, (progress / totalLen) * 100) : 0;
   const bufferGoal = bufferModifierGoal(allTasks, p);
   const startLabel = formatDueDateTime(p.start_date);
@@ -575,6 +650,12 @@ export default function ProjectDetail() {
         >
           Pace
         </button>
+        <button
+          data-active={activeTab === 'heatmap'}
+          onClick={() => handleTabChange('heatmap')}
+        >
+          Activity
+        </button>
       </div>
 
       {activeTab === 'overview' ? (
@@ -695,31 +776,60 @@ export default function ProjectDetail() {
                       subTotalLen > 0
                         ? Math.min(100, (subProgress / subTotalLen) * 100)
                         : 0;
+                    const isSubprojectArchived = !!subproject.archived_at;
                     return (
-                      <li key={subproject.id} className="card flex flex-wrap items-center gap-3">
+                      <li
+                        key={subproject.id}
+                        className={`card flex flex-wrap items-center gap-3 ${
+                          isSubprojectArchived ? 'border-success/35 bg-success/15' : ''
+                        }`}
+                      >
                         <div className="min-w-0 flex-1 space-y-1">
-                          <Link
-                            to={`/projects/${subproject.id}`}
-                            className="font-medium text-fg transition-colors hover:text-accent"
-                          >
-                            {subproject.name}
-                          </Link>
+                          <div className="flex flex-wrap items-center gap-2">
+                            <Link
+                              to={`/projects/${subproject.id}`}
+                              className={`font-medium transition-colors ${
+                                isSubprojectArchived
+                                  ? 'text-success hover:text-success'
+                                  : 'text-fg hover:text-accent'
+                              }`}
+                            >
+                              {subproject.name}
+                            </Link>
+                            {isSubprojectArchived ? (
+                              <span className="inline-flex rounded bg-success/20 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-success">
+                                Archived
+                              </span>
+                            ) : null}
+                          </div>
                           <p className="text-xs text-muted">
                             {formatDueDateTime(subproject.due_date) ?? 'No due date'} ·{' '}
                             {subPct.toFixed(1)}% complete
                           </p>
                         </div>
                         <div className="flex items-center gap-2">
-                          <button
-                            type="button"
-                            className="btn-ghost text-xs"
-                            onClick={async () => {
-                              if (!confirm(`Archive "${subproject.name}"?`)) return;
-                              await archiveProject.mutateAsync(subproject.id);
-                            }}
-                          >
-                            Archive
-                          </button>
+                          {isSubprojectArchived ? (
+                            <button
+                              type="button"
+                              className="btn-ghost text-xs"
+                              onClick={async () => {
+                                await restoreProject.mutateAsync(subproject.id);
+                              }}
+                            >
+                              Restore
+                            </button>
+                          ) : (
+                            <button
+                              type="button"
+                              className="btn-ghost text-xs"
+                              onClick={async () => {
+                                if (!confirm(`Archive "${subproject.name}"?`)) return;
+                                await archiveProject.mutateAsync(subproject.id);
+                              }}
+                            >
+                              Archive
+                            </button>
+                          )}
                           <button
                             type="button"
                             className="btn-danger text-xs"
@@ -748,15 +858,23 @@ export default function ProjectDetail() {
           <div className="space-y-4">
             <div className="flex items-center justify-between gap-3">
               <h2 className="text-lg font-semibold text-fg">Tasks</h2>
-              <button
-                onClick={() => setShowNewTask((v) => !v)}
-                className="btn-primary"
-              >
-                {showNewTask ? 'Close' : 'New task'}
-              </button>
+              {!isParentWithSubprojects ? (
+                <button
+                  onClick={() => setShowNewTask((v) => !v)}
+                  className="btn-primary"
+                >
+                  {showNewTask ? 'Close' : 'New task'}
+                </button>
+              ) : null}
             </div>
 
-            {showNewTask ? (
+            {isParentWithSubprojects ? (
+              <p className="text-xs text-muted">
+                Tasks live on subprojects. Add or reorder them from each subproject page.
+              </p>
+            ) : null}
+
+            {!isParentWithSubprojects && showNewTask ? (
               <div className="card animate-fade-in">
                 <h3 className="mb-3 text-sm font-semibold text-fg">Create task</h3>
                 <TaskForm
@@ -778,13 +896,17 @@ export default function ProjectDetail() {
               <div className="card animate-fade-in">
                 <h3 className="mb-3 text-sm font-semibold text-fg">Edit task</h3>
                 <TaskForm
-                  projectId={p.id}
+                  projectId={(editingTaskProject ?? p).id}
                   initial={editingTask}
-                  onCancel={() => setEditingTask(null)}
+                  onCancel={() => {
+                    setEditingTask(null);
+                    setEditingTaskProject(null);
+                  }}
                   onDelete={async () => {
                     if (!confirm(`Delete "${editingTask.name}"?`)) return;
                     await deleteTask.mutateAsync(editingTask.id);
                     setEditingTask(null);
+                    setEditingTaskProject(null);
                   }}
                   onMakeComplex={() => {
                     setComplexSettingsFor({
@@ -792,6 +914,7 @@ export default function ProjectDetail() {
                       mode: 'convert',
                     });
                     setEditingTask(null);
+                    setEditingTaskProject(null);
                   }}
                   onEditSubtasks={() => {
                     setComplexSettingsFor({
@@ -799,23 +922,184 @@ export default function ProjectDetail() {
                       mode: 'edit',
                     });
                     setEditingTask(null);
+                    setEditingTaskProject(null);
                   }}
                   submitLabel="Save"
                   onSubmit={async (input) => {
-                    await updateTask.mutateAsync({
+                    const taskProject = editingTaskProject ?? p;
+                    const taskScope =
+                      editingTaskProject != null
+                        ? (subprojectTasksById.get(editingTaskProject.id) ?? [])
+                        : allTasks;
+                    const saveTask = editingTaskProject
+                      ? updateAnySubprojectTask
+                      : updateTask;
+                    await saveTask.mutateAsync({
                       id: editingTask.id,
                       patch: {
                         ...input,
-                        status: deriveTaskStatus(input, p, allTasks),
+                        status: deriveTaskStatus(input, taskProject, taskScope),
                       },
                     });
                     setEditingTask(null);
+                    setEditingTaskProject(null);
                   }}
                 />
               </div>
             ) : null}
 
-            {allTasks.length === 0 ? (
+            {isParentWithSubprojects ? (
+              subprojects.every(
+                (subproject) => (subprojectTasksById.get(subproject.id) ?? []).length === 0,
+              ) ? (
+                <p className="text-sm text-muted">
+                  No tasks yet across subprojects.
+                </p>
+              ) : (
+                <div className="space-y-6">
+                  {subprojects.map((subproject) => {
+                    const subTasks = subprojectTasksById.get(subproject.id) ?? [];
+                    if (subTasks.length === 0) return null;
+                    const subTopLevel = topLevelTasksOf(subTasks);
+                    const subSubtasksByParent = subtasksByParentOf(subTasks);
+                    const isSubprojectArchived = !!subproject.archived_at;
+                    return (
+                      <div key={subproject.id} className="space-y-2">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <Link
+                            to={`/projects/${subproject.id}`}
+                            className={`text-sm font-semibold transition-colors ${
+                              isSubprojectArchived
+                                ? 'text-success hover:text-success'
+                                : 'text-fg hover:text-accent'
+                            }`}
+                          >
+                            {subproject.name}
+                          </Link>
+                          {isSubprojectArchived ? (
+                            <span className="inline-flex rounded bg-success/20 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-success">
+                              Archived
+                            </span>
+                          ) : null}
+                        </div>
+                        <div className="space-y-2">
+                          {subTopLevel.map((task) => {
+                            const isExpandedParent = task.complex_mode === 'expanded';
+                            const subs = subSubtasksByParent.get(task.id) ?? [];
+                            return (
+                              <div key={task.id} className="space-y-2">
+                                <TaskRow
+                                  task={task}
+                                  project={subproject}
+                                  allTasks={subTasks}
+                                  onUpdateProgress={
+                                    isExpandedParent
+                                      ? undefined
+                                      : async (taskId, nextProgress) => {
+                                          const updatedTask = {
+                                            ...task,
+                                            current_progress: nextProgress,
+                                          };
+                                          await updateAnySubprojectTask.mutateAsync({
+                                            id: taskId,
+                                            patch: {
+                                              current_progress: nextProgress,
+                                              status: deriveTaskStatus(
+                                                updatedTask,
+                                                subproject,
+                                                subTasks,
+                                              ),
+                                            },
+                                          });
+                                        }
+                                  }
+                                  progressInputDisabled={updateAnySubprojectTask.isPending}
+                                  onEdit={() => {
+                                    setEditingTask(task);
+                                    setEditingTaskProject(subproject);
+                                  }}
+                                  onDone={
+                                    isExpandedParent
+                                      ? undefined
+                                      : async () => {
+                                          const nextProgress = progressTarget(task, subproject);
+                                          await updateAnySubprojectTask.mutateAsync({
+                                            id: task.id,
+                                            patch: {
+                                              current_progress: nextProgress,
+                                              status: deriveTaskStatus(
+                                                {
+                                                  ...task,
+                                                  current_progress: nextProgress,
+                                                },
+                                                subproject,
+                                                subTasks,
+                                              ),
+                                            },
+                                          });
+                                        }
+                                  }
+                                />
+                                {isExpandedParent
+                                  ? subs.map((sub) => (
+                                      <TaskRow
+                                        key={sub.id}
+                                        task={sub}
+                                        project={subproject}
+                                        allTasks={subTasks}
+                                        isSubtask
+                                        onUpdateProgress={async (taskId, nextProgress) => {
+                                          const updatedTask = {
+                                            ...sub,
+                                            current_progress: nextProgress,
+                                          };
+                                          await updateAnySubprojectTask.mutateAsync({
+                                            id: taskId,
+                                            patch: {
+                                              current_progress: nextProgress,
+                                              status: deriveTaskStatus(
+                                                updatedTask,
+                                                subproject,
+                                                subTasks,
+                                              ),
+                                            },
+                                          });
+                                        }}
+                                        progressInputDisabled={updateAnySubprojectTask.isPending}
+                                        onEdit={() => {
+                                          setEditingTask(sub);
+                                          setEditingTaskProject(subproject);
+                                        }}
+                                        onDone={async () => {
+                                          const nextProgress = progressTarget(sub, subproject);
+                                          await updateAnySubprojectTask.mutateAsync({
+                                            id: sub.id,
+                                            patch: {
+                                              current_progress: nextProgress,
+                                              status: deriveTaskStatus(
+                                                {
+                                                  ...sub,
+                                                  current_progress: nextProgress,
+                                                },
+                                                subproject,
+                                                subTasks,
+                                              ),
+                                            },
+                                          });
+                                        }}
+                                      />
+                                    ))
+                                  : null}
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )
+            ) : allTasks.length === 0 ? (
               <p className="text-sm text-muted">
                 No tasks yet. Add tasks of any of the four types.
               </p>
@@ -883,7 +1167,10 @@ export default function ProjectDetail() {
                                   }
                             }
                             progressInputDisabled={updateTask.isPending}
-                            onEdit={() => setEditingTask(t)}
+                            onEdit={() => {
+                              setEditingTask(t);
+                              setEditingTaskProject(null);
+                            }}
                             onDone={
                               isExpandedParent
                                 ? undefined
@@ -964,7 +1251,10 @@ export default function ProjectDetail() {
                                     });
                                   }}
                                   progressInputDisabled={updateTask.isPending}
-                                  onEdit={() => setEditingTask(sub)}
+                                  onEdit={() => {
+                                    setEditingTask(sub);
+                                    setEditingTaskProject(null);
+                                  }}
                                   onDone={async () => {
                                     const nextProgress = progressTarget(sub, p);
                                     await updateTask.mutateAsync({
@@ -1015,6 +1305,51 @@ export default function ProjectDetail() {
           />
           <p className="text-xs text-muted">Changes save automatically.</p>
           {notesError ? <p className="text-xs text-danger">{notesError}</p> : null}
+        </div>
+      ) : activeTab === 'heatmap' ? (
+        <div className="space-y-4">
+          <div className="segmented w-fit">
+            <button
+              type="button"
+              data-active={projectHeatmapSubTab === 'heatmap'}
+              onClick={() => setProjectHeatmapSubTab('heatmap')}
+            >
+              Heatmap
+            </button>
+            <button
+              type="button"
+              data-active={projectHeatmapSubTab === 'logs'}
+              onClick={() => setProjectHeatmapSubTab('logs')}
+            >
+              Logs
+            </button>
+          </div>
+          {projectHeatmapSubTab === 'heatmap' ? (
+            <div className="card">
+              {projectHeatmapLogsQuery.isLoading ? (
+                <p className="text-muted">Loading heatmap…</p>
+              ) : projectHeatmapLogsQuery.error ? (
+                <p className="text-danger">{projectHeatmapLogsQuery.error.message}</p>
+              ) : (
+                <HeatmapGrid
+                  logs={projectHeatmapLogsQuery.data ?? []}
+                  weeks={PROJECT_HEATMAP_WEEKS}
+                  compact
+                />
+              )}
+            </div>
+          ) : (
+            <div className="card">
+              <RealtimeLogsTab
+                logs={projectLogsQuery.data ?? []}
+                projectId={p.id}
+                isLoading={projectLogsQuery.isLoading}
+                error={projectLogsQuery.error}
+                limit={projectLogsLimit}
+                onLimitChange={setProjectLogsLimit}
+              />
+            </div>
+          )}
         </div>
       ) : (
         <div className="space-y-6">
