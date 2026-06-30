@@ -59,7 +59,7 @@ export default function TemplateTaskForm({
   const [type, setType] = useState<TaskType>(initial?.type ?? 'scaling');
   const [fields, setFields] = useState<FieldsState>(() => defaults(initial));
   const [excludeFromGroupings, setExcludeFromGroupings] = useState(
-    () => initial?.groupable === false,
+    () => (initial ? initial.groupable === false : true),
   );
   const [groupingProgressStr, setGroupingProgressStr] = useState<string>(() => {
     if (initial?.grouping_progress == null) return '';
@@ -101,7 +101,7 @@ export default function TemplateTaskForm({
       unit_length: null,
       manual_length: null,
       grouping_progress: null,
-      groupable: true,
+      groupable: false,
     };
 
     if (type === 'scaling') {
