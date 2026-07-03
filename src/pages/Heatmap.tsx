@@ -39,7 +39,9 @@ export default function HeatmapPage() {
     resolveHeatmapColorMode(searchParams.get('calc')),
   );
   const [channel, setChannel] = useState<string>(channelFromUrl);
-  const [selectedDateKey, setSelectedDateKey] = useState<string | null>(null);
+  const [selectedDateKey, setSelectedDateKey] = useState<string | null>(() =>
+    localDayKey(new Date()),
+  );
   const [limit, setLimit] = useState(DEFAULT_LIMIT);
   const [rollingOffset, setRollingOffset] = useState(0);
   const [selectedYear, setSelectedYear] = useState(() => new Date().getFullYear());
