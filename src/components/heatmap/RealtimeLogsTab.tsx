@@ -2,6 +2,7 @@ import { format } from 'date-fns';
 import { useEffect, useMemo, useState } from 'react';
 import {
   useDeleteRealtimeLog,
+  useRealtimeLogs,
   useUpdateRealtimeLog,
 } from '../../hooks/useRealtimeLogs';
 import {
@@ -14,10 +15,7 @@ import type { RealtimeLog } from '../../lib/types';
 const LIMIT_OPTIONS = [50, 100, 250, 500] as const;
 
 interface RealtimeLogsTabProps {
-  logs: RealtimeLog[];
   projectId?: string;
-  isLoading?: boolean;
-  error?: Error | null;
   limit: number;
   onLimitChange: (limit: number) => void;
 }
@@ -104,45 +102,60 @@ function EditLogModal({
 }
 
 export default function RealtimeLogsTab({
-  logs,
-  isLoading,
-  error,
+  projectId,
   limit,
   onLimitChange,
 }: RealtimeLogsTabProps) {
   const deleteLog = useDeleteRealtimeLog();
   const updateLog = useUpdateRealtimeLog();
   const [editingLog, setEditingLog] = useState<RealtimeLog | null>(null);
+  const [progressOnly, setProgressOnly] = useState(false);
 
+  const logsQuery = useRealtimeLogs({ projectId, limit, progressOnly });
+  const logs = logsQuery.data ?? [];
   const groups = useMemo(() => groupLogsByLocalDay(logs), [logs]);
 
-  if (isLoading) return <p className="text-muted">Loading logs…</p>;
-  if (error) return <p className="text-danger">{error.message}</p>;
+  if (logsQuery.isLoading) return <p className="text-muted">Loading logs…</p>;
+  if (logsQuery.error) return <p className="text-danger">{logsQuery.error.message}</p>;
 
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <p className="text-sm text-muted">
           Showing up to {limit} most recent entries, grouped by day.
+          {progressOnly ? ' Progress changes only.' : null}
         </p>
-        <label className="flex items-center gap-2 text-sm text-muted">
-          View limit
-          <select
-            className="input py-1"
-            value={limit}
-            onChange={(e) => onLimitChange(Number(e.target.value))}
+        <div className="flex flex-wrap items-center gap-2">
+          <button
+            type="button"
+            className="btn-ghost px-3 py-1.5 text-sm"
+            data-active={progressOnly}
+            aria-pressed={progressOnly}
+            onClick={() => setProgressOnly((v) => !v)}
           >
-            {LIMIT_OPTIONS.map((option) => (
-              <option key={option} value={option}>
-                {option}
-              </option>
-            ))}
-          </select>
-        </label>
+            Progress only
+          </button>
+          <label className="flex items-center gap-2 text-sm text-muted">
+            View limit
+            <select
+              className="input py-1"
+              value={limit}
+              onChange={(e) => onLimitChange(Number(e.target.value))}
+            >
+              {LIMIT_OPTIONS.map((option) => (
+                <option key={option} value={option}>
+                  {option}
+                </option>
+              ))}
+            </select>
+          </label>
+        </div>
       </div>
 
       {groups.length === 0 ? (
-        <p className="text-muted">No activity logged yet.</p>
+        <p className="text-muted">
+          {progressOnly ? 'No progress logged yet.' : 'No activity logged yet.'}
+        </p>
       ) : (
         <div className="space-y-6">
           {groups.map((group) => (

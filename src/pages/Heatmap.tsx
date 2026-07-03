@@ -154,7 +154,6 @@ export default function HeatmapPage() {
   }, [view, selectedYear, currentCalendarYear]);
 
   const heatmapLogsQuery = useRealtimeLogs(heatmapLogRange);
-  const logsQuery = useRealtimeLogs({ limit });
   const tagsQuery = useProjectTags();
   const goalsQuery = useTagGoals();
   const settingsQuery = useHeatmapSettings();
@@ -414,13 +413,7 @@ export default function HeatmapPage() {
         </>
       ) : (
         <div className="card">
-          <RealtimeLogsTab
-            logs={logsQuery.data ?? []}
-            isLoading={logsQuery.isLoading}
-            error={logsQuery.error}
-            limit={limit}
-            onLimitChange={setLimit}
-          />
+          <RealtimeLogsTab limit={limit} onLimitChange={setLimit} />
         </div>
       )}
     </div>

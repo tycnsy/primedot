@@ -212,11 +212,6 @@ export default function ProjectDetail() {
     projectId: id,
     since: heatmapSince,
   });
-  const projectLogsQuery = useRealtimeLogs({
-    projectId: id,
-    limit: projectLogsLimit,
-  });
-
   useEffect(() => {
     const nextTab =
       requestedTab === 'pace' ||
@@ -1338,10 +1333,7 @@ export default function ProjectDetail() {
           ) : (
             <div className="card">
               <RealtimeLogsTab
-                logs={projectLogsQuery.data ?? []}
                 projectId={p.id}
-                isLoading={projectLogsQuery.isLoading}
-                error={projectLogsQuery.error}
                 limit={projectLogsLimit}
                 onLimitChange={setProjectLogsLimit}
               />

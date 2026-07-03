@@ -9,6 +9,7 @@ const realtimeLogsKey = (
   limit: number | undefined,
   since: string | undefined,
   until: string | undefined,
+  progressOnly: boolean | undefined,
 ) =>
   [
     'realtime_logs',
@@ -17,6 +18,7 @@ const realtimeLogsKey = (
     limit ?? 'all',
     since ?? 'all',
     until ?? 'all',
+    progressOnly ? 'progress' : 'all',
   ] as const;
 
 export interface UseRealtimeLogsOptions {
@@ -27,6 +29,8 @@ export interface UseRealtimeLogsOptions {
   since?: string;
   /** ISO timestamp — only logs on or before this instant. */
   until?: string;
+  /** When true, only rows with change_kind = current_progress. */
+  progressOnly?: boolean;
 }
 
 export function useRealtimeLogs({
@@ -34,12 +38,20 @@ export function useRealtimeLogs({
   limit,
   since,
   until,
+  progressOnly,
 }: UseRealtimeLogsOptions = {}) {
   const { user } = useAuth();
   const effectiveLimit = limit ?? (since ? undefined : 250);
 
   return useQuery({
-    queryKey: realtimeLogsKey(user?.id, projectId, effectiveLimit, since, until),
+    queryKey: realtimeLogsKey(
+      user?.id,
+      projectId,
+      effectiveLimit,
+      since,
+      until,
+      progressOnly,
+    ),
     enabled: !!user && (projectId === undefined || projectId.length > 0),
     queryFn: async (): Promise<RealtimeLog[]> => {
       let request = supabase
@@ -55,6 +67,9 @@ export function useRealtimeLogs({
       }
       if (until) {
         request = request.lte('logged_at', until);
+      }
+      if (progressOnly) {
+        request = request.eq('change_kind', 'current_progress');
       }
       if (typeof effectiveLimit === 'number') {
         request = request.limit(effectiveLimit);
