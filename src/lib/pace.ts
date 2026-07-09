@@ -307,3 +307,86 @@ function buildRebalanceInputs(
     },
   };
 }
+
+/**
+ * Unbuffered rate that converts a `current_progress` delta into true estimated
+ * seconds (no project buffer). Matches DB `realtime_progress_rate` for simple tasks.
+ */
+export function unbufferedProgressRate(task: Pick<
+  Task,
+  'type' | 'scaling_modifier' | 'scripting_modifier' | 'unit_length'
+>): number {
+  switch (task.type) {
+    case 'scaling':
+      return Number(task.scaling_modifier) || 0;
+    case 'scripting':
+      return Number(task.scripting_modifier) || 0;
+    case 'custom':
+      return Number(task.unit_length) || 0;
+    case 'manual':
+      return 1;
+    default:
+      return 0;
+  }
+}
+
+/** 1. True estimated time for a progress delta (seconds, no buffer). */
+export function trueEstimatedTimeSeconds(
+  progressDelta: number,
+  rate: number,
+): number {
+  return progressDelta * rate;
+}
+
+/** 2. Buffer estimated time = true × buffer_modifier. */
+export function bufferEstimatedTimeSeconds(
+  trueEstimatedSeconds: number,
+  bufferModifier: number,
+): number {
+  return trueEstimatedSeconds * (Number.isFinite(bufferModifier) ? bufferModifier : 1);
+}
+
+/** 3. Buffer-only portion of the estimate. */
+export function estimatedTimeDifferenceSeconds(
+  trueEstimatedSeconds: number,
+  bufferEstimatedSeconds: number,
+): number {
+  return bufferEstimatedSeconds - trueEstimatedSeconds;
+}
+
+/**
+ * Round half away from zero (matches Postgres `round(numeric)`).
+ * JS `Math.round` uses floor(x+0.5), which maps -17.5 → -17.
+ */
+function roundHalfAwayFromZero(value: number): number {
+  if (!Number.isFinite(value)) return 0;
+  return value >= 0 ? Math.round(value) : -Math.round(-value);
+}
+
+/**
+ * 4. Minutes to subtract from `target_deadline` (positive = earlier / more margin).
+ * Progress decreases yield negative minutes (target moves later).
+ */
+export function paceSplitAllocationMinutes(
+  estimatedTimeDifferenceSeconds: number,
+  paceSplitPercentage: number,
+): number {
+  if (!Number.isFinite(paceSplitPercentage) || paceSplitPercentage === 0) return 0;
+  if (!Number.isFinite(estimatedTimeDifferenceSeconds)) return 0;
+  return roundHalfAwayFromZero(
+    (estimatedTimeDifferenceSeconds * (paceSplitPercentage / 100)) / 60,
+  );
+}
+
+/** Full pipeline: progress delta → minutes to subtract from target_deadline. */
+export function computePaceSplitAllocationMinutes(input: {
+  progressDelta: number;
+  rate: number;
+  bufferModifier: number;
+  paceSplitPercentage: number;
+}): number {
+  const trueEst = trueEstimatedTimeSeconds(input.progressDelta, input.rate);
+  const bufferEst = bufferEstimatedTimeSeconds(trueEst, input.bufferModifier);
+  const diff = estimatedTimeDifferenceSeconds(trueEst, bufferEst);
+  return paceSplitAllocationMinutes(diff, input.paceSplitPercentage);
+}

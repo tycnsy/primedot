@@ -37,6 +37,7 @@ import BudgetDebt from './pages/BudgetDebt';
 import BudgetSavings from './pages/BudgetSavings';
 import BudgetReimbursements from './pages/BudgetReimbursements';
 import SettingsIntegrations from './pages/SettingsIntegrations';
+import SettingsPace from './pages/SettingsPace';
 import SettingsSeries from './pages/SettingsSeries';
 import SettingsTags from './pages/SettingsTags';
 import { RequireAuth } from './components/RequireAuth';
@@ -143,6 +144,7 @@ export default function App() {
           <Route path="/projects/:id" element={<ProjectDetail />} />
           <Route path="/projects/:id/timer" element={<Timer />} />
           <Route path="/settings/integrations" element={<SettingsIntegrations />} />
+          <Route path="/settings/pace" element={<SettingsPace />} />
           <Route path="/settings/tags" element={<SettingsTags />} />
           <Route path="/settings/series" element={<SettingsSeries />} />
         </Route>

@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { buildRebalanceOutcome, buildRebalancePredictionOutcome } from './pace';
+import {
+  buildRebalanceOutcome,
+  buildRebalancePredictionOutcome,
+  computePaceSplitAllocationMinutes,
+  unbufferedProgressRate,
+} from './pace';
 import { currentPace } from './calc';
 import type { Project, Task } from './types';
 
@@ -211,5 +216,91 @@ describe('buildRebalancePredictionOutcome', () => {
       ok: false,
       reason: 'invalid_target_buffer',
     });
+  });
+});
+
+describe('computePaceSplitAllocationMinutes', () => {
+  // Example project: buffer_modifier = 3.0, paceSplitPercentage = 35%
+  const buffer = 3;
+  const splitPct = 35;
+
+  it('TaskA scaling: 5min progress × 5.0 → allocate 18 minutes', () => {
+    // Progress 00:10:00 → 00:15:00 = +300s video; rate = scaling_modifier 5.0
+    // true = 300×5 = 1500s (25min); buffer = 4500s (75min); diff = 3000s (50min)
+    // 50min × 35% = 17.5 → round 18
+    const rate = unbufferedProgressRate({
+      type: 'scaling',
+      scaling_modifier: 5,
+      scripting_modifier: null,
+      unit_length: null,
+    });
+    expect(rate).toBe(5);
+    expect(
+      computePaceSplitAllocationMinutes({
+        progressDelta: 300,
+        rate,
+        bufferModifier: buffer,
+        paceSplitPercentage: splitPct,
+      }),
+    ).toBe(18);
+  });
+
+  it('TaskB custom: 5 units × 35s → allocate 2 minutes', () => {
+    // true = 5×35 = 175s; buffer = 525s; diff = 350s (5m50s)
+    // 350 × 0.35 / 60 = 2.041… → round 2
+    const rate = unbufferedProgressRate({
+      type: 'custom',
+      scaling_modifier: null,
+      scripting_modifier: null,
+      unit_length: 35,
+    });
+    expect(rate).toBe(35);
+    expect(
+      computePaceSplitAllocationMinutes({
+        progressDelta: 5,
+        rate,
+        bufferModifier: buffer,
+        paceSplitPercentage: splitPct,
+      }),
+    ).toBe(2);
+  });
+
+  it('reverses allocation when progress decreases', () => {
+    const rate = unbufferedProgressRate({
+      type: 'scaling',
+      scaling_modifier: 5,
+      scripting_modifier: null,
+      unit_length: null,
+    });
+    expect(
+      computePaceSplitAllocationMinutes({
+        progressDelta: -300,
+        rate,
+        bufferModifier: buffer,
+        paceSplitPercentage: splitPct,
+      }),
+    ).toBe(-18);
+  });
+
+  it('returns 0 when pace split percentage is 0', () => {
+    expect(
+      computePaceSplitAllocationMinutes({
+        progressDelta: 300,
+        rate: 5,
+        bufferModifier: buffer,
+        paceSplitPercentage: 0,
+      }),
+    ).toBe(0);
+  });
+
+  it('returns 0 when buffer modifier is 1 (no buffer difference)', () => {
+    expect(
+      computePaceSplitAllocationMinutes({
+        progressDelta: 300,
+        rate: 5,
+        bufferModifier: 1,
+        paceSplitPercentage: splitPct,
+      }),
+    ).toBe(0);
   });
 });

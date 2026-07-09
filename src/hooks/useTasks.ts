@@ -52,6 +52,17 @@ function upsertTask(tasks: Task[] | undefined, task: Task): Task[] {
   return next;
 }
 
+function upsertTaskIfPresent(tasks: Task[] | undefined, task: Task): Task[] {
+  if (!tasks?.some((t) => t.id === task.id)) return tasks ?? [];
+  return upsertTask(tasks, task);
+}
+
+function taskListWithoutDeleted(tasks: Task[] | undefined, deletedId: string): Task[] {
+  return (
+    tasks?.filter((task) => task.id !== deletedId && task.parent_id !== deletedId) ?? []
+  );
+}
+
 function applyProjectTaskOrder(tasks: Task[], taskIds: string[], projectId: string): Task[] {
   const orderById = new Map(taskIds.map((id, index) => [id, index]));
   return [...tasks]
@@ -347,9 +358,11 @@ export function useUpdateTask(projectId: string) {
     onSuccess: (task) => {
       qc.invalidateQueries({ queryKey: tasksKey(projectId) });
       qc.invalidateQueries({ queryKey: ['tasks', 'many'] });
-      qc.setQueryData<Task[]>(tasksKey(projectId), (prev) => upsertTask(prev, task));
+      // Pace split trigger may have moved target_deadline on progress writes.
+      qc.invalidateQueries({ queryKey: ['pace_settings'] });
+      qc.setQueryData<Task[]>(tasksKey(projectId), (prev) => upsertTaskIfPresent(prev, task));
       qc.setQueriesData<Task[]>({ queryKey: ['tasks', 'many'] }, (prev) =>
-        upsertTask(prev, task),
+        upsertTaskIfPresent(prev, task),
       );
     },
   });
@@ -450,6 +463,8 @@ export function useUpdateAnyTask(projectIds: string[]) {
       qc.invalidateQueries({ queryKey: tasksKey(task.project_id) });
       qc.invalidateQueries({ queryKey: tasksManyKey(projectIds) });
       qc.invalidateQueries({ queryKey: ['tasks', 'many'] });
+      // Pace split trigger may have moved target_deadline on progress writes.
+      qc.invalidateQueries({ queryKey: ['pace_settings'] });
     },
   });
 }
@@ -458,18 +473,23 @@ export function useDeleteTask(projectId: string) {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: async (id: string) => {
-      const { error } = await supabase.from('tasks').delete().eq('id', id);
+      const { data, error } = await supabase
+        .from('tasks')
+        .delete()
+        .eq('id', id)
+        .select('id');
       if (error) throw error;
+      if (!data?.length) {
+        throw new Error('Task could not be deleted.');
+      }
       return id;
     },
     onSuccess: (id) => {
-      qc.setQueryData<Task[]>(
-        tasksKey(projectId),
-        (prev) => prev?.filter((task) => task.id !== id) ?? [],
-      );
-      qc.setQueriesData<Task[]>({ queryKey: ['tasks', 'many'] }, (prev) =>
-        prev?.filter((task) => task.id !== id) ?? [],
-      );
+      const applyDelete = (prev: Task[] | undefined) => taskListWithoutDeleted(prev, id);
+      qc.setQueryData<Task[]>(tasksKey(projectId), applyDelete);
+      qc.setQueriesData<Task[]>({ queryKey: ['tasks', 'many'] }, applyDelete);
+      qc.invalidateQueries({ queryKey: tasksKey(projectId) });
+      qc.invalidateQueries({ queryKey: ['tasks', 'many'] });
     },
   });
 }
@@ -676,11 +696,15 @@ export function useSaveComplexSettings(projectId: string) {
         .filter((id) => !keepIds.has(id));
 
       if (toDelete.length > 0) {
-        const { error: deleteError } = await supabase
+        const { data: deleted, error: deleteError } = await supabase
           .from('tasks')
           .delete()
-          .in('id', toDelete);
+          .in('id', toDelete)
+          .select('id');
         if (deleteError) throw deleteError;
+        if ((deleted?.length ?? 0) !== toDelete.length) {
+          throw new Error('One or more subtasks could not be deleted.');
+        }
       }
 
       const nextSubtaskIds: string[] = [];

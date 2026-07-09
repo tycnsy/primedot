@@ -55,6 +55,20 @@ npm run ios:sync
 
 ---
 
+## Premiere Pro pace panel (UXP)
+
+A read-only **prime. Pace** panel lives in [`premiere-uxp-pace/`](premiere-uxp-pace/). It signs into the same Supabase project and shows live pace while you edit.
+
+```bash
+cd premiere-uxp-pace
+npm install
+npm run build
+```
+
+Load `premiere-uxp-pace/dist/manifest.json` in Adobe’s UXP Developer Tool (Premiere 25.6+). Full steps: [`premiere-uxp-pace/README.md`](premiere-uxp-pace/README.md).
+
+---
+
 ## Environment variables
 
 

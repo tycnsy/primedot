@@ -1,0 +1,62 @@
+{
+  "id": "com.primedev.premiere.pace",
+  "name": "prime. Pace",
+  "version": "1.0.0",
+  "main": "index.html",
+  "manifestVersion": 5,
+  "host": [
+    {
+      "app": "premierepro",
+      "minVersion": "25.6.0"
+    }
+  ],
+  "entrypoints": [
+    {
+      "type": "panel",
+      "id": "pacePanel",
+      "label": {
+        "default": "prime. Pace"
+      },
+      "minimumSize": {
+        "width": 200,
+        "height": 220
+      },
+      "maximumSize": {
+        "width": 2000,
+        "height": 2000
+      },
+      "preferredDockedSize": {
+        "width": 260,
+        "height": 420
+      },
+      "preferredFloatingSize": {
+        "width": 280,
+        "height": 460
+      }
+    }
+  ],
+  "icons": [
+    {
+      "width": 23,
+      "height": 23,
+      "path": "icons/dark.png",
+      "scale": [1, 2],
+      "theme": ["darkest", "dark", "medium"]
+    },
+    {
+      "width": 23,
+      "height": 23,
+      "path": "icons/light.png",
+      "scale": [1, 2],
+      "theme": ["lightest", "light"]
+    }
+  ],
+  "requiredPermissions": {
+    "network": {
+      "domains": [
+        "https://ctqiijkbkjfichtgjuql.supabase.co"
+      ]
+    },
+    "localFileSystem": "plugin"
+  }
+}

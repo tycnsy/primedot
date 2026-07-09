@@ -72,6 +72,7 @@ export default function Layout() {
         label: 'Integrations',
         icon: <IntegrationsIcon />,
       },
+      { id: 'pace-settings', to: '/settings/pace', label: 'Pace', icon: <PaceSettingsIcon /> },
       { id: 'tags', to: '/settings/tags', label: 'Tags', icon: <TagIcon /> },
       { id: 'series', to: '/settings/series', label: 'Series', icon: <SeriesIcon /> },
     ],
@@ -1016,6 +1017,25 @@ function IntegrationsIcon() {
     >
       <path d="M10 13a4 4 0 0 0 5.66 0l3-3a4 4 0 0 0-5.66-5.66l-1.5 1.5" />
       <path d="M14 11a4 4 0 0 0-5.66 0l-3 3a4 4 0 0 0 5.66 5.66l1.5-1.5" />
+    </svg>
+  );
+}
+
+function PaceSettingsIcon() {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      width="16"
+      height="16"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.6"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden
+    >
+      <circle cx="12" cy="12" r="9" />
+      <path d="M12 7v5l3 2" />
     </svg>
   );
 }

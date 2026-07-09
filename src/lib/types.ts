@@ -56,6 +56,14 @@ export interface HeatmapSettings {
   updated_at: string;
 }
 
+/** App-wide preference: share of buffer-only time allocated into pace margin on progress. */
+export interface PaceSplitSettings {
+  user_id: string;
+  pace_split_percentage: number;
+  created_at: string;
+  updated_at: string;
+}
+
 export interface Task {
   id: string;
   project_id: string;

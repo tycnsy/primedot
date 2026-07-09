@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>prime. Pace</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <div id="app" class="app">
+      <div class="boot" id="boot-msg">Loading…</div>
+    </div>
+    <script>
+      // If main.js never runs, surface that instead of infinite Loading.
+      setTimeout(function () {
+        var root = document.getElementById('app');
+        if (!root || root.getAttribute('data-prime-boot') === '1') return;
+        root.innerHTML =
+          '<div class="shell">' +
+          '<header class="header"><div class="brand">prime.</div><div class="subtitle">Pace · Premiere</div></header>' +
+          '<div class="banner error">Panel script did not start. Load <b>premiere-uxp-pace/dist/manifest.json</b> in UXP Developer Tool (not the source folder), then Unload + Load after rebuilding.</div>' +
+          '</div>';
+      }, 2500);
+    </script>
+    <script src="main.js"></script>
+  </body>
+</html>

@@ -13,7 +13,9 @@
     "test:watch": "vitest",
     "cap:sync": "npm run build && npx cap sync",
     "ios:sync": "npm run build && npx cap sync ios",
-    "ios:open": "npx cap open ios"
+    "ios:open": "npx cap open ios",
+    "premiere:build": "npm --prefix premiere-uxp-pace run build",
+    "premiere:watch": "npm --prefix premiere-uxp-pace run watch"
   },
   "dependencies": {
     "@capacitor/app": "^8.1.0",

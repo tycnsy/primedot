@@ -126,6 +126,31 @@ All times in seconds; `now()` is the current time in the user's timezone.
 - **`current_pace_end`** (timestamp): `now() + current_pace`, which simplifies to `target_deadline - project.remaining_progress`.
   - Stable over time — only changes when `remaining_progress` or `target_deadline` changes. (Because `now()` and `current_pace` cancel each other out second-by-second.)
 
+### `pace_split_settings`
+
+One row per user (app-wide). Controls how progress updates allocate buffer-only time into pace margin.
+
+| Field | Type | Notes |
+|---|---|---|
+| `user_id` | uuid (PK, FK → auth.users) | |
+| `pace_split_percentage` | numeric | 0–100. Default `0`. Share of the buffer-only estimate difference allocated into margin on each progress change. |
+
+#### Progress → pace split allocation
+
+When `current_progress` changes (UI or third-party sync), a DB trigger may adjust `target_deadline` (never `true_deadline`). Steps for the progress delta:
+
+1. **True estimated time** (no buffer): `progress_delta × unbuffered_rate`
+   - scaling: `scaling_modifier`
+   - scripting: `scripting_modifier`
+   - custom: `unit_length`
+   - manual: `1`
+   - compressed parent: sum of subtask `scaling_modifier`
+2. **Buffer estimated time**: `true_estimated × project.buffer_modifier`
+3. **Estimated time difference**: `buffer_estimated − true_estimated` (the portion added by buffer)
+4. **Allocation**: `round((difference × pace_split_percentage / 100) / 60)` minutes are **subtracted** from `target_deadline` (target moves earlier → margin grows). Rounding is half away from zero (Postgres `round(numeric)`). Progress decreases reverse the sign (target moves later).
+
+Skipped when percentage is `0`, the project has no `pace_settings` row, progress delta is `0`, or the task's unbuffered rate is `0` (expanded parents / compressed subtasks — parent is counted instead).
+
 ---
 
 ## Buffer Modifier

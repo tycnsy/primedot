@@ -1,0 +1,21 @@
+{
+  "name": "prime-premiere-pace",
+  "private": true,
+  "version": "1.0.0",
+  "description": "Read-only prime. pace HUD panel for Adobe Premiere Pro (UXP).",
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "watch": "node scripts/build.mjs --watch",
+    "clean": "rm -rf dist"
+  },
+  "devDependencies": {
+    "esbuild": "^0.25.5"
+  },
+  "main": "index.js",
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "@supabase/supabase-js": "^2.110.1"
+  }
+}
