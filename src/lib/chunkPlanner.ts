@@ -54,8 +54,11 @@ export function remainingProgressUnits(
     Task,
     | 'type'
     | 'current_progress'
+    | 'scaling_modifier'
+    | 'scripting_modifier'
     | 'script_length'
     | 'unit_count'
+    | 'unit_length'
     | 'manual_length'
     | 'complex_mode'
     | 'id'
