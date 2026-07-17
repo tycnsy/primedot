@@ -61,6 +61,8 @@ Each task in `GET /projects` includes grouping settings for censaySplit's
 |-------|------|-------|
 | `groupable` | boolean | When `false`, exclude this task from grouping runs. |
 | `grouping_progress` | integer \| null | Progress increment per grouping. Same units as `current_progress`: seconds for `scaling` / `scripting` / `manual`; whole units for `custom`. `null` when not groupable. |
+| `subsplit_length` | integer | Subsplit length in seconds. Default `60` (`00:01:00`). |
+| `source_timecode_based` | boolean | When `true`, external apps should treat the task as source-timecode-based. Default `false`. |
 
 Use `sort_order` to determine grouping sequence. For each groupable task,
 censaySplit can target `current_progress + grouping_progress`.
@@ -72,5 +74,6 @@ This function relies on:
 - `public.projects` and `public.tasks` (created by `001_init.sql`).
 - `public.integration_tokens` (created by `014_integration_tokens.sql`).
 - `037_task_grouping.sql` — `grouping_progress` and `groupable` on tasks.
+- `049_task_subsplit_and_source_timecode.sql` — `subsplit_length` and `source_timecode_based` on tasks.
 
 Run the migrations in the Supabase SQL editor before invoking the function.

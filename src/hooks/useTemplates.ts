@@ -92,11 +92,14 @@ type TemplateTaskInsertRow = {
   unit_count: number | null;
   unit_length: number | null;
   manual_length: number | null;
+  video_rate: number | null;
   sort_order: number;
   parent_id?: string | null;
   complex_mode: Task['complex_mode'];
   grouping_progress: number | null;
   groupable: boolean;
+  subsplit_length: number;
+  source_timecode_based: boolean;
 };
 
 type ProjectTaskInsertRow = {
@@ -111,11 +114,14 @@ type ProjectTaskInsertRow = {
   unit_count: number | null;
   unit_length: number | null;
   manual_length: number | null;
+  video_rate: number | null;
   sort_order: number;
   parent_id?: string | null;
   complex_mode: Task['complex_mode'];
   grouping_progress: number | null;
   groupable: boolean;
+  subsplit_length: number;
+  source_timecode_based: boolean;
 };
 
 function templateTaskRowFromTask(
@@ -133,11 +139,14 @@ function templateTaskRowFromTask(
     unit_count: task.unit_count,
     unit_length: task.unit_length,
     manual_length: task.manual_length,
+    video_rate: task.video_rate,
     sort_order: task.sort_order,
     ...(parentId === undefined ? {} : { parent_id: parentId }),
     complex_mode: task.complex_mode,
     grouping_progress: task.grouping_progress,
     groupable: task.groupable,
+    subsplit_length: task.subsplit_length,
+    source_timecode_based: task.source_timecode_based,
   };
 }
 
@@ -158,11 +167,14 @@ function projectTaskRowFromTemplate(
     unit_count: task.unit_count,
     unit_length: task.unit_length,
     manual_length: task.manual_length,
+    video_rate: task.video_rate,
     sort_order: task.sort_order,
     ...(parentId === undefined ? {} : { parent_id: parentId }),
     complex_mode: task.complex_mode,
     grouping_progress: task.grouping_progress,
     groupable: task.groupable,
+    subsplit_length: task.subsplit_length,
+    source_timecode_based: task.source_timecode_based,
   };
 }
 

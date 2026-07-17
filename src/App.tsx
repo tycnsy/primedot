@@ -11,6 +11,7 @@ import ProjectDetail from './pages/ProjectDetail';
 import ProjectsPace from './pages/ProjectsPace';
 import Calendar from './pages/Calendar';
 import Todos from './pages/Todos';
+import ChunkPlanner from './pages/ChunkPlanner';
 import Timer from './pages/Timer';
 import Templates from './pages/Templates';
 import TemplatesArchive from './pages/TemplatesArchive';
@@ -114,6 +115,7 @@ export default function App() {
           <Route path="/projects/archive" element={<ProjectsArchive />} />
           <Route path="/calendar" element={<Calendar />} />
           <Route path="/todos" element={<Todos />} />
+          <Route path="/chunks" element={<ChunkPlanner />} />
           <Route path="/projects/pace" element={<ProjectsPace />} />
           <Route path="/heatmap" element={<Heatmap />} />
           <Route path="/heatmap/goals" element={<HeatmapGoals />} />

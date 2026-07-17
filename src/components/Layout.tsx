@@ -61,6 +61,7 @@ export default function Layout() {
         icon: <TodoIcon />,
         badge: overdueTodoCount,
       },
+      { id: 'chunks', to: '/chunks', label: 'Chunks', icon: <ChunksIcon /> },
       { id: 'timer', to: '/timer', label: 'Timer', icon: <TimerIcon /> },
       { id: 'habits', to: '/habits/today', label: 'Habits', icon: <HabitsIcon /> },
       { id: 'goals', to: '/goals', label: 'Goals', icon: <GoalsIcon /> },
@@ -893,6 +894,26 @@ function TodoIcon() {
       <path d="m3 17 2 2 3-3" />
       <path d="M12 8h9" />
       <path d="M12 18h9" />
+    </svg>
+  );
+}
+
+function ChunksIcon() {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      width="16"
+      height="16"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.6"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden
+    >
+      <rect x="3" y="4" width="18" height="4" rx="1" />
+      <rect x="3" y="10" width="18" height="4" rx="1" />
+      <rect x="3" y="16" width="12" height="4" rx="1" />
     </svg>
   );
 }

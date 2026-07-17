@@ -12,6 +12,12 @@ const SUPABASE_URL = __SUPABASE_URL__;
 const SUPABASE_ANON_KEY = __SUPABASE_ANON_KEY__;
 const BOOT_TIMEOUT_MS = 10000;
 const PANEL_ID = 'pacePanel';
+const MAX_CARD_COLS = 5;
+const CARD_GAP_PX = 8;
+const CARD_PAD_X_PX = 24; // 12px padding each side
+const CARD_BORDER_X_PX = 2; // 1px border each side
+const PACE_MIN_WIDTH_FACTOR = 1.5;
+const LAYOUT_RESIZE_DEBOUNCE_MS = 80;
 
 const client = createSupabaseClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 const app = document.getElementById('app');
@@ -31,6 +37,9 @@ const state = {
 
 let refreshTimer = null;
 let tickTimer = null;
+let resizeTimer = null;
+let paceProbeEl = null;
+let cachedPaceNumberWidth = 0;
 
 function escapeHtml(value) {
   return String(value == null ? '' : value)
@@ -100,6 +109,26 @@ function setupPanelMenu() {
   }
 }
 
+function getLiveItems() {
+  return (state.snapshot && state.snapshot.items ? state.snapshot.items : []).map(
+    function (item) {
+      return liveItem(item, state.now);
+    },
+  );
+}
+
+function getSelectedItem(items) {
+  var selected = null;
+  for (var i = 0; i < items.length; i++) {
+    if (items[i].projectId === state.selectedId) {
+      selected = items[i];
+      break;
+    }
+  }
+  if (!selected && items.length) selected = items[0];
+  return selected;
+}
+
 function render() {
   if (!app) return;
 
@@ -135,19 +164,8 @@ function render() {
     return;
   }
 
-  var items = (state.snapshot && state.snapshot.items ? state.snapshot.items : []).map(
-    function (item) {
-      return liveItem(item, state.now);
-    },
-  );
-  var selected = null;
-  for (var i = 0; i < items.length; i++) {
-    if (items[i].projectId === state.selectedId) {
-      selected = items[i];
-      break;
-    }
-  }
-  if (!selected && items.length) selected = items[0];
+  var items = getLiveItems();
+  var selected = getSelectedItem(items);
 
   if (state.view === 'detail' && selected) {
     app.innerHTML = renderDetail(selected);
@@ -157,6 +175,73 @@ function render() {
 
   app.innerHTML = renderList(items);
   bindChrome();
+  layoutCardGrid();
+}
+
+/** Update timers in place — avoids destroying the card grid every second. */
+function updateLiveDom() {
+  if (!app) return;
+  if (state.view !== 'list' && state.view !== 'detail') return;
+
+  var items = getLiveItems();
+  var cards = app.querySelectorAll('.pace-card[data-id]');
+  if (!cards.length) {
+    render();
+    return;
+  }
+
+  var byId = {};
+  for (var i = 0; i < items.length; i++) {
+    byId[items[i].projectId] = items[i];
+  }
+
+  // Project set changed — full rebuild.
+  if (cards.length !== items.length) {
+    render();
+    return;
+  }
+
+  for (var c = 0; c < cards.length; c++) {
+    var card = cards[c];
+    var id = card.getAttribute('data-id');
+    var item = byId[id];
+    if (!item) {
+      render();
+      return;
+    }
+
+    var tone = item.tone;
+    card.className =
+      'pace-card tone-' + tone + (card.className.indexOf('expanded') >= 0 ? ' expanded' : '');
+
+    var paceEl = card.querySelector('.pace-card-pace');
+    if (paceEl) {
+      paceEl.className = 'pace-card-pace is-' + tone;
+      paceEl.textContent = formatHMS(item.paceSeconds);
+    }
+
+    var marginEl = card.querySelector('.pace-card-margin');
+    if (marginEl) {
+      marginEl.className =
+        item.marginSeconds < 0 ? 'pace-card-margin is-behind' : 'pace-card-margin';
+      marginEl.textContent = formatHMS(item.marginSeconds);
+    }
+
+    var endEl = card.querySelector('.pace-card-end');
+    if (endEl) {
+      endEl.textContent = formatPaceEnd(item.paceEnd);
+    }
+
+    var extraLines = card.querySelectorAll('.pace-card-extra-line');
+    if (extraLines.length >= 2) {
+      // Structure: muted label + <br/> + value — replace whole line text carefully.
+      extraLines[0].innerHTML =
+        '<span class="muted">Remaining</span><br/>' + formatHMS(item.remainingSeconds);
+      extraLines[1].innerHTML =
+        '<span class="muted">Est.</span><br/>' +
+        escapeHtml(formatShortDate(item.estimatedCompletion));
+    }
+  }
 }
 
 function renderList(items) {
@@ -261,6 +346,115 @@ function bindChrome() {
   }
 }
 
+function ensurePaceProbe() {
+  if (paceProbeEl && paceProbeEl.parentNode) return paceProbeEl;
+  paceProbeEl = document.createElement('div');
+  paceProbeEl.className = 'pace-card-pace pace-number-probe';
+  paceProbeEl.setAttribute('aria-hidden', 'true');
+  paceProbeEl.textContent = '00:00:00';
+  // Inline styles beat inherited width:100% from .pace-card-pace in UXP.
+  paceProbeEl.style.width = 'auto';
+  paceProbeEl.style.display = 'inline-block';
+  paceProbeEl.style.whiteSpace = 'nowrap';
+  paceProbeEl.style.position = 'absolute';
+  paceProbeEl.style.left = '-9999px';
+  paceProbeEl.style.visibility = 'hidden';
+  document.body.appendChild(paceProbeEl);
+  return paceProbeEl;
+}
+
+function getPaceNumberWidth() {
+  var probe = ensurePaceProbe();
+  var width = Math.max(probe.offsetWidth || 0, probe.scrollWidth || 0);
+  // Guard against UXP measuring the probe as full panel width (width:100% leak).
+  if (width > 40 && width < 200) cachedPaceNumberWidth = width;
+  // Fallback ~ "00:00:00" at 22px bold if probe fails in UXP.
+  return cachedPaceNumberWidth || 110;
+}
+
+function getMinCardWidth() {
+  return Math.ceil(getPaceNumberWidth() * PACE_MIN_WIDTH_FACTOR) + CARD_PAD_X_PX + CARD_BORDER_X_PX;
+}
+
+function collectPaceCards(grid) {
+  var cards = [];
+  var children = grid.childNodes;
+  for (var i = 0; i < children.length; i++) {
+    var child = children[i];
+    if (!child || child.nodeType !== 1) continue;
+    if (child.classList && child.classList.contains('pace-card')) {
+      cards.push(child);
+      continue;
+    }
+    if (child.classList && child.classList.contains('card-row')) {
+      var rowKids = child.childNodes;
+      for (var j = 0; j < rowKids.length; j++) {
+        var card = rowKids[j];
+        if (card && card.nodeType === 1 && card.classList && card.classList.contains('pace-card')) {
+          cards.push(card);
+        }
+      }
+    }
+  }
+  return cards;
+}
+
+function layoutCardGrid() {
+  if (!app) return;
+  var grid = app.querySelector('.card-grid');
+  if (!grid || (grid.classList && grid.classList.contains('single'))) return;
+
+  var cards = collectPaceCards(grid);
+  if (!cards.length) return;
+
+  var panelWidth = grid.clientWidth || 0;
+  if (panelWidth <= 0) return;
+
+  var minCardWidth = getMinCardWidth();
+  // Account for gaps: n cards need (n-1) gaps → floor((W + gap) / (min + gap))
+  var cols = Math.min(
+    MAX_CARD_COLS,
+    cards.length,
+    Math.max(1, Math.floor((panelWidth + CARD_GAP_PX) / (minCardWidth + CARD_GAP_PX))),
+  );
+
+  while (grid.firstChild) {
+    grid.removeChild(grid.firstChild);
+  }
+
+  for (var start = 0; start < cards.length; start += cols) {
+    var rowCards = cards.slice(start, start + cols);
+    var row = document.createElement('div');
+    row.className = 'card-row';
+    var count = rowCards.length;
+
+    for (var i = 0; i < count; i++) {
+      var card = rowCards[i];
+      // Equal flex share fills the row; avoids calc()/pixel↔scrollbar thrash in UXP.
+      card.style.width = 'auto';
+      card.style.flex = '1 1 0';
+      card.style.minWidth = '0';
+      card.style.height = 'auto';
+      card.style.marginRight = i < count - 1 ? CARD_GAP_PX + 'px' : '0';
+      card.style.marginBottom = '0';
+      row.appendChild(card);
+    }
+    grid.appendChild(row);
+  }
+}
+
+function scheduleLayoutCardGrid() {
+  if (resizeTimer) clearTimeout(resizeTimer);
+  resizeTimer = setTimeout(function () {
+    resizeTimer = null;
+    layoutCardGrid();
+  }, LAYOUT_RESIZE_DEBOUNCE_MS);
+}
+
+function setupResizeListener() {
+  window.addEventListener('resize', scheduleLayoutCardGrid);
+}
+
 function onLogin(event) {
   event.preventDefault();
   var emailEl = document.getElementById('email');
@@ -332,7 +526,21 @@ function refreshSnapshot() {
     .then(function () {
       state.loading = false;
       state.now = new Date();
-      render();
+      var grid = app && app.querySelector('.card-grid');
+      var existingCards = grid ? grid.querySelectorAll('.pace-card[data-id]') : [];
+      var items = state.snapshot && state.snapshot.items ? state.snapshot.items : [];
+      var hasBanner = !!(app && app.querySelector('.banner.error'));
+      var errorMismatch = !!state.lastError !== hasBanner;
+      var canPatch =
+        (state.view === 'list' || state.view === 'detail') &&
+        existingCards.length > 0 &&
+        existingCards.length === items.length &&
+        !errorMismatch;
+      if (canPatch) {
+        updateLiveDom();
+      } else {
+        render();
+      }
     });
 }
 
@@ -340,7 +548,7 @@ function startTimers() {
   stopTimers();
   tickTimer = setInterval(function () {
     state.now = new Date();
-    if (state.view === 'list' || state.view === 'detail') render();
+    if (state.view === 'list' || state.view === 'detail') updateLiveDom();
   }, 1000);
   refreshTimer = setInterval(function () {
     refreshSnapshot();
@@ -386,6 +594,7 @@ try {
   } else {
     app.setAttribute('data-prime-boot', '1');
     setupPanelMenu();
+    setupResizeListener();
     boot();
   }
 } catch (err) {

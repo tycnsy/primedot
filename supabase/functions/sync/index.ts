@@ -150,6 +150,8 @@ async function handleListProjects(userId: string): Promise<Response> {
     complex_mode: 'compressed' | 'expanded' | null;
     grouping_progress: number | null;
     groupable: boolean;
+    subsplit_length: number;
+    source_timecode_based: boolean;
     created_at: string;
   };
 
@@ -161,7 +163,7 @@ async function handleListProjects(userId: string): Promise<Response> {
       const tasksResUnknown = await admin
         .from('tasks')
         .select(
-          'id,project_id,name,status,type,current_progress,scaling_modifier,scripting_modifier,script_length,unit_count,unit_length,manual_length,sort_order,parent_id,complex_mode,grouping_progress,groupable,created_at',
+          'id,project_id,name,status,type,current_progress,scaling_modifier,scripting_modifier,script_length,unit_count,unit_length,manual_length,sort_order,parent_id,complex_mode,grouping_progress,groupable,subsplit_length,source_timecode_based,created_at',
         )
         .in('project_id', chunk)
         .order('project_id', { ascending: true })

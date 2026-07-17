@@ -24,6 +24,7 @@ interface FieldsState {
   unit_count: string;
   unit_length_seconds: string;
   manual_length_hms: string;
+  video_rate: string;
 }
 
 function defaults(initial?: Task | null): FieldsState {
@@ -41,6 +42,7 @@ function defaults(initial?: Task | null): FieldsState {
       initial?.unit_length != null ? String(initial.unit_length) : '',
     manual_length_hms:
       initial?.manual_length != null ? formatHMS(initial.manual_length) : '',
+    video_rate: initial?.video_rate != null ? String(initial.video_rate) : '',
   };
 }
 
@@ -72,6 +74,12 @@ export default function TaskForm({
       ? String(initial.grouping_progress)
       : formatHMS(initial.grouping_progress);
   });
+  const [subsplitLengthStr, setSubsplitLengthStr] = useState<string>(() =>
+    formatHMS(initial?.subsplit_length ?? 60),
+  );
+  const [sourceTimecodeBased, setSourceTimecodeBased] = useState(
+    () => initial?.source_timecode_based ?? false,
+  );
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
@@ -90,9 +98,9 @@ export default function TaskForm({
       case 'scaling':
         return 'scaling_modifier = real minutes per 1 minute of finished video.';
       case 'scripting':
-        return 'scripting_modifier = real minutes per 1 minute of script.';
+        return 'scripting_modifier = real minutes per 1 minute of script. video_rate (optional) = script minutes per 1 minute of finished video; 0 = N/A — planning only.';
       case 'custom':
-        return 'unit_length is real seconds per 1 unit (e.g. one recorded line).';
+        return 'unit_length is real seconds per 1 unit (e.g. one recorded line). video_rate (optional) = units per 1 minute of finished video; 0 = N/A — planning only.';
       case 'manual':
         return 'manual_length is your flat estimate of total real time, before buffer.';
     }
@@ -126,10 +134,13 @@ export default function TaskForm({
       unit_count: null,
       unit_length: null,
       manual_length: null,
+      video_rate: null,
       parent_id: initial?.parent_id ?? null,
       complex_mode: initial?.complex_mode ?? null,
       grouping_progress: null,
       groupable: false,
+      subsplit_length: 60,
+      source_timecode_based: false,
     };
 
     if (type === 'scaling') {
@@ -145,6 +156,12 @@ export default function TaskForm({
       if (len == null) return setError('Script length must be hh:mm:ss.');
       input.scripting_modifier = v;
       input.script_length = len;
+      if (fields.video_rate.trim() !== '') {
+        const rate = Number.parseFloat(fields.video_rate);
+        if (!Number.isFinite(rate) || rate < 0)
+          return setError('Video rate must be ≥ 0 (0 = N/A).');
+        input.video_rate = rate;
+      }
     } else if (type === 'custom') {
       const count = Number.parseInt(fields.unit_count, 10);
       const ulen = Number.parseInt(fields.unit_length_seconds, 10);
@@ -154,6 +171,12 @@ export default function TaskForm({
         return setError('Unit length must be a positive whole number of seconds.');
       input.unit_count = count;
       input.unit_length = ulen;
+      if (fields.video_rate.trim() !== '') {
+        const rate = Number.parseFloat(fields.video_rate);
+        if (!Number.isFinite(rate) || rate < 0)
+          return setError('Video rate must be ≥ 0 (0 = N/A).');
+        input.video_rate = rate;
+      }
     } else {
       const len = parseHMS(fields.manual_length_hms);
       if (len == null) return setError('Manual length must be hh:mm:ss.');
@@ -180,6 +203,18 @@ export default function TaskForm({
     } else {
       input.grouping_progress = initial?.grouping_progress ?? null;
       input.groupable = initial?.groupable ?? false;
+    }
+
+    if (showGroupings) {
+      const subsplitSec = parseHMS(subsplitLengthStr);
+      if (subsplitSec == null || subsplitSec < 0) {
+        return setError('Subsplit length must be hh:mm:ss.');
+      }
+      input.subsplit_length = subsplitSec;
+      input.source_timecode_based = sourceTimecodeBased;
+    } else {
+      input.subsplit_length = initial?.subsplit_length ?? 60;
+      input.source_timecode_based = initial?.source_timecode_based ?? false;
     }
 
     setBusy(true);
@@ -256,6 +291,20 @@ export default function TaskForm({
                 placeholder="00:10:00"
               />
             </div>
+            <div className="space-y-1 sm:col-span-2">
+              <label className="label">
+                Minutes per minute of video (planning, 0 = N/A)
+              </label>
+              <input
+                type="number"
+                step="0.1"
+                min="0"
+                className="input"
+                value={fields.video_rate}
+                onChange={(e) => update('video_rate', e.target.value)}
+                placeholder="e.g. 1.5 or 0"
+              />
+            </div>
           </>
         )}
 
@@ -281,6 +330,20 @@ export default function TaskForm({
                 value={fields.unit_length_seconds}
                 onChange={(e) => update('unit_length_seconds', e.target.value)}
                 placeholder="30"
+              />
+            </div>
+            <div className="space-y-1 sm:col-span-2">
+              <label className="label">
+                Units per minute of video (planning, 0 = N/A)
+              </label>
+              <input
+                type="number"
+                step="0.1"
+                min="0"
+                className="input"
+                value={fields.video_rate}
+                onChange={(e) => update('video_rate', e.target.value)}
+                placeholder="e.g. 10 or 0"
               />
             </div>
           </>
@@ -338,6 +401,23 @@ export default function TaskForm({
               placeholder={type === 'custom' ? '6' : '00:03:00'}
             />
           </div>
+          <div className="space-y-1">
+            <label className="label">Subsplit length (hh:mm:ss)</label>
+            <input
+              className="input font-sans"
+              value={subsplitLengthStr}
+              onChange={(e) => setSubsplitLengthStr(e.target.value)}
+              placeholder="00:01:00"
+            />
+          </div>
+          <label className="flex items-center gap-2 text-sm text-fg">
+            <input
+              type="checkbox"
+              checked={sourceTimecodeBased}
+              onChange={(e) => setSourceTimecodeBased(e.target.checked)}
+            />
+            Source timecode based
+          </label>
         </div>
       ) : null}
 

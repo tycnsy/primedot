@@ -72,6 +72,9 @@ Mirrors the project hierarchy: top-level templates can have child templates via 
 | `unit_count` | integer | `custom` |
 | `unit_length` | integer (seconds) | `custom` — real seconds per unit |
 | `manual_length` | integer (seconds) | `manual` — total real seconds the task should take, before buffer |
+| `video_rate` | numeric (nullable) | Planning-only (does not affect `task_length` / progress). `custom`: units per 1 minute of finished video. `scripting`: minutes of script per 1 minute of finished video. `0` = N/A (no direct correlation to video length). Unused by `scaling` / `manual`. |
+| `subsplit_length` | integer (seconds) | Default `60` (`00:01:00`). Used by censaySplit; does not affect `task_length` / progress. |
+| `source_timecode_based` | boolean | Default `false`. Originates in Prime for external apps; does not affect `task_length` / progress. |
 
 ### Task — calculated properties (computed at read time)
 
@@ -96,6 +99,7 @@ Mirrors the project hierarchy: top-level templates can have child templates via 
 - **`scripting_modifier`** — real minutes per 1 minute of `script_length`. Same idea but the reference is the script, not the final video.
 - **`unit_length`** — real seconds it takes to complete one unit (e.g. one recorded line).
 - **`manual_length`** — the user's flat estimate of total real seconds the task should take, before buffer.
+- **`video_rate`** — planning-only link to finished `video_length`. For `custom`, how many units correspond to 1 minute of video. For `scripting`, how many minutes of script correspond to 1 minute of finished video. Use `0` for N/A when the task does not correlate to video length. Not used in length/progress formulas.
 - **`buffer_modifier`** (project-level) — applied on top of all of the above. So `task_length` always represents the *buffered* total real time the task is expected to take.
 
 ---

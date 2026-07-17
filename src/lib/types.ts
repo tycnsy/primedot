@@ -77,11 +77,17 @@ export interface Task {
   unit_count: number | null;
   unit_length: number | null;
   manual_length: number | null;
+  /** Planning-only. custom: units per 1 min of video; scripting: script minutes per 1 min of video. 0 = N/A. */
+  video_rate: number | null;
   sort_order: number;
   parent_id: string | null;
   complex_mode: ComplexMode | null;
   grouping_progress: number | null;
   groupable: boolean;
+  /** Seconds. Default 60 (00:01:00). Used by censaySplit; not used in length/progress formulas. */
+  subsplit_length: number;
+  /** Originates in Prime for external apps. Default false. Not used in length/progress formulas. */
+  source_timecode_based: boolean;
   created_at: string;
 }
 
@@ -126,11 +132,17 @@ export interface TemplateTask {
   unit_count: number | null;
   unit_length: number | null;
   manual_length: number | null;
+  /** Planning-only. custom: units per 1 min of video; scripting: script minutes per 1 min of video. 0 = N/A. */
+  video_rate: number | null;
   sort_order: number;
   parent_id: string | null;
   complex_mode: ComplexMode | null;
   grouping_progress: number | null;
   groupable: boolean;
+  /** Seconds. Default 60 (00:01:00). Used by censaySplit; not used in length/progress formulas. */
+  subsplit_length: number;
+  /** Originates in Prime for external apps. Default false. Not used in length/progress formulas. */
+  source_timecode_based: boolean;
   created_at: string;
 }
 

@@ -110,22 +110,34 @@ body {
   border: 1px solid #7a3a3a;
 }
 
-/* UXP has no CSS Grid — flex wrap for a 2-column card layout */
+/* UXP has no CSS Grid — JS builds .card-row children for column count */
 .card-grid {
   flex: 1;
-  overflow: auto;
+  overflow-x: hidden;
+  overflow-y: auto;
   display: flex;
-  flex-direction: row;
-  flex-wrap: wrap;
-  align-content: flex-start;
+  flex-direction: column;
   align-items: stretch;
+  align-content: flex-start;
   min-height: 0;
 }
 
 .card-grid.single {
   overflow: hidden;
-  flex-direction: column;
+}
+
+.card-row {
+  display: flex;
+  flex-direction: row;
   flex-wrap: nowrap;
+  align-items: stretch;
+  width: 100%;
+  margin: 0 0 8px 0;
+  flex: 0 0 auto;
+}
+
+.card-row:last-child {
+  margin-bottom: 0;
 }
 
 .card-grid.single .pace-card {
@@ -141,8 +153,10 @@ body {
   flex-direction: column;
   justify-content: center;
   align-items: center;
-  width: calc(50% - 4px);
-  margin: 0 8px 8px 0;
+  flex: 0 0 auto;
+  min-width: 0;
+  height: auto;
+  margin: 0;
   padding: 14px 12px;
   text-align: center;
   border-radius: 10px;
@@ -151,10 +165,19 @@ body {
   color: #f2f2f2;
   cursor: pointer;
   box-sizing: border-box;
+  overflow: hidden;
 }
 
-.card-grid .pace-card:nth-child(2n) {
-  margin-right: 0;
+/* Intrinsic width only — must not inherit .pace-card-pace { width: 100% } */
+.pace-number-probe {
+  position: absolute;
+  left: -9999px;
+  top: 0;
+  visibility: hidden;
+  pointer-events: none;
+  white-space: nowrap;
+  width: auto;
+  display: inline-block;
 }
 
 .pace-card.tone-ahead {
@@ -208,6 +231,9 @@ body {
   font-weight: 700;
   margin-bottom: 8px;
   line-height: 1.25;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .pace-card-margin {
