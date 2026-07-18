@@ -176,7 +176,10 @@ export function calculatedProgress(
  * manual:    task.manual_length
  * custom:    task.unit_count
  */
-export function progressTarget(task: TaskProgressSource, project: Project): number {
+export function progressTarget(
+  task: TaskProgressSource,
+  project: Pick<Project, 'video_length'>,
+): number {
   switch (task.type) {
     case 'scaling':
       return safeNum(project.video_length);
