@@ -61,7 +61,7 @@ Each task in `GET /projects` includes grouping settings for censaySplit's
 |-------|------|-------|
 | `groupable` | boolean | When `false`, exclude this task from grouping runs. |
 | `grouping_progress` | integer \| null | Progress increment per grouping. Same units as `current_progress`: seconds for `scaling` / `scripting` / `manual`; whole units for `custom`. `null` when not groupable. |
-| `subsplit_length` | integer | Subsplit length in seconds. Default `60` (`00:01:00`). |
+| `subsplit_length` | integer | Subsplit length in seconds (timestamp-style tasks) or units (`custom`). Default `60`. |
 | `source_timecode_based` | boolean | When `true`, external apps should treat the task as source-timecode-based. Default `false`. |
 
 Use `sort_order` to determine grouping sequence. For each groupable task,

@@ -25,6 +25,14 @@ function formatValue(value: string | null): string {
   return value;
 }
 
+function toLocalDateTimeInputValue(iso: string): string {
+  const date = new Date(iso);
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(
+    date.getHours(),
+  )}:${pad(date.getMinutes())}`;
+}
+
 function EditLogModal({
   log,
   onClose,
@@ -33,15 +41,23 @@ function EditLogModal({
 }: {
   log: RealtimeLog;
   onClose: () => void;
-  onSave: (patch: { realtime_delta_seconds: number; new_value: string | null }) => void;
+  onSave: (patch: {
+    realtime_delta_seconds: number;
+    new_value: string | null;
+    logged_at: string;
+  }) => void;
   saving: boolean;
 }) {
   const [deltaInput, setDeltaInput] = useState(String(log.realtime_delta_seconds));
   const [newValueInput, setNewValueInput] = useState(log.new_value ?? '');
+  const [loggedAtInput, setLoggedAtInput] = useState(
+    toLocalDateTimeInputValue(log.logged_at),
+  );
 
   useEffect(() => {
     setDeltaInput(String(log.realtime_delta_seconds));
     setNewValueInput(log.new_value ?? '');
+    setLoggedAtInput(toLocalDateTimeInputValue(log.logged_at));
   }, [log]);
 
   return (
@@ -52,6 +68,18 @@ function EditLogModal({
           {changeKindLabel(log.change_kind)} · {log.project_name}
           {log.task_name ? ` · ${log.task_name}` : ''}
         </p>
+        <div className="space-y-1">
+          <label className="label" htmlFor="log-logged-at">
+            Date &amp; time
+          </label>
+          <input
+            id="log-logged-at"
+            className="input"
+            type="datetime-local"
+            value={loggedAtInput}
+            onChange={(e) => setLoggedAtInput(e.target.value)}
+          />
+        </div>
         <div className="space-y-1">
           <label className="label" htmlFor="log-delta">
             Realtime delta (seconds)
@@ -86,10 +114,12 @@ function EditLogModal({
             disabled={saving}
             onClick={() => {
               const parsed = Number(deltaInput);
-              if (!Number.isFinite(parsed)) return;
+              const nextLoggedAt = new Date(loggedAtInput);
+              if (!Number.isFinite(parsed) || Number.isNaN(nextLoggedAt.getTime())) return;
               onSave({
                 realtime_delta_seconds: parsed,
                 new_value: newValueInput.trim().length > 0 ? newValueInput : null,
+                logged_at: nextLoggedAt.toISOString(),
               });
             }}
           >

@@ -74,9 +74,10 @@ export default function TaskForm({
       ? String(initial.grouping_progress)
       : formatHMS(initial.grouping_progress);
   });
-  const [subsplitLengthStr, setSubsplitLengthStr] = useState<string>(() =>
-    formatHMS(initial?.subsplit_length ?? 60),
-  );
+  const [subsplitLengthStr, setSubsplitLengthStr] = useState<string>(() => {
+    const value = initial?.subsplit_length ?? 60;
+    return initial?.type === 'custom' ? String(value) : formatHMS(value);
+  });
   const [sourceTimecodeBased, setSourceTimecodeBased] = useState(
     () => initial?.source_timecode_based ?? false,
   );
@@ -88,6 +89,7 @@ export default function TaskForm({
   useEffect(() => {
     if (initial) return;
     setCurrentProgressStr(type === 'custom' ? '0' : '00:00:00');
+    setSubsplitLengthStr(type === 'custom' ? '60' : formatHMS(60));
   }, [type, initial]);
 
   const update = <K extends keyof FieldsState>(k: K, v: string) =>
@@ -206,11 +208,19 @@ export default function TaskForm({
     }
 
     if (showGroupings) {
-      const subsplitSec = parseHMS(subsplitLengthStr);
-      if (subsplitSec == null || subsplitSec < 0) {
-        return setError('Subsplit length must be hh:mm:ss.');
+      if (type === 'custom') {
+        const n = Number.parseInt(subsplitLengthStr, 10);
+        if (!Number.isFinite(n) || n < 0) {
+          return setError('Subsplit length must be a whole number of units ≥ 0.');
+        }
+        input.subsplit_length = n;
+      } else {
+        const subsplitSec = parseHMS(subsplitLengthStr);
+        if (subsplitSec == null || subsplitSec < 0) {
+          return setError('Subsplit length must be hh:mm:ss.');
+        }
+        input.subsplit_length = subsplitSec;
       }
-      input.subsplit_length = subsplitSec;
       input.source_timecode_based = sourceTimecodeBased;
     } else {
       input.subsplit_length = initial?.subsplit_length ?? 60;
@@ -402,12 +412,14 @@ export default function TaskForm({
             />
           </div>
           <div className="space-y-1">
-            <label className="label">Subsplit length (hh:mm:ss)</label>
+            <label className="label">
+              Subsplit length {type === 'custom' ? '(units)' : '(hh:mm:ss)'}
+            </label>
             <input
-              className="input font-sans"
+              className={`input ${type === 'custom' ? '' : 'font-sans'}`}
               value={subsplitLengthStr}
               onChange={(e) => setSubsplitLengthStr(e.target.value)}
-              placeholder="00:01:00"
+              placeholder={type === 'custom' ? '60' : '00:01:00'}
             />
           </div>
           <label className="flex items-center gap-2 text-sm text-fg">

@@ -73,7 +73,7 @@ Mirrors the project hierarchy: top-level templates can have child templates via 
 | `unit_length` | integer (seconds) | `custom` — real seconds per unit |
 | `manual_length` | integer (seconds) | `manual` — total real seconds the task should take, before buffer |
 | `video_rate` | numeric (nullable) | Planning-only (does not affect `task_length` / progress). `custom`: units per 1 minute of finished video. `scripting`: minutes of script per 1 minute of finished video. `0` = N/A (no direct correlation to video length). Unused by `scaling` / `manual`. |
-| `subsplit_length` | integer (seconds) | Default `60` (`00:01:00`). Used by censaySplit; does not affect `task_length` / progress. |
+| `subsplit_length` | integer | Default `60`. Seconds for timestamp-style tasks (`00:01:00`); whole units for `custom`. Used by censaySplit; does not affect `task_length` / progress. |
 | `source_timecode_based` | boolean | Default `false`. Originates in Prime for external apps; does not affect `task_length` / progress. |
 
 ### Task — calculated properties (computed at read time)

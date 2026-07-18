@@ -254,5 +254,5 @@ export interface RealtimeLog {
 }
 
 export type RealtimeLogUpdateInput = Partial<
-  Pick<RealtimeLog, 'realtime_delta_seconds' | 'old_value' | 'new_value'>
+  Pick<RealtimeLog, 'realtime_delta_seconds' | 'old_value' | 'new_value' | 'logged_at'>
 >;
