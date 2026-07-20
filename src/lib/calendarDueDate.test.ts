@@ -10,7 +10,7 @@ describe('dueDateForDropTarget', () => {
     expect(dueDateForDropTarget({ type: 'undated' })).toBeNull();
   });
 
-  it('sets dropped day due date to local 11pm', () => {
+  it('sets dropped day due date to local 11pm by default', () => {
     const iso = dueDateForDropTarget({ type: 'day', dayKey: '2026-05-22' });
     expect(iso).not.toBeNull();
     if (!iso) {
@@ -24,6 +24,38 @@ describe('dueDateForDropTarget', () => {
     expect(date.getHours()).toBe(23);
     expect(date.getMinutes()).toBe(0);
     expect(localDayKeyFromIso(iso)).toBe('2026-05-22');
+  });
+
+  it('uses a custom local due time when provided', () => {
+    const iso = dueDateForDropTarget(
+      { type: 'day', dayKey: '2026-05-22' },
+      { hour: 20, minute: 0 },
+    );
+    expect(iso).not.toBeNull();
+    if (!iso) {
+      throw new Error('Expected an ISO date for day drop target.');
+    }
+
+    const date = new Date(iso);
+    expect(date.getFullYear()).toBe(2026);
+    expect(date.getMonth()).toBe(4);
+    expect(date.getDate()).toBe(22);
+    expect(date.getHours()).toBe(20);
+    expect(date.getMinutes()).toBe(0);
+    expect(localDayKeyFromIso(iso)).toBe('2026-05-22');
+  });
+
+  it('falls back to default time for invalid hour/minute', () => {
+    const iso = dueDateForDropTarget(
+      { type: 'day', dayKey: '2026-05-22' },
+      { hour: 99, minute: -1 },
+    );
+    if (!iso) {
+      throw new Error('Expected an ISO date for day drop target.');
+    }
+    const date = new Date(iso);
+    expect(date.getHours()).toBe(23);
+    expect(date.getMinutes()).toBe(0);
   });
 
   it('preserves day key on DST-adjacent dates', () => {

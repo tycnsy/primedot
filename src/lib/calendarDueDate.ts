@@ -38,11 +38,38 @@ function parseDayKey(dayKey: string): { year: number; monthIndex: number; day: n
   return { year, monthIndex, day };
 }
 
-export function dueDateForDropTarget(target: DueDateDropTarget): string | null {
+export const DEFAULT_DUE_HOUR = 23;
+export const DEFAULT_DUE_MINUTE = 0;
+
+export type DueDateTimeParts = {
+  hour?: number;
+  minute?: number;
+};
+
+function normalizeHour(hour: number | undefined): number {
+  if (hour == null || !Number.isInteger(hour) || hour < 0 || hour > 23) {
+    return DEFAULT_DUE_HOUR;
+  }
+  return hour;
+}
+
+function normalizeMinute(minute: number | undefined): number {
+  if (minute == null || !Number.isInteger(minute) || minute < 0 || minute > 59) {
+    return DEFAULT_DUE_MINUTE;
+  }
+  return minute;
+}
+
+export function dueDateForDropTarget(
+  target: DueDateDropTarget,
+  time: DueDateTimeParts = {},
+): string | null {
   if (target.type === 'undated') return null;
   const { year, monthIndex, day } = parseDayKey(target.dayKey);
-  // Persist local wall-clock 11 PM on the dropped day.
-  const localDate = new Date(year, monthIndex, day, 23, 0, 0, 0);
+  const hour = normalizeHour(time.hour);
+  const minute = normalizeMinute(time.minute);
+  // Persist local wall-clock time on the dropped day (default 11 PM).
+  const localDate = new Date(year, monthIndex, day, hour, minute, 0, 0);
   if (Number.isNaN(localDate.getTime())) {
     throw new Error('Invalid drop date.');
   }

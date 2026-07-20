@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import {
+  DEFAULT_DUE_HOUR,
+  DEFAULT_DUE_MINUTE,
   dueDateForDropTarget,
   localDayKeyFromDate,
   localDayKeyFromIso,
@@ -31,30 +33,92 @@ type CalendarWeek = {
 
 type CalendarView = 'due' | 'start';
 
+type CalendarPrefs = {
+  showSubprojects: boolean;
+  defaultDueHour: number;
+  defaultDueMinute: number;
+};
+
 const CALENDAR_VIEW_STORAGE_KEY = 'prime:calendar-view';
 
-function readShowSubprojectsPref(): boolean {
-  if (typeof window === 'undefined') return false;
+function pad2(value: number): string {
+  return String(value).padStart(2, '0');
+}
+
+function normalizeDueHour(hour: unknown): number {
+  if (typeof hour !== 'number' || !Number.isInteger(hour) || hour < 0 || hour > 23) {
+    return DEFAULT_DUE_HOUR;
+  }
+  return hour;
+}
+
+function normalizeDueMinute(minute: unknown): number {
+  if (typeof minute !== 'number' || !Number.isInteger(minute) || minute < 0 || minute > 59) {
+    return DEFAULT_DUE_MINUTE;
+  }
+  return minute;
+}
+
+function readCalendarPrefs(): CalendarPrefs {
+  if (typeof window === 'undefined') {
+    return {
+      showSubprojects: false,
+      defaultDueHour: DEFAULT_DUE_HOUR,
+      defaultDueMinute: DEFAULT_DUE_MINUTE,
+    };
+  }
   try {
     const raw = window.localStorage.getItem(CALENDAR_VIEW_STORAGE_KEY);
-    if (!raw) return false;
-    const parsed = JSON.parse(raw) as { showSubprojects?: boolean };
-    return parsed.showSubprojects === true;
+    if (!raw) {
+      return {
+        showSubprojects: false,
+        defaultDueHour: DEFAULT_DUE_HOUR,
+        defaultDueMinute: DEFAULT_DUE_MINUTE,
+      };
+    }
+    const parsed = JSON.parse(raw) as Partial<CalendarPrefs>;
+    return {
+      showSubprojects: parsed.showSubprojects === true,
+      defaultDueHour: normalizeDueHour(parsed.defaultDueHour),
+      defaultDueMinute: normalizeDueMinute(parsed.defaultDueMinute),
+    };
   } catch {
-    return false;
+    return {
+      showSubprojects: false,
+      defaultDueHour: DEFAULT_DUE_HOUR,
+      defaultDueMinute: DEFAULT_DUE_MINUTE,
+    };
   }
 }
 
-function writeShowSubprojectsPref(showSubprojects: boolean) {
+function writeCalendarPrefs(prefs: CalendarPrefs) {
   if (typeof window === 'undefined') return;
   try {
-    window.localStorage.setItem(
-      CALENDAR_VIEW_STORAGE_KEY,
-      JSON.stringify({ showSubprojects }),
-    );
+    window.localStorage.setItem(CALENDAR_VIEW_STORAGE_KEY, JSON.stringify(prefs));
   } catch {
     // ignore localStorage write failures
   }
+}
+
+function formatDueTimeLabel(hour: number, minute: number): string {
+  return new Date(2000, 0, 1, hour, minute).toLocaleTimeString([], {
+    hour: 'numeric',
+    minute: '2-digit',
+  });
+}
+
+function dueTimeInputValue(hour: number, minute: number): string {
+  return `${pad2(hour)}:${pad2(minute)}`;
+}
+
+function parseDueTimeInput(value: string): { hour: number; minute: number } | null {
+  const match = /^(\d{2}):(\d{2})$/.exec(value);
+  if (!match) return null;
+  const hour = Number(match[1]);
+  const minute = Number(match[2]);
+  if (!Number.isInteger(hour) || hour < 0 || hour > 23) return null;
+  if (!Number.isInteger(minute) || minute < 0 || minute > 59) return null;
+  return { hour, minute };
 }
 
 const WEEKDAY_LABELS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
@@ -180,7 +244,10 @@ function formatDurationUntilEnd(
 
 export default function Calendar() {
   const { data: allProjects = [], isLoading, error } = useAllProjectsIncludingArchived();
-  const [showSubprojects, setShowSubprojects] = useState(readShowSubprojectsPref);
+  const [calendarPrefs, setCalendarPrefs] = useState(readCalendarPrefs);
+  const showSubprojects = calendarPrefs.showSubprojects;
+  const defaultDueHour = calendarPrefs.defaultDueHour;
+  const defaultDueMinute = calendarPrefs.defaultDueMinute;
   const parentNameById = useMemo(
     () => new Map(parentProjects(allProjects).map((project) => [project.id, project.name])),
     [allProjects],
@@ -352,7 +419,12 @@ export default function Calendar() {
     try {
       await updateProject.mutateAsync({
         id: project.id,
-        patch: { due_date: dueDateForDropTarget(target) },
+        patch: {
+          due_date: dueDateForDropTarget(target, {
+            hour: defaultDueHour,
+            minute: defaultDueMinute,
+          }),
+        },
       });
     } catch (err) {
       setMutationError(err instanceof Error ? err.message : 'Failed to update due date.');
@@ -369,11 +441,34 @@ export default function Calendar() {
           <h1 className="text-3xl font-semibold tracking-tight text-fg">Calendar</h1>
           <p className="text-sm text-muted">
             {view === 'due'
-              ? 'Drag projects onto a day to set due dates at 11:00 PM.'
+              ? `Drag projects onto a day to set due dates at ${formatDueTimeLabel(defaultDueHour, defaultDueMinute)}.`
               : 'Drag projects onto a day to set start dates at 5:00 AM.'}
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
+          {view === 'due' ? (
+            <label className="flex items-center gap-2 text-sm text-muted">
+              <span>Default due time</span>
+              <input
+                type="time"
+                className="input h-9 w-[7.5rem]"
+                value={dueTimeInputValue(defaultDueHour, defaultDueMinute)}
+                onChange={(event) => {
+                  const parsed = parseDueTimeInput(event.target.value);
+                  if (!parsed) return;
+                  setCalendarPrefs((prev) => {
+                    const next = {
+                      ...prev,
+                      defaultDueHour: parsed.hour,
+                      defaultDueMinute: parsed.minute,
+                    };
+                    writeCalendarPrefs(next);
+                    return next;
+                  });
+                }}
+              />
+            </label>
+          ) : null}
           <div className="segmented">
             <button
               type="button"
@@ -409,9 +504,9 @@ export default function Calendar() {
               type="button"
               data-active={showSubprojects}
               onClick={() => {
-                setShowSubprojects((prev) => {
-                  const next = !prev;
-                  writeShowSubprojectsPref(next);
+                setCalendarPrefs((prev) => {
+                  const next = { ...prev, showSubprojects: !prev.showSubprojects };
+                  writeCalendarPrefs(next);
                   return next;
                 });
               }}
