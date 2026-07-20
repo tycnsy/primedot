@@ -537,14 +537,47 @@ export function Whiteboard({ boardId, onCanonicalSlugResolved }) {
       if (!selectedSet.has(el.id)) return el;
 
       if (key === 'stroke') {
-        if (el.stroke === value) return el;
-        changed = true;
         if (el.type === 'text') {
           const textRuns = Array.isArray(el.textRuns) && el.textRuns.length
             ? [{ text: (el.textRuns || []).map((r) => r.text || '').join(''), color: value }]
             : [{ text: el.text || '', color: value }];
-          return { ...el, stroke: value, textRuns };
+          let nextLines = el.lines;
+          if (Array.isArray(el.lines) && el.lines.length) {
+            let linesChanged = false;
+            const mappedLines = el.lines.map((line) => {
+              if (!Array.isArray(line?.runs) || line.runs.length === 0) {
+                linesChanged = true;
+                return { ...line, runs: [{ text: '', color: value }] };
+              }
+              let lineRunsChanged = false;
+              const mappedRuns = line.runs.map((run) => {
+                if (run?.color === value) return run;
+                lineRunsChanged = true;
+                return { ...run, color: value };
+              });
+              if (!lineRunsChanged) return line;
+              linesChanged = true;
+              return { ...line, runs: mappedRuns };
+            });
+            if (linesChanged) nextLines = mappedLines;
+          }
+          const textRunsUnchanged = Array.isArray(el.textRuns)
+            && el.textRuns.length === 1
+            && el.textRuns[0]?.color === value
+            && el.textRuns[0]?.text === textRuns[0]?.text;
+          if (el.stroke === value && nextLines === el.lines && textRunsUnchanged) {
+            return el;
+          }
+          changed = true;
+          return {
+            ...el,
+            stroke: value,
+            textRuns,
+            ...(nextLines !== el.lines ? { lines: nextLines } : {}),
+          };
         }
+        if (el.stroke === value) return el;
+        changed = true;
         return { ...el, stroke: value };
       }
       if (key === 'fill') {
