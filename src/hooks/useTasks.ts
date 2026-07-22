@@ -358,8 +358,9 @@ export function useUpdateTask(projectId: string) {
     onSuccess: (task) => {
       qc.invalidateQueries({ queryKey: tasksKey(projectId) });
       qc.invalidateQueries({ queryKey: ['tasks', 'many'] });
-      // Pace split trigger may have moved target_deadline on progress writes.
+      // Pace split / margin-limit trigger may update target_deadline and buffer_modifier.
       qc.invalidateQueries({ queryKey: ['pace_settings'] });
+      qc.invalidateQueries({ queryKey: ['projects'] });
       qc.setQueryData<Task[]>(tasksKey(projectId), (prev) => upsertTaskIfPresent(prev, task));
       qc.setQueriesData<Task[]>({ queryKey: ['tasks', 'many'] }, (prev) =>
         upsertTaskIfPresent(prev, task),
@@ -463,8 +464,9 @@ export function useUpdateAnyTask(projectIds: string[]) {
       qc.invalidateQueries({ queryKey: tasksKey(task.project_id) });
       qc.invalidateQueries({ queryKey: tasksManyKey(projectIds) });
       qc.invalidateQueries({ queryKey: ['tasks', 'many'] });
-      // Pace split trigger may have moved target_deadline on progress writes.
+      // Pace split / margin-limit trigger may update target_deadline and buffer_modifier.
       qc.invalidateQueries({ queryKey: ['pace_settings'] });
+      qc.invalidateQueries({ queryKey: ['projects'] });
     },
   });
 }

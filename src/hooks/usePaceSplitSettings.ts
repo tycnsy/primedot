@@ -28,12 +28,19 @@ export function useUpsertPaceSplitSettings() {
   return useMutation({
     mutationFn: async ({
       paceSplitPercentage,
+      paceMarginLimitSeconds,
     }: {
       paceSplitPercentage: number;
+      /** NULL = unlimited (off). Clamped to >= 0 when set. */
+      paceMarginLimitSeconds: number | null;
     }) => {
       if (!user) throw new Error('Not signed in');
 
       const clamped = Math.min(100, Math.max(0, paceSplitPercentage));
+      const marginLimit =
+        paceMarginLimitSeconds == null || !Number.isFinite(paceMarginLimitSeconds)
+          ? null
+          : Math.max(0, Math.round(paceMarginLimitSeconds));
 
       const { data, error } = await supabase
         .from('pace_split_settings')
@@ -41,6 +48,7 @@ export function useUpsertPaceSplitSettings() {
           {
             user_id: user.id,
             pace_split_percentage: clamped,
+            pace_margin_limit_seconds: marginLimit,
             updated_at: new Date().toISOString(),
           },
           { onConflict: 'user_id' },

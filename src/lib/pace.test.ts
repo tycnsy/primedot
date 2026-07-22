@@ -1,12 +1,14 @@
 import { describe, expect, it } from 'vitest';
 import {
+  applyPaceSplitWithMarginLimit,
+  buildMarginPreservingRebalanceOutcome,
   buildRebalanceOutcome,
   buildRebalancePredictionOutcome,
   computePaceSplitAllocationMinutes,
   unbufferedProgressRate,
 } from './pace';
-import { currentPace } from './calc';
-import type { Project, Task } from './types';
+import { currentPace, paceMargin } from './calc';
+import type { PaceSettings, Project, Task } from './types';
 
 const baseProject: Project = {
   id: 'p1',
@@ -305,5 +307,349 @@ describe('computePaceSplitAllocationMinutes', () => {
         paceSplitPercentage: splitPct,
       }),
     ).toBe(0);
+  });
+});
+
+describe('buildMarginPreservingRebalanceOutcome', () => {
+  const now = new Date('2026-05-22T09:00:00.000Z');
+  // Remaining unbuffered = 2h (manual_length 7200 at buffer 1).
+  // true = now + 30h, limit 24h, desired pace 2h → offset 26h
+  // hourDiff = 4h, remaining unbuffered 2h → buffer = 2.
+  const trueDeadlineIso = '2026-05-23T15:00:00.000Z'; // now + 30h
+
+  it('sets target = true − limit and solves buffer for limit + desired pace', () => {
+    const outcome = buildMarginPreservingRebalanceOutcome([baseTask], baseProject, {
+      marginLimitSeconds: 24 * 3600,
+      desiredPaceSeconds: 2 * 3600,
+      trueDeadlineIso,
+      now,
+    });
+
+    expect(outcome.ok).toBe(true);
+    if (!outcome.ok) return;
+
+    expect(outcome.result.marginLimitSeconds).toBe(24 * 3600);
+    expect(outcome.result.desiredPaceSeconds).toBe(2 * 3600);
+    expect(outcome.result.hourDifferenceHours).toBe(4);
+    expect(outcome.result.remainingHoursUnbuffered).toBe(2);
+    expect(outcome.result.bufferModifier).toBe(2);
+    expect(outcome.result.targetDeadlineIso).toBe('2026-05-22T15:00:00.000Z'); // true − 24h
+
+    const rebalanced: Project = {
+      ...baseProject,
+      buffer_modifier: outcome.result.bufferModifier,
+    };
+    const pace: PaceSettings = {
+      id: 'pace1',
+      project_id: 'p1',
+      target_deadline: outcome.result.targetDeadlineIso,
+      true_deadline: trueDeadlineIso,
+    };
+    expect(paceMargin(pace)).toBe(24 * 3600);
+    expect(currentPace([baseTask], rebalanced, pace, now)).toBe(2 * 3600);
+  });
+
+  it('fails when remaining unbuffered hours are not positive', () => {
+    const completeTask: Task = { ...baseTask, current_progress: 7200 };
+    const outcome = buildMarginPreservingRebalanceOutcome([completeTask], baseProject, {
+      marginLimitSeconds: 24 * 3600,
+      desiredPaceSeconds: 2 * 3600,
+      trueDeadlineIso,
+      now,
+    });
+    expect(outcome).toMatchObject({
+      ok: false,
+      reason: 'invalid_remaining_hours',
+    });
+  });
+
+  it('fails when computed buffer modifier is not positive', () => {
+    // offset larger than window to true → negative hourDiff → buffer ≤ 0
+    const outcome = buildMarginPreservingRebalanceOutcome([baseTask], baseProject, {
+      marginLimitSeconds: 24 * 3600,
+      desiredPaceSeconds: 10 * 3600,
+      trueDeadlineIso: '2026-05-22T15:00:00.000Z', // now + 6h; offset = 34h
+      now,
+    });
+    expect(outcome).toMatchObject({
+      ok: false,
+      reason: 'invalid_buffer_modifier',
+    });
+  });
+});
+
+describe('applyPaceSplitWithMarginLimit', () => {
+  const now = new Date('2026-05-22T09:00:00.000Z');
+
+  /**
+   * Constructed so normal 100% split yields pace 3h / margin 25h from start 2h / 24h:
+   * buffer=2, progressDelta=3600 manual → B=2h buffered, A=1h at 100% split.
+   * Before: rem_buf=10h, pace=2h → target=now+12h, true=now+36h.
+   * After progress (tasks already updated): rem_buf=8h; without split pace=4h.
+   * After full split A=1h: target=now+11h → pace=3h, margin=25h.
+   */
+  function buildMarginLimitFixture() {
+    const taskAfter: Task = {
+      ...baseTask,
+      manual_length: 18_000,
+      current_progress: 3600,
+    };
+    const project: Project = {
+      ...baseProject,
+      buffer_modifier: 2,
+      due_date: '2026-05-24T00:00:00.000Z',
+    };
+    const pace: PaceSettings = {
+      id: 'pace1',
+      project_id: 'p1',
+      target_deadline: new Date(now.getTime() + 12 * 3600 * 1000).toISOString(),
+      true_deadline: new Date(now.getTime() + 36 * 3600 * 1000).toISOString(),
+    };
+    return { taskAfter, project, pace };
+  }
+
+  it('split 0%: never changes margin / buffer / target from progress', () => {
+    const { taskAfter, project, pace } = buildMarginLimitFixture();
+    const result = applyPaceSplitWithMarginLimit({
+      tasks: [taskAfter],
+      project,
+      pace,
+      progressDelta: 3600,
+      rate: 1,
+      bufferModifier: 2,
+      paceSplitPercentage: 0,
+      marginLimitSeconds: 24 * 3600,
+      now,
+    });
+    expect(result).toEqual({ kind: 'noop' });
+  });
+
+  it('limit null/off: identical to today split-only behavior', () => {
+    const { taskAfter, project, pace } = buildMarginLimitFixture();
+    const result = applyPaceSplitWithMarginLimit({
+      tasks: [taskAfter],
+      project,
+      pace,
+      progressDelta: 3600,
+      rate: 1,
+      bufferModifier: 2,
+      paceSplitPercentage: 100,
+      marginLimitSeconds: null,
+      now,
+    });
+    expect(result.kind).toBe('split');
+    if (result.kind !== 'split') return;
+    // Alloc = 60 minutes → target 1h earlier
+    expect(result.targetDeadline).toBe(
+      new Date(now.getTime() + 11 * 3600 * 1000).toISOString(),
+    );
+  });
+
+  it('below limit: normal split applies; buffer unchanged by this feature', () => {
+    const { taskAfter, project, pace } = buildMarginLimitFixture();
+    // Limit 48h > prospective margin 25h
+    const result = applyPaceSplitWithMarginLimit({
+      tasks: [taskAfter],
+      project,
+      pace,
+      progressDelta: 3600,
+      rate: 1,
+      bufferModifier: 2,
+      paceSplitPercentage: 100,
+      marginLimitSeconds: 48 * 3600,
+      now,
+    });
+    expect(result.kind).toBe('split');
+    if (result.kind !== 'split') return;
+    expect(result.targetDeadline).toBe(
+      new Date(now.getTime() + 11 * 3600 * 1000).toISOString(),
+    );
+  });
+
+  it('would exceed limit: margin at limit, pace = desired 3h, buffer increases, true unchanged', () => {
+    const { taskAfter, project, pace } = buildMarginLimitFixture();
+    const trueBefore = pace.true_deadline;
+
+    // Sanity: normal split would be pace 3h / margin 25h
+    const alloc = computePaceSplitAllocationMinutes({
+      progressDelta: 3600,
+      rate: 1,
+      bufferModifier: 2,
+      paceSplitPercentage: 100,
+    });
+    expect(alloc).toBe(60);
+    const splitPace: PaceSettings = {
+      ...pace,
+      target_deadline: new Date(
+        new Date(pace.target_deadline).getTime() - 60 * 60 * 1000,
+      ).toISOString(),
+    };
+    expect(paceMargin(splitPace)).toBe(25 * 3600);
+    expect(currentPace([taskAfter], project, splitPace, now)).toBe(3 * 3600);
+
+    const result = applyPaceSplitWithMarginLimit({
+      tasks: [taskAfter],
+      project,
+      pace,
+      progressDelta: 3600,
+      rate: 1,
+      bufferModifier: 2,
+      paceSplitPercentage: 100,
+      marginLimitSeconds: 24 * 3600,
+      now,
+    });
+
+    expect(result.kind).toBe('rebalance');
+    if (result.kind !== 'rebalance') return;
+
+    // target = true − 24h = now + 12h
+    expect(result.targetDeadline).toBe(
+      new Date(now.getTime() + 12 * 3600 * 1000).toISOString(),
+    );
+    expect(result.bufferModifier).toBeGreaterThan(2);
+
+    const rebalanced: Project = { ...project, buffer_modifier: result.bufferModifier };
+    const endPace: PaceSettings = {
+      ...pace,
+      target_deadline: result.targetDeadline,
+      true_deadline: trueBefore,
+    };
+    expect(paceMargin(endPace)).toBe(24 * 3600);
+    expect(currentPace([taskAfter], rebalanced, endPace, now)).toBe(3 * 3600);
+    // true_deadline never written / unchanged
+    expect(endPace.true_deadline).toBe(trueBefore);
+  });
+
+  it('rebalance equivalence: matches rebalance(limit+desired_pace) then target=true−limit', () => {
+    const { taskAfter, project, pace } = buildMarginLimitFixture();
+    const result = applyPaceSplitWithMarginLimit({
+      tasks: [taskAfter],
+      project,
+      pace,
+      progressDelta: 3600,
+      rate: 1,
+      bufferModifier: 2,
+      paceSplitPercentage: 100,
+      marginLimitSeconds: 24 * 3600,
+      now,
+    });
+    expect(result.kind).toBe('rebalance');
+    if (result.kind !== 'rebalance') return;
+
+    const desiredPaceSeconds = 3 * 3600;
+    const equivalent = buildMarginPreservingRebalanceOutcome([taskAfter], project, {
+      marginLimitSeconds: 24 * 3600,
+      desiredPaceSeconds,
+      trueDeadlineIso: pace.true_deadline,
+      now,
+    });
+    expect(equivalent.ok).toBe(true);
+    if (!equivalent.ok) return;
+    expect(result.targetDeadline).toBe(equivalent.result.targetDeadlineIso);
+    expect(result.bufferModifier).toBe(equivalent.result.bufferModifier);
+  });
+
+  it('already at limit: positive alloc does not grow margin; excess via rebalance', () => {
+    const { taskAfter, project } = buildMarginLimitFixture();
+    // Margin already exactly 24h
+    const pace: PaceSettings = {
+      id: 'pace1',
+      project_id: 'p1',
+      target_deadline: new Date(now.getTime() + 12 * 3600 * 1000).toISOString(),
+      true_deadline: new Date(now.getTime() + 36 * 3600 * 1000).toISOString(),
+    };
+    expect(paceMargin(pace)).toBe(24 * 3600);
+
+    const result = applyPaceSplitWithMarginLimit({
+      tasks: [taskAfter],
+      project,
+      pace,
+      progressDelta: 3600,
+      rate: 1,
+      bufferModifier: 2,
+      paceSplitPercentage: 100,
+      marginLimitSeconds: 24 * 3600,
+      now,
+    });
+    expect(result.kind).toBe('rebalance');
+    if (result.kind !== 'rebalance') return;
+
+    const endPace: PaceSettings = {
+      ...pace,
+      target_deadline: result.targetDeadline,
+    };
+    expect(paceMargin(endPace)).toBe(24 * 3600);
+    expect(result.bufferModifier).toBeGreaterThan(2);
+  });
+
+  it('progress decrease: does not force margin up to the limit', () => {
+    const { project } = buildMarginLimitFixture();
+    // Margin currently 20h (below 24h limit); decrease would shrink margin further
+    const pace: PaceSettings = {
+      id: 'pace1',
+      project_id: 'p1',
+      target_deadline: new Date(now.getTime() + 16 * 3600 * 1000).toISOString(),
+      true_deadline: new Date(now.getTime() + 36 * 3600 * 1000).toISOString(),
+    };
+    expect(paceMargin(pace)).toBe(20 * 3600);
+
+    const taskAfterDecrease: Task = {
+      ...baseTask,
+      manual_length: 18_000,
+      current_progress: 0,
+    };
+
+    const result = applyPaceSplitWithMarginLimit({
+      tasks: [taskAfterDecrease],
+      project,
+      pace,
+      progressDelta: -3600,
+      rate: 1,
+      bufferModifier: 2,
+      paceSplitPercentage: 100,
+      marginLimitSeconds: 24 * 3600,
+      now,
+    });
+
+    expect(result.kind).toBe('split');
+    if (result.kind !== 'split') return;
+    // Alloc = -60 min → target moves later by 1h (margin shrinks, not forced up)
+    expect(result.targetDeadline).toBe(
+      new Date(now.getTime() + 17 * 3600 * 1000).toISOString(),
+    );
+  });
+
+  it('edge: no remaining unbuffered hours → fail soft to plain split', () => {
+    const completeTask: Task = {
+      ...baseTask,
+      manual_length: 3600,
+      current_progress: 3600,
+    };
+    const project: Project = { ...baseProject, buffer_modifier: 2 };
+    const pace: PaceSettings = {
+      id: 'pace1',
+      project_id: 'p1',
+      target_deadline: new Date(now.getTime() + 12 * 3600 * 1000).toISOString(),
+      true_deadline: new Date(now.getTime() + 36 * 3600 * 1000).toISOString(),
+    };
+
+    const result = applyPaceSplitWithMarginLimit({
+      tasks: [completeTask],
+      project,
+      pace,
+      progressDelta: 3600,
+      rate: 1,
+      bufferModifier: 2,
+      paceSplitPercentage: 100,
+      marginLimitSeconds: 24 * 3600,
+      now,
+    });
+
+    // Would exceed limit, but rebalance fails → fall back to split
+    expect(result.kind).toBe('split');
+    if (result.kind !== 'split') return;
+    expect(result.targetDeadline).toBe(
+      new Date(now.getTime() + 11 * 3600 * 1000).toISOString(),
+    );
   });
 });

@@ -132,16 +132,17 @@ All times in seconds; `now()` is the current time in the user's timezone.
 
 ### `pace_split_settings`
 
-One row per user (app-wide). Controls how progress updates allocate buffer-only time into pace margin.
+One row per user (app-wide). Controls how progress updates allocate buffer-only time into pace margin, and optionally caps how large that margin may grow.
 
 | Field | Type | Notes |
 |---|---|---|
 | `user_id` | uuid (PK, FK → auth.users) | |
 | `pace_split_percentage` | numeric | 0–100. Default `0`. Share of the buffer-only estimate difference allocated into margin on each progress change. |
+| `pace_margin_limit_seconds` | bigint (nullable) | Max pace margin in seconds. `NULL` = unlimited (current behavior). Empty in Settings = off. |
 
 #### Progress → pace split allocation
 
-When `current_progress` changes (UI or third-party sync), a DB trigger may adjust `target_deadline` (never `true_deadline`). Steps for the progress delta:
+When `current_progress` changes (UI or third-party sync), a DB trigger may adjust `target_deadline` and, when the margin limit applies, `buffer_modifier`. It never writes `true_deadline`. Steps for the progress delta:
 
 1. **True estimated time** (no buffer): `progress_delta × unbuffered_rate`
    - scaling: `scaling_modifier`
@@ -151,9 +152,31 @@ When `current_progress` changes (UI or third-party sync), a DB trigger may adjus
    - compressed parent: sum of subtask `scaling_modifier`
 2. **Buffer estimated time**: `true_estimated × project.buffer_modifier`
 3. **Estimated time difference**: `buffer_estimated − true_estimated` (the portion added by buffer)
-4. **Allocation**: `round((difference × pace_split_percentage / 100) / 60)` minutes are **subtracted** from `target_deadline` (target moves earlier → margin grows). Rounding is half away from zero (Postgres `round(numeric)`). Progress decreases reverse the sign (target moves later).
+4. **Allocation**: `round((difference × pace_split_percentage / 100) / 60)` minutes would be **subtracted** from `target_deadline` (target moves earlier → margin grows). Rounding is half away from zero (Postgres `round(numeric)`). Progress decreases reverse the sign (target moves later).
 
 Skipped when percentage is `0`, the project has no `pace_settings` row, progress delta is `0`, or the task's unbuffered rate is `0` (expanded parents / compressed subtasks — parent is counted instead).
+
+#### Pace margin limit (margin-preserving rebalance)
+
+Core identity (true fixed): `pace + margin = true_deadline − estimated_completion`, with `margin = true_deadline − target_deadline` and `pace = target_deadline − estimated_completion`.
+
+When allocation minutes are **positive**, a margin limit is set, and applying the full allocation would make `margin > pace_margin_limit_seconds`:
+
+1. Compute the **desired pace** that the full normal split would have produced (post-progress remaining work at the current buffer, with `target` moved by the full allocation).
+2. Run a **margin-preserving rebalance** anchored on `true_deadline` (not `due_date`):
+   - `offset = pace_margin_limit_seconds + desired_pace`
+   - `buffer_modifier = round(((true_deadline − now − offset) / remaining_unbuffered_hours) × 100) / 100` (must be finite and `> 0`)
+   - `target_deadline = true_deadline − pace_margin_limit_seconds`
+3. Result: margin equals the limit, pace matches the desired post-split pace (within rounding), `true_deadline` unchanged, and the missing sum is absorbed by a higher buffer.
+
+This is equivalent to “rebalance for `(limit + desired_pace)` then set `target = true − limit`” (unlike the manual rebalance UI, which zeros margin by setting `target = true`).
+
+**Does not apply** when:
+
+- `pace_margin_limit_seconds` is `NULL` (unlimited) — plain split only
+- allocation ≤ 0 (progress decrease / no-op) — never forces margin **up** to the limit; plain split only
+- prospective margin after full alloc is still ≤ the limit — plain split; buffer unchanged
+- rebalance cannot produce a valid positive buffer (no remaining unbuffered hours, non-positive buffer, etc.) — **fail soft**: apply the plain split allocation only; do not corrupt deadlines
 
 ---
 

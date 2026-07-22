@@ -60,6 +60,8 @@ export interface HeatmapSettings {
 export interface PaceSplitSettings {
   user_id: string;
   pace_split_percentage: number;
+  /** Max pace margin in seconds. NULL = unlimited (current behavior). */
+  pace_margin_limit_seconds: number | null;
   created_at: string;
   updated_at: string;
 }

@@ -1,4 +1,4 @@
-import { estimatedCompletion } from './calc';
+import { currentPace, estimatedCompletion, paceMargin } from './calc';
 import type { PaceSettings, Project, Task } from './types';
 
 const WEEK_IN_MS = 7 * 86_400_000;
@@ -389,4 +389,239 @@ export function computePaceSplitAllocationMinutes(input: {
   const bufferEst = bufferEstimatedTimeSeconds(trueEst, input.bufferModifier);
   const diff = estimatedTimeDifferenceSeconds(trueEst, bufferEst);
   return paceSplitAllocationMinutes(diff, input.paceSplitPercentage);
+}
+
+export type MarginPreservingRebalanceFailureReason =
+  | 'missing_true_deadline'
+  | 'invalid_true_deadline'
+  | 'invalid_offset'
+  | 'invalid_margin_limit'
+  | 'invalid_remaining_hours'
+  | 'invalid_buffer_modifier';
+
+export interface MarginPreservingRebalanceFailure {
+  ok: false;
+  reason: MarginPreservingRebalanceFailureReason;
+  message: string;
+}
+
+export interface MarginPreservingRebalanceResult {
+  estimatedCompletion: Date;
+  targetDeadline: Date;
+  targetDeadlineIso: string;
+  desiredPaceSeconds: number;
+  marginLimitSeconds: number;
+  hourDifferenceHours: number;
+  remainingHoursUnbuffered: number;
+  bufferModifier: number;
+}
+
+export interface MarginPreservingRebalanceSuccess {
+  ok: true;
+  result: MarginPreservingRebalanceResult;
+}
+
+export type MarginPreservingRebalanceOutcome =
+  | MarginPreservingRebalanceSuccess
+  | MarginPreservingRebalanceFailure;
+
+/**
+ * Rebalance buffer for offset = margin_limit + desired_pace, anchored on
+ * true_deadline (not due_date). Sets target = true − limit so margin stays
+ * at the limit and pace matches desired_pace. Never modifies true_deadline.
+ */
+export function buildMarginPreservingRebalanceOutcome(
+  tasks: Task[],
+  project: Project,
+  input: {
+    marginLimitSeconds: number;
+    desiredPaceSeconds: number;
+    trueDeadlineIso: string;
+    now?: Date;
+  },
+): MarginPreservingRebalanceOutcome {
+  const now = input.now ?? new Date();
+  const marginLimitSeconds = Math.round(input.marginLimitSeconds);
+  const desiredPaceSeconds = Math.round(input.desiredPaceSeconds);
+
+  if (!Number.isFinite(marginLimitSeconds) || marginLimitSeconds < 0) {
+    return {
+      ok: false,
+      reason: 'invalid_margin_limit',
+      message: 'Margin limit must be zero or greater.',
+    };
+  }
+
+  if (!input.trueDeadlineIso) {
+    return {
+      ok: false,
+      reason: 'missing_true_deadline',
+      message: 'true_deadline is required for margin-preserving rebalance.',
+    };
+  }
+
+  if (!Number.isFinite(desiredPaceSeconds)) {
+    return {
+      ok: false,
+      reason: 'invalid_offset',
+      message: 'Desired pace must be a valid number.',
+    };
+  }
+
+  const trueDeadlineMs = new Date(input.trueDeadlineIso).getTime();
+  if (Number.isNaN(trueDeadlineMs)) {
+    return {
+      ok: false,
+      reason: 'invalid_true_deadline',
+      message: 'true_deadline is invalid.',
+    };
+  }
+
+  const offsetSeconds = marginLimitSeconds + desiredPaceSeconds;
+  const hourDifferenceHours =
+    (trueDeadlineMs - (now.getTime() + offsetSeconds * 1000)) / 3_600_000;
+
+  const unbufferedProject: Project = { ...project, buffer_modifier: 1 };
+  const remainingHoursUnbuffered =
+    (estimatedCompletion(tasks, unbufferedProject, now).getTime() - now.getTime()) /
+    3_600_000;
+
+  if (!Number.isFinite(remainingHoursUnbuffered) || remainingHoursUnbuffered <= 0) {
+    return {
+      ok: false,
+      reason: 'invalid_remaining_hours',
+      message: 'No remaining unbuffered hours left to rebalance.',
+    };
+  }
+
+  const rawBufferModifier = hourDifferenceHours / remainingHoursUnbuffered;
+  const bufferModifier = Math.round(rawBufferModifier * 100) / 100;
+  if (!Number.isFinite(bufferModifier) || bufferModifier <= 0) {
+    return {
+      ok: false,
+      reason: 'invalid_buffer_modifier',
+      message: 'Computed buffer modifier is not positive. Adjust pace or margin limit.',
+    };
+  }
+
+  const rebalancedProject: Project = { ...project, buffer_modifier: bufferModifier };
+  const estimatedCompletionAtRebalancedBuffer = estimatedCompletion(
+    tasks,
+    rebalancedProject,
+    now,
+  );
+  const targetDeadline = new Date(trueDeadlineMs - marginLimitSeconds * 1000);
+
+  return {
+    ok: true,
+    result: {
+      estimatedCompletion: estimatedCompletionAtRebalancedBuffer,
+      targetDeadline,
+      targetDeadlineIso: targetDeadline.toISOString(),
+      desiredPaceSeconds,
+      marginLimitSeconds,
+      hourDifferenceHours,
+      remainingHoursUnbuffered,
+      bufferModifier,
+    },
+  };
+}
+
+export type PaceSplitWithMarginLimitResult =
+  | { kind: 'noop' }
+  | { kind: 'split'; targetDeadline: string }
+  | { kind: 'rebalance'; targetDeadline: string; bufferModifier: number };
+
+/**
+ * Progress → pace-split with optional margin limit.
+ * When the normal split would push margin past the limit, cap margin at the
+ * limit and absorb the leftover into buffer_modifier (margin-preserving
+ * rebalance). Progress decreases and limit-off paths match today's split-only
+ * behavior. Fail soft: if rebalance is invalid, fall back to the plain split.
+ *
+ * `tasks` / `project` should reflect post-progress state (as the DB trigger sees).
+ */
+export function applyPaceSplitWithMarginLimit(input: {
+  tasks: Task[];
+  project: Project;
+  pace: PaceSettings;
+  progressDelta: number;
+  rate: number;
+  bufferModifier: number;
+  paceSplitPercentage: number;
+  marginLimitSeconds: number | null;
+  now?: Date;
+}): PaceSplitWithMarginLimitResult {
+  const now = input.now ?? new Date();
+  const allocMinutes = computePaceSplitAllocationMinutes({
+    progressDelta: input.progressDelta,
+    rate: input.rate,
+    bufferModifier: input.bufferModifier,
+    paceSplitPercentage: input.paceSplitPercentage,
+  });
+
+  if (allocMinutes === 0) {
+    return { kind: 'noop' };
+  }
+
+  const allocSeconds = allocMinutes * 60;
+  const targetMs = new Date(input.pace.target_deadline).getTime();
+  const trueMs = new Date(input.pace.true_deadline).getTime();
+  if (Number.isNaN(targetMs) || Number.isNaN(trueMs)) {
+    return { kind: 'noop' };
+  }
+
+  const splitTargetIso = new Date(targetMs - allocSeconds * 1000).toISOString();
+
+  // Decreases (or zero already handled): never force margin up to the limit.
+  if (allocMinutes <= 0) {
+    return { kind: 'split', targetDeadline: splitTargetIso };
+  }
+
+  const limit = input.marginLimitSeconds;
+  if (limit == null || !Number.isFinite(limit) || limit < 0) {
+    return { kind: 'split', targetDeadline: splitTargetIso };
+  }
+
+  const marginLimitSeconds = Math.round(limit);
+  const marginBefore = paceMargin(input.pace);
+  const prospectiveMargin = marginBefore + allocSeconds;
+
+  if (prospectiveMargin <= marginLimitSeconds) {
+    return { kind: 'split', targetDeadline: splitTargetIso };
+  }
+
+  // Desired pace = pace after the full normal split (intended post-split pace).
+  const splitPace: PaceSettings = {
+    ...input.pace,
+    target_deadline: splitTargetIso,
+  };
+  const desiredPaceSeconds = currentPace(
+    input.tasks,
+    { ...input.project, buffer_modifier: input.bufferModifier },
+    splitPace,
+    now,
+  );
+
+  const outcome = buildMarginPreservingRebalanceOutcome(
+    input.tasks,
+    { ...input.project, buffer_modifier: input.bufferModifier },
+    {
+      marginLimitSeconds,
+      desiredPaceSeconds,
+      trueDeadlineIso: input.pace.true_deadline,
+      now,
+    },
+  );
+
+  if (!outcome.ok) {
+    // Fail soft: keep today's plain split so deadlines are never corrupted.
+    return { kind: 'split', targetDeadline: splitTargetIso };
+  }
+
+  return {
+    kind: 'rebalance',
+    targetDeadline: outcome.result.targetDeadlineIso,
+    bufferModifier: outcome.result.bufferModifier,
+  };
 }

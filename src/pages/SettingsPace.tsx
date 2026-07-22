@@ -9,6 +9,7 @@ export default function SettingsPace() {
   const settingsQ = usePaceSplitSettings();
   const upsert = useUpsertPaceSplitSettings();
   const [value, setValue] = useState('0');
+  const [marginLimitHours, setMarginLimitHours] = useState('');
   const [saveError, setSaveError] = useState<string | null>(null);
   const [savedFlash, setSavedFlash] = useState(false);
 
@@ -21,6 +22,17 @@ export default function SettingsPace() {
     setValue(String(Number(pct)));
   }, [settingsQ.data?.pace_split_percentage]);
 
+  useEffect(() => {
+    const seconds = settingsQ.data?.pace_margin_limit_seconds;
+    if (seconds == null) {
+      setMarginLimitHours('');
+      return;
+    }
+    // Store as hours in the input; allow fractional display when needed.
+    const hours = Number(seconds) / 3600;
+    setMarginLimitHours(String(hours));
+  }, [settingsQ.data?.pace_margin_limit_seconds]);
+
   const handleSave = async () => {
     setSaveError(null);
     setSavedFlash(false);
@@ -29,8 +41,23 @@ export default function SettingsPace() {
       setSaveError('Enter a percentage between 0 and 100.');
       return;
     }
+
+    let paceMarginLimitSeconds: number | null = null;
+    const trimmedLimit = marginLimitHours.trim();
+    if (trimmedLimit !== '') {
+      const hours = Number(trimmedLimit);
+      if (!Number.isFinite(hours) || hours < 0) {
+        setSaveError('Margin limit must be empty (off) or a non-negative number of hours.');
+        return;
+      }
+      paceMarginLimitSeconds = Math.round(hours * 3600);
+    }
+
     try {
-      await upsert.mutateAsync({ paceSplitPercentage: parsed });
+      await upsert.mutateAsync({
+        paceSplitPercentage: parsed,
+        paceMarginLimitSeconds,
+      });
       setSavedFlash(true);
     } catch (err) {
       setSaveError(err instanceof Error ? err.message : 'Failed to save.');
@@ -53,7 +80,7 @@ export default function SettingsPace() {
         </Link>
       </div>
 
-      <section className="max-w-md space-y-4">
+      <section className="max-w-md space-y-6">
         <label className="block space-y-2">
           <span className="text-sm font-medium text-fg">Pace split percentage</span>
           <div className="flex items-center gap-2">
@@ -81,6 +108,36 @@ export default function SettingsPace() {
           At 0% (default), progress never moves your target deadline. At higher
           values, that percentage of the buffer difference is allocated into margin
           (target moves earlier). Progress decreases reverse the adjustment.
+        </p>
+
+        <label className="block space-y-2">
+          <span className="text-sm font-medium text-fg">Pace margin limit</span>
+          <div className="flex items-center gap-2">
+            <input
+              type="number"
+              min={0}
+              step={1}
+              className="input w-28"
+              value={marginLimitHours}
+              placeholder="Off"
+              disabled={settingsQ.isLoading || upsert.isPending}
+              onChange={(e) => {
+                setSavedFlash(false);
+                setMarginLimitHours(e.target.value);
+              }}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') void handleSave();
+              }}
+            />
+            <span className="text-sm text-muted">hours</span>
+          </div>
+        </label>
+
+        <p className="text-sm text-muted">
+          Leave empty to leave margin unlimited. When set, progress that would push
+          margin past this limit keeps margin at the limit, preserves the intended
+          post-split pace, and absorbs the leftover into a higher buffer modifier.
+          Does not move your true deadline.
         </p>
 
         <div className="flex flex-wrap items-center gap-3">
