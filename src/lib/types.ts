@@ -10,6 +10,10 @@ export interface Project {
   due_date: string | null;
   sync_true_deadline_with_due_date: boolean;
   buffer_modifier: number;
+  /** Share of buffer-only estimate difference allocated into pace margin on progress (0–100). */
+  pace_split_percentage: number;
+  /** Max pace margin in seconds. NULL = unlimited. */
+  pace_margin_limit_seconds: number | null;
   tag: string | null;
   series: string | null;
   notes: string | null;
@@ -56,11 +60,11 @@ export interface HeatmapSettings {
   updated_at: string;
 }
 
-/** App-wide preference: share of buffer-only time allocated into pace margin on progress. */
+/** Per-user defaults for new projects' pace split percentage and margin limit. */
 export interface PaceSplitSettings {
   user_id: string;
   pace_split_percentage: number;
-  /** Max pace margin in seconds. NULL = unlimited (current behavior). */
+  /** Max pace margin in seconds. NULL = unlimited. */
   pace_margin_limit_seconds: number | null;
   created_at: string;
   updated_at: string;
@@ -161,6 +165,10 @@ export type ProjectInput = Pick<
   | 'notes'
 > & {
   parent_id?: string | null;
+  /** Omit to seed from the user's pace_split_settings defaults. */
+  pace_split_percentage?: number;
+  /** Omit to seed from the user's pace_split_settings defaults. */
+  pace_margin_limit_seconds?: number | null;
 };
 
 export type ProjectUpdateInput = Partial<
@@ -171,6 +179,8 @@ export type ProjectUpdateInput = Partial<
     | 'due_date'
     | 'start_date'
     | 'buffer_modifier'
+    | 'pace_split_percentage'
+    | 'pace_margin_limit_seconds'
     | 'tag'
     | 'series'
     | 'notes'

@@ -6,6 +6,25 @@ import type { PaceSplitSettings } from '../lib/types';
 const paceSplitSettingsKey = (userId: string | undefined) =>
   ['pace_split_settings', userId] as const;
 
+/** User defaults applied when creating a project if split fields are omitted. */
+export async function fetchPaceSplitDefaults(): Promise<{
+  pace_split_percentage: number;
+  pace_margin_limit_seconds: number | null;
+}> {
+  const { data, error } = await supabase
+    .from('pace_split_settings')
+    .select('pace_split_percentage, pace_margin_limit_seconds')
+    .maybeSingle();
+  if (error) throw error;
+  return {
+    pace_split_percentage: Number(data?.pace_split_percentage ?? 0),
+    pace_margin_limit_seconds:
+      data?.pace_margin_limit_seconds == null
+        ? null
+        : Number(data.pace_margin_limit_seconds),
+  };
+}
+
 export function usePaceSplitSettings() {
   const { user } = useAuth();
   return useQuery({

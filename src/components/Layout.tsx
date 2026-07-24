@@ -73,7 +73,7 @@ export default function Layout() {
         label: 'Integrations',
         icon: <IntegrationsIcon />,
       },
-      { id: 'pace-settings', to: '/settings/pace', label: 'Pace', icon: <PaceSettingsIcon /> },
+      { id: 'pace-settings', to: '/settings/pace', label: 'Pace defaults', icon: <PaceSettingsIcon /> },
       { id: 'tags', to: '/settings/tags', label: 'Tags', icon: <TagIcon /> },
       { id: 'series', to: '/settings/series', label: 'Series', icon: <SeriesIcon /> },
     ],

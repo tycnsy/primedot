@@ -53,13 +53,31 @@ export default function PaceSettingsForm({ project, tasks, pace }: Props) {
   );
   const [hasManualLocalEdit, setHasManualLocalEdit] = useState(false);
 
+  const [splitPct, setSplitPct] = useState(String(project.pace_split_percentage ?? 0));
+  const [marginLimitHours, setMarginLimitHours] = useState(() => {
+    const seconds = project.pace_margin_limit_seconds;
+    if (seconds == null) return '';
+    return String(Number(seconds) / 3600);
+  });
+  const [splitSavedFlash, setSplitSavedFlash] = useState(false);
+
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     setTargetLocal('');
     setTrueLocal('');
     setHasManualLocalEdit(false);
+    setSplitPct(String(project.pace_split_percentage ?? 0));
+    const seconds = project.pace_margin_limit_seconds;
+    setMarginLimitHours(seconds == null ? '' : String(Number(seconds) / 3600));
+    setSplitSavedFlash(false);
   }, [project.id]);
+
+  useEffect(() => {
+    setSplitPct(String(project.pace_split_percentage ?? 0));
+    const seconds = project.pace_margin_limit_seconds;
+    setMarginLimitHours(seconds == null ? '' : String(Number(seconds) / 3600));
+  }, [project.pace_split_percentage, project.pace_margin_limit_seconds]);
 
   useEffect(() => {
     if (!pace || hasManualLocalEdit) return;
@@ -213,9 +231,113 @@ export default function PaceSettingsForm({ project, tasks, pace }: Props) {
     }
   };
 
+  const handleSaveSplitSettings = async () => {
+    setError(null);
+    setSplitSavedFlash(false);
+    const parsed = Number(splitPct);
+    if (!Number.isFinite(parsed) || parsed < 0 || parsed > 100) {
+      setError('Enter a pace split percentage between 0 and 100.');
+      return;
+    }
+
+    let paceMarginLimitSeconds: number | null = null;
+    const trimmedLimit = marginLimitHours.trim();
+    if (trimmedLimit !== '') {
+      const hours = Number(trimmedLimit);
+      if (!Number.isFinite(hours) || hours < 0) {
+        setError('Margin limit must be empty (off) or a non-negative number of hours.');
+        return;
+      }
+      paceMarginLimitSeconds = Math.round(hours * 3600);
+    }
+
+    try {
+      await updateProject.mutateAsync({
+        id: project.id,
+        patch: {
+          pace_split_percentage: Math.min(100, Math.max(0, parsed)),
+          pace_margin_limit_seconds: paceMarginLimitSeconds,
+        },
+      });
+      setSplitSavedFlash(true);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Failed to save pace split settings.');
+    }
+  };
+
   return (
     <div className="card space-y-4">
       <h2 className="text-lg font-semibold text-fg">Pace settings</h2>
+
+      <div className="space-y-3 border-b border-border/60 pb-4">
+        <label className="block space-y-2">
+          <span className="label">Pace split percentage</span>
+          <div className="flex items-center gap-2">
+            <input
+              type="number"
+              min={0}
+              max={100}
+              step={1}
+              className="input w-28"
+              value={splitPct}
+              disabled={updateProject.isPending}
+              onChange={(e) => {
+                setSplitSavedFlash(false);
+                setSplitPct(e.target.value);
+              }}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') void handleSaveSplitSettings();
+              }}
+            />
+            <span className="text-sm text-muted">%</span>
+          </div>
+        </label>
+        <p className="text-xs text-subtle">
+          Share of buffer-only time moved into pace margin on progress. 0% leaves
+          the target deadline unchanged.
+        </p>
+
+        <label className="block space-y-2">
+          <span className="label">Pace margin limit</span>
+          <div className="flex items-center gap-2">
+            <input
+              type="number"
+              min={0}
+              step={1}
+              className="input w-28"
+              value={marginLimitHours}
+              placeholder="Off"
+              disabled={updateProject.isPending}
+              onChange={(e) => {
+                setSplitSavedFlash(false);
+                setMarginLimitHours(e.target.value);
+              }}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') void handleSaveSplitSettings();
+              }}
+            />
+            <span className="text-sm text-muted">hours</span>
+          </div>
+        </label>
+        <p className="text-xs text-subtle">
+          Empty = unlimited. When set, progress past this margin keeps margin at
+          the limit and absorbs leftover into buffer.
+        </p>
+
+        <div className="flex flex-wrap items-center gap-3">
+          <button
+            type="button"
+            className="btn-secondary"
+            disabled={updateProject.isPending}
+            onClick={() => void handleSaveSplitSettings()}
+          >
+            {updateProject.isPending ? 'Saving…' : 'Save split settings'}
+          </button>
+          {splitSavedFlash ? (
+            <span className="text-sm text-success">Saved</span>
+          ) : null}
+        </div>
+      </div>
 
       <div className="space-y-2">
         <div className="label">Set pace (buffer beyond timer estimate)</div>

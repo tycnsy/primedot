@@ -12,6 +12,7 @@ import type {
   TemplateTaskCreateInput,
   TemplateTaskUpdateInput,
 } from '../lib/types';
+import { fetchPaceSplitDefaults } from './usePaceSplitSettings';
 
 const templatesKey = (userId: string | undefined) =>
   ['project_templates', userId] as const;
@@ -383,10 +384,21 @@ async function createProjectFromTemplateRecord(
     sortOrder = (lastProject?.sort_order ?? -1) + 1;
   }
 
+  const {
+    pace_split_percentage: inputSplitPct,
+    pace_margin_limit_seconds: inputMarginLimit,
+    ...projectFields
+  } = resolvedInput;
+  const paceDefaults = await fetchPaceSplitDefaults();
   const { data: project, error: projectError } = await supabase
     .from('projects')
     .insert({
-      ...resolvedInput,
+      ...projectFields,
+      pace_split_percentage: inputSplitPct ?? paceDefaults.pace_split_percentage,
+      pace_margin_limit_seconds:
+        inputMarginLimit !== undefined
+          ? inputMarginLimit
+          : paceDefaults.pace_margin_limit_seconds,
       user_id: userId,
       parent_id: parentProjectId,
       sort_order: sortOrder,

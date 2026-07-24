@@ -24,6 +24,8 @@ const baseProject: Project = {
   due_date: null,
   sync_true_deadline_with_due_date: false,
   buffer_modifier: 3,
+  pace_split_percentage: 0,
+  pace_margin_limit_seconds: null,
   tag: null,
   series: null,
   notes: null,

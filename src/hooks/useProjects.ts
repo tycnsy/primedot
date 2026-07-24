@@ -10,6 +10,7 @@ import type {
   ProjectTag,
   ProjectUpdateInput,
 } from '../lib/types';
+import { fetchPaceSplitDefaults } from './usePaceSplitSettings';
 
 const projectsKey = (userId: string | undefined) =>
   ['projects', userId] as const;
@@ -331,7 +332,13 @@ export function useCreateProject() {
       const isLegacyDb = isMissingSortOrderColumn(lastProjectError);
       if (lastProjectError && !isLegacyDb) throw lastProjectError;
 
-      const { parent_id: _ignored, ...projectFields } = input;
+      const {
+        parent_id: _ignored,
+        pace_split_percentage: inputSplitPct,
+        pace_margin_limit_seconds: inputMarginLimit,
+        ...projectFields
+      } = input;
+      const paceDefaults = await fetchPaceSplitDefaults();
       const { data, error } = await supabase
         .from('projects')
         .insert({
@@ -341,6 +348,11 @@ export function useCreateProject() {
           tag,
           series,
           notes,
+          pace_split_percentage: inputSplitPct ?? paceDefaults.pace_split_percentage,
+          pace_margin_limit_seconds:
+            inputMarginLimit !== undefined
+              ? inputMarginLimit
+              : paceDefaults.pace_margin_limit_seconds,
           user_id: user.id,
           parent_id: parentId,
           ...(isLegacyDb ? {} : { sort_order: (lastProject?.sort_order ?? -1) + 1 }),

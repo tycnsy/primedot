@@ -31,6 +31,8 @@ All time values are stored as **integers representing total seconds**. The UI co
 | `video_length` | integer (seconds) | The total length of the finished video. Used in scaling task calculations. |
 | `due_date` | timestamptz (nullable) | Optional project deadline with date and time. |
 | `buffer_modifier` | numeric | Multiplier (e.g. `1.2`, `2.5`, `12`). See Buffer Modifier section. |
+| `pace_split_percentage` | numeric | 0–100. Default `0`. Per-project share of buffer-only estimate difference allocated into margin on each progress change. |
+| `pace_margin_limit_seconds` | bigint (nullable) | Per-project max pace margin in seconds. `NULL` = unlimited. |
 | `tag` | text (nullable) | Optional select-style tag. |
 | `parent_id` | uuid (FK → projects, nullable) | When set, this row is a subproject. Single-level nesting only. |
 | `created_at` | timestamptz | |
@@ -132,17 +134,19 @@ All times in seconds; `now()` is the current time in the user's timezone.
 
 ### `pace_split_settings`
 
-One row per user (app-wide). Controls how progress updates allocate buffer-only time into pace margin, and optionally caps how large that margin may grow.
+One row per user. **Defaults for new projects** only — does not rewrite existing projects. Creating a project seeds `projects.pace_split_percentage` and `projects.pace_margin_limit_seconds` from this row when those fields are omitted.
 
 | Field | Type | Notes |
 |---|---|---|
 | `user_id` | uuid (PK, FK → auth.users) | |
-| `pace_split_percentage` | numeric | 0–100. Default `0`. Share of the buffer-only estimate difference allocated into margin on each progress change. |
-| `pace_margin_limit_seconds` | bigint (nullable) | Max pace margin in seconds. `NULL` = unlimited (current behavior). Empty in Settings = off. |
+| `pace_split_percentage` | numeric | 0–100. Default `0`. Copied onto new projects. |
+| `pace_margin_limit_seconds` | bigint (nullable) | Copied onto new projects. `NULL` = unlimited. Empty in Settings = off. |
+
+Live progress allocation and margin capping use the **per-project** columns on `projects`, edited under Project Detail → Pace settings (Settings → Pace edits defaults only).
 
 #### Progress → pace split allocation
 
-When `current_progress` changes (UI or third-party sync), a DB trigger may adjust `target_deadline` and, when the margin limit applies, `buffer_modifier`. It never writes `true_deadline`. Steps for the progress delta:
+When `current_progress` changes (UI or third-party sync), a DB trigger may adjust `target_deadline` and, when the margin limit applies, `buffer_modifier`. It never writes `true_deadline`. It reads `pace_split_percentage` and `pace_margin_limit_seconds` from the **project** row. Steps for the progress delta:
 
 1. **True estimated time** (no buffer): `progress_delta × unbuffered_rate`
    - scaling: `scaling_modifier`
@@ -152,7 +156,7 @@ When `current_progress` changes (UI or third-party sync), a DB trigger may adjus
    - compressed parent: sum of subtask `scaling_modifier`
 2. **Buffer estimated time**: `true_estimated × project.buffer_modifier`
 3. **Estimated time difference**: `buffer_estimated − true_estimated` (the portion added by buffer)
-4. **Allocation**: `round((difference × pace_split_percentage / 100) / 60)` minutes would be **subtracted** from `target_deadline` (target moves earlier → margin grows). Rounding is half away from zero (Postgres `round(numeric)`). Progress decreases reverse the sign (target moves later).
+4. **Allocation**: `round((difference × project.pace_split_percentage / 100) / 60)` minutes would be **subtracted** from `target_deadline` (target moves earlier → margin grows). Rounding is half away from zero (Postgres `round(numeric)`). Progress decreases reverse the sign (target moves later).
 
 Skipped when percentage is `0`, the project has no `pace_settings` row, progress delta is `0`, or the task's unbuffered rate is `0` (expanded parents / compressed subtasks — parent is counted instead).
 
@@ -160,20 +164,20 @@ Skipped when percentage is `0`, the project has no `pace_settings` row, progress
 
 Core identity (true fixed): `pace + margin = true_deadline − estimated_completion`, with `margin = true_deadline − target_deadline` and `pace = target_deadline − estimated_completion`.
 
-When allocation minutes are **positive**, a margin limit is set, and applying the full allocation would make `margin > pace_margin_limit_seconds`:
+When allocation minutes are **positive**, a project margin limit is set, and applying the full allocation would make `margin > project.pace_margin_limit_seconds`:
 
 1. Compute the **desired pace** that the full normal split would have produced (post-progress remaining work at the current buffer, with `target` moved by the full allocation).
 2. Run a **margin-preserving rebalance** anchored on `true_deadline` (not `due_date`):
-   - `offset = pace_margin_limit_seconds + desired_pace`
+   - `offset = project.pace_margin_limit_seconds + desired_pace`
    - `buffer_modifier = round(((true_deadline − now − offset) / remaining_unbuffered_hours) × 100) / 100` (must be finite and `> 0`)
-   - `target_deadline = true_deadline − pace_margin_limit_seconds`
+   - `target_deadline = true_deadline − project.pace_margin_limit_seconds`
 3. Result: margin equals the limit, pace matches the desired post-split pace (within rounding), `true_deadline` unchanged, and the missing sum is absorbed by a higher buffer.
 
 This is equivalent to “rebalance for `(limit + desired_pace)` then set `target = true − limit`” (unlike the manual rebalance UI, which zeros margin by setting `target = true`).
 
 **Does not apply** when:
 
-- `pace_margin_limit_seconds` is `NULL` (unlimited) — plain split only
+- `project.pace_margin_limit_seconds` is `NULL` (unlimited) — plain split only
 - allocation ≤ 0 (progress decrease / no-op) — never forces margin **up** to the limit; plain split only
 - prospective margin after full alloc is still ≤ the limit — plain split; buffer unchanged
 - rebalance cannot produce a valid positive buffer (no remaining unbuffered hours, non-positive buffer, etc.) — **fail soft**: apply the plain split allocation only; do not corrupt deadlines

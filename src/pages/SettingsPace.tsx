@@ -69,10 +69,11 @@ export default function SettingsPace() {
       <div className="flex flex-wrap items-end justify-between gap-4">
         <div className="space-y-1">
           <span className="label">Settings</span>
-          <h1 className="text-3xl font-semibold tracking-tight text-fg">Pace</h1>
+          <h1 className="text-3xl font-semibold tracking-tight text-fg">Pace defaults</h1>
           <p className="max-w-lg text-sm text-muted">
-            When you make progress on a task, a share of the buffer-only time can be
-            moved into your pace margin by pulling the target deadline earlier.
+            Defaults applied when you create a new project. Each project can override
+            these under Project Detail → Pace settings. Progress can move a share of
+            buffer-only time into pace margin by pulling the target deadline earlier.
           </p>
         </div>
         <Link to="/projects" className="btn-ghost">
